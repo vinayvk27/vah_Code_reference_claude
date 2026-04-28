@@ -1,1 +1,49 @@
 hi
+TASK: Project audit only. Do NOT modify, create, or delete any files. Read-only inspection.
+
+Goal: Give me a precise report of the current state of the DPAH backend so we can plan modifications.
+
+Inspect the project and produce a single markdown report with these sections:
+
+## 1. Directory Tree
+Show the full tree of `app/` and `frontend/`, max depth 3, excluding __pycache__, .venv, node_modules, chroma_storage.
+
+## 2. File-by-File Summary
+For EACH Python file under `app/`, give me:
+- Path
+- Line count
+- One-sentence purpose
+- Key functions/classes defined (just names)
+- External dependencies it imports (langchain, ldap3, sqlalchemy, etc.)
+- Status: WORKING / STUBBED / BROKEN / EMPTY (best guess from reading code)
+
+## 3. Existing Database Models
+Open `app/models/db_schema.py` and list every SQLAlchemy model class with its table name and columns.
+
+## 4. Existing API Routes
+List every route registered (path, method, handler function, file).
+
+## 5. Configuration
+Open `app/core/config.py` and show all settings keys (redact actual secret values, just show key names and types).
+
+## 6. Orchestrator State
+Open `app/agents/orchestrator.py` and describe:
+- What states/nodes exist in the LangGraph
+- What the graph flow looks like
+- Where permission checks happen
+- Where the LLM is called
+- What's hardcoded vs. config-driven
+
+## 7. Frontend Inventory
+List HTML files in `frontend/views/` with one-line description of each.
+
+## 8. Dependencies
+Show the contents of `requirements.txt`.
+
+## 9. What Looks Reusable vs. What Needs Replacement
+For each major component (auth, chat, orchestrator, models, routes), give your assessment:
+- KEEP_AS_IS
+- MODIFY (and what needs changing)
+- REPLACE (and why)
+
+End the report. Do not suggest changes or write any code yet.
