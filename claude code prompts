@@ -1,12 +1,60 @@
-Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 783-802)
-Good - the stub is intact. Now let me read Chunk A from orchestrator.py (lines 677-770):
+The 504 is hitting even on Chunk A now. Claude Code's context is too heavy — it's holding the full nodes.py (~700+ lines), orchestrator.py excerpts, and the entire conversation history. Each tool call carries that whole payload, and the gateway gives up.
 
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 677-771)
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 771-785)
-Now let me replace the approver_agent_node stub with Chunk A (setup code):
+Send Claude Code this prompt
+Context is too heavy. Even Chunk A is timing out. Reset strategy:
 
-Now let me apply Chunk A to nodes.py - replacing the stub with the setup code:
+Don't read nodes.py again. You don't need to see the full file to do a str_replace. You only need the exact stub text to match against.
+Don't read large ranges of orchestrator.py. Read in 30–40 line slices, write that slice, drop it from your working memory before reading the next.
+Halve Chunk A into A1 and A2.
+A1 (~40 lines): Replace the pass in the stub with just the first half of setup — state extraction, user context, persona resolution. End with a # CHUNK_A2_MARKER comment so the next edit has a clean anchor.
+A2 (~40 lines): Replace # CHUNK_A2_MARKER with the snapshot fetch logic + system prompt loading + a # CHUNK_B_MARKER comment.
+For the str_replace on the stub, the old_str should be minimal and unique:
+   def approver_agent_node(state: RMSState) -> RMSState:
+       """[whatever the stub docstring says]"""
+       pass
+Use only those lines as old_str. Don't include surrounding context.
 
-API Error: 504 <html>
+Before each edit, only view the 5 lines containing the marker you're replacing. Not the full function. Not the full file.
+Order:
+View just the stub (5 lines max) → confirm it's intact
+Read orchestrator.py lines 677–710 only → write A1
+View just the marker line in nodes.py (5 lines) → confirm A1 landed
+Read orchestrator.py lines 710–745 only → write A2
+Continue same pattern for B1, B2, B3 as needed
+If a 30-line edit still 504s, the issue is not edit size — it's accumulated context. In that case: tell me, and I'll instruct the user to start a fresh Claude Code session that picks up from approver_agent_node only, with a clean context window.
 
-<head><title>504 Gateway Time-out</title></head> <body> <center><h1>504 Gateway Time-out</h1></center> <hr><center>nginx/1.28.0</center> </body> </html>
+Resume with: view 5 lines of the stub, confirm, then write A1.
+
+If 504s persist after this
+This may be the moment to bail out of the current session. Tell Claude Code to:
+
+Write a handoff note at the top of nodes.py as a comment block:
+python
+   # MIGRATION STATUS (handoff):
+   # - All nodes complete EXCEPT approver_agent_node (still a stub at line ~785)
+   # - Source: app/agents/orchestrator.py lines 677–906
+   # - Pattern: identical to reviewer_agent_node (above)
+   # - Diffs: persona="approver", agent=RMS_APPROVER,
+   #   tools=tool_list_pending_approvals + tool_approve_worklog,
+   #   snapshot via list_worklogs
+   # - Preserve pre-existing system_prompt scoping bug with TODO comment
+Then you, the user, start a fresh Claude Code session with this prompt:
+Read app/workflows/rms_workflow/nodes.py — there's a handoff comment at the top describing what's left. Complete only approver_agent_node by replacing the stub with the full implementation following the pattern of reviewer_agent_node in the same file. Read app/agents/orchestrator.py lines 677–906 in 40-line slices to source the logic. Use small edits.
+
+A fresh session = empty context = no 504s.
+
+Why this keeps happening
+You started the session migrating a 1000-line file, and now you've also accumulated:
+
+The full nodes.py (now ~800 lines)
+Multiple orchestrator.py slices
+A long todo list with status updates
+All your Edit/Read tool results
+Every new tool call ships that entire payload. There's a point where even tiny edits time out because the request itself is too large before the edit content even matters. That's likely where you are.
+
+Try the chunked-tighter prompt first. If it still 504s, do the handoff-and-restart. The remaining work is small enough that a fresh session will breeze through it.
+
+
+
+
+
