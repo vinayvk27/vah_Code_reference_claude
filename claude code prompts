@@ -1,60 +1,148 @@
-The 504 is hitting even on Chunk A now. Claude Code's context is too heavy — it's holding the full nodes.py (~700+ lines), orchestrator.py excerpts, and the entire conversation history. Each tool call carries that whole payload, and the gateway gives up.
+TASK: Add a dev-mode authentication bypass that lets users log in using emp_no + dept lookup from the resources table, while keeping the existing LDAP code path intact. Mode controlled by AUTH_MODE environment variable.
 
-Send Claude Code this prompt
-Context is too heavy. Even Chunk A is timing out. Reset strategy:
+==============================================================================
+STEP 1 — Add AUTH_MODE config
+==============================================================================
+A. In your config or .env file (whatever pattern the project already uses for env-driven settings — check app/config.py or a settings module if it exists):
 
-Don't read nodes.py again. You don't need to see the full file to do a str_replace. You only need the exact stub text to match against.
-Don't read large ranges of orchestrator.py. Read in 30–40 line slices, write that slice, drop it from your working memory before reading the next.
-Halve Chunk A into A1 and A2.
-A1 (~40 lines): Replace the pass in the stub with just the first half of setup — state extraction, user context, persona resolution. End with a # CHUNK_A2_MARKER comment so the next edit has a clean anchor.
-A2 (~40 lines): Replace # CHUNK_A2_MARKER with the snapshot fetch logic + system prompt loading + a # CHUNK_B_MARKER comment.
-For the str_replace on the stub, the old_str should be minimal and unique:
-   def approver_agent_node(state: RMSState) -> RMSState:
-       """[whatever the stub docstring says]"""
-       pass
-Use only those lines as old_str. Don't include surrounding context.
+   Add a new setting:
+       AUTH_MODE = os.getenv("AUTH_MODE", "prod")  # values: 'dev' or 'prod'
 
-Before each edit, only view the 5 lines containing the marker you're replacing. Not the full function. Not the full file.
-Order:
-View just the stub (5 lines max) → confirm it's intact
-Read orchestrator.py lines 677–710 only → write A1
-View just the marker line in nodes.py (5 lines) → confirm A1 landed
-Read orchestrator.py lines 710–745 only → write A2
-Continue same pattern for B1, B2, B3 as needed
-If a 30-line edit still 504s, the issue is not edit size — it's accumulated context. In that case: tell me, and I'll instruct the user to start a fresh Claude Code session that picks up from approver_agent_node only, with a clean context window.
+   If no central config module exists, just read os.getenv("AUTH_MODE", "prod") directly inside auth_controller.py.
 
-Resume with: view 5 lines of the stub, confirm, then write A1.
+B. Document it: at the top of auth_controller.py, add a comment block:
 
-If 504s persist after this
-This may be the moment to bail out of the current session. Tell Claude Code to:
+   # AUTH_MODE controls authentication mode:
+   #   'prod' (default) — use LDAP authentication (current production behavior)
+   #   'dev'            — bypass LDAP, look up emp_no + dept in resources table
+   #
+   # Set via environment variable: AUTH_MODE=dev
+   # CRITICAL: Before production deployment, verify AUTH_MODE is unset OR explicitly 'prod'.
 
-Write a handoff note at the top of nodes.py as a comment block:
-python
-   # MIGRATION STATUS (handoff):
-   # - All nodes complete EXCEPT approver_agent_node (still a stub at line ~785)
-   # - Source: app/agents/orchestrator.py lines 677–906
-   # - Pattern: identical to reviewer_agent_node (above)
-   # - Diffs: persona="approver", agent=RMS_APPROVER,
-   #   tools=tool_list_pending_approvals + tool_approve_worklog,
-   #   snapshot via list_worklogs
-   # - Preserve pre-existing system_prompt scoping bug with TODO comment
-Then you, the user, start a fresh Claude Code session with this prompt:
-Read app/workflows/rms_workflow/nodes.py — there's a handoff comment at the top describing what's left. Complete only approver_agent_node by replacing the stub with the full implementation following the pattern of reviewer_agent_node in the same file. Read app/agents/orchestrator.py lines 677–906 in 40-line slices to source the logic. Use small edits.
+==============================================================================
+STEP 2 — Add the dev-mode login function
+==============================================================================
+In app/controllers/auth_controller.py, ADD a new function (do NOT replace existing functions):
 
-A fresh session = empty context = no 504s.
+  def authenticate_dev_mode(emp_no: str, dept: str, db: Session) -> dict:
+      """
+      Dev-mode authentication: looks up emp_no + dept in the resources table.
+      No password check. Returns the same user_context shape as the LDAP path.
+      Raises ValueError if user not found or dept doesn't match.
+      """
+      from app.models.db_schema import Resource
+      
+      # Normalize inputs
+      emp_no_clean = (emp_no or "").strip()
+      dept_clean = (dept or "").strip().upper()
+      
+      if not emp_no_clean or not dept_clean:
+          raise ValueError("emp_no and dept are both required for dev login")
+      
+      resource = db.query(Resource).filter(Resource.Emp_no == emp_no_clean).first()
+      if not resource:
+          raise ValueError(f"No employee found with emp_no={emp_no_clean}")
+      
+      # Compare dept case-insensitively
+      resource_dept = (resource.Dept or "").strip().upper()
+      if resource_dept != dept_clean:
+          raise ValueError(f"Dept mismatch — resource {emp_no_clean} is in {resource_dept}, not {dept_clean}")
+      
+      # Build user context using the existing helper (same as LDAP path)
+      user_context = build_user_context_by_empno(emp_no_clean, db)
+      return user_context
 
-Why this keeps happening
-You started the session migrating a 1000-line file, and now you've also accumulated:
+  IMPORTANT: build_user_context_by_empno already exists from earlier work and is what the LDAP path uses to build the JWT payload after authentication. Reuse it — do NOT duplicate that logic.
 
-The full nodes.py (now ~800 lines)
-Multiple orchestrator.py slices
-A long todo list with status updates
-All your Edit/Read tool results
-Every new tool call ships that entire payload. There's a point where even tiny edits time out because the request itself is too large before the edit content even matters. That's likely where you are.
+==============================================================================
+STEP 3 — Wire AUTH_MODE into the login route
+==============================================================================
+In app/routes/auth_route.py (or wherever the /api/v1/auth/login endpoint lives), find the login function. Currently it calls the LDAP authenticate function.
 
-Try the chunked-tighter prompt first. If it still 504s, do the handoff-and-restart. The remaining work is small enough that a fresh session will breeze through it.
+UPDATE the login flow:
 
+  import os
+  AUTH_MODE = os.getenv("AUTH_MODE", "prod").lower()
+  
+  @router.post("/login")
+  def login(payload: LoginRequest, db: Session = Depends(get_db)):
+      try:
+          if AUTH_MODE == "dev":
+              # Dev-mode: payload.username = emp_no, payload.password = dept
+              # We're repurposing the existing fields to avoid changing the request schema.
+              user_context = authenticate_dev_mode(
+                  emp_no=payload.username,
+                  dept=payload.password,
+                  db=db,
+              )
+          else:
+              # Production: standard LDAP flow (unchanged)
+              user_context = authenticate_ldap(
+                  username=payload.username,
+                  password=payload.password,
+                  db=db,
+              )
+          
+          # Token generation (same path as before)
+          access_token = create_access_token(user_context)
+          return {
+              "access_token": access_token,
+              "token_type": "bearer",
+              "user_profile": user_context,
+          }
+      except ValueError as ve:
+          raise HTTPException(status_code=401, detail=str(ve))
+      except Exception as e:
+          raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
 
+  Find the actual function names used in your code — authenticate_ldap or generate_user_context — and use the right ones. If you're unsure, inspect auth_controller.py first and report back what you find.
 
+==============================================================================
+STEP 4 — Update login UI hint (frontend)
+==============================================================================
+In frontend/views/login.html, find the form labels.
 
+If AUTH_MODE were known to the frontend we'd change the labels. But the frontend doesn't know the mode. Two options:
 
+  Option A (recommended): leave the labels as "Username" and "Password" as-is. Document the dev-mode usage outside the UI.
+  Option B: update placeholder text to hint at dual-purpose: "Username (or emp_no in dev mode)" and "Password (or dept in dev mode)".
+
+Pick Option A. The form stays generic. Users testing in dev mode just type emp_no and dept into the existing fields.
+
+==============================================================================
+STEP 5 — Verify
+==============================================================================
+A. Stop the server. Set AUTH_MODE=dev in your environment:
+   In Windows cmd:
+       set AUTH_MODE=dev
+   Then start the server in the same window:
+       uvicorn main:app --host 0.0.0.0 --port 5969
+
+B. Test dev mode in browser:
+   - Login with username=3428, password=EAG (or whatever Vinay's dept actually is in resources)
+   - Should succeed, dashboard should load with Vinay's tile
+   - Login with username=3428, password=WRONG → should fail with 401 and helpful message
+
+C. Test that prod mode still works:
+   - Stop server. Set AUTH_MODE=prod (or unset entirely):
+       set AUTH_MODE=prod
+   - Restart server
+   - Login with vinay.neelam / real_password → should hit LDAP and succeed
+   - Login with 3428 / EAG → should FAIL (LDAP doesn't know emp_no)
+
+D. Check the resources table to confirm Dept values are stored consistently. Run:
+       python -c "from app.dao.database import SessionLocal; from app.models.db_schema import Resource; s=SessionLocal(); rs=s.query(Resource).filter(Resource.Emp_no.in_(['3428','3010','3117'])).all(); [print(r.Emp_no, r.Name, r.Dept) for r in rs]; s.close()"
+   Confirm what dept values appear (uppercase? lowercase?). This determines what users type for dev login.
+
+REPORT BACK:
+  - Confirm AUTH_MODE wiring in auth_route.py
+  - Output of the resources query in step D — what depts do 3428, 3010, 3117 have?
+  - Test 5B: dev login with correct credentials — succeed?
+  - Test 5B: dev login with wrong dept — 401?
+  - Test 5C: prod mode LDAP still works after toggling back?
+
+DO NOT:
+  - Modify build_user_context_by_empno or any RBAC logic
+  - Remove the LDAP authenticate function
+  - Hardcode mode in code (must be env-driven)
+  - Change the JWT payload structure
