@@ -1,163 +1,127 @@
+
+Context
+The RMS workflow refactor is complete — all nodes, graph, state, tools, agents, prompts, and config are migrated to app/workflows/rms_workflow/. However, the workflow still imports from app/agents/ for two things:
+python# In app/workflows/rms_workflow/nodes.py and tools.py
 from app.agents.rms_tools import (
-    tool_list_tasks,
-    tool_create_task,
-    tool_list_my_tasks,
-    tool_log_hours,
-    tool_log_bulk_hours,
-    tool_list_pending_approvals,
-    tool_approve_worklog,
+    tool_list_tasks, tool_create_task, tool_list_my_tasks,
+    tool_log_hours, tool_log_bulk_hours,
+    tool_list_pending_approvals, tool_approve_worklog,
 )
 from app.agents.action_parser import extract_actions, strip_actions
+We plan to delete app/agents/ entirely. So we must move these imports to their correct final homes first.
+Goal
+Make rms_workflow/ fully self-contained for RMS-specific logic, and relocate the truly generic helper (action_parser.py) to a shared utility location. After this is done, app/agents/ can be deleted with zero broken imports.
+Decisions (already made — don't re-debate)
 
-===============================================================================
+rms_tools.py is RMS-specific → move into app/workflows/rms_workflow/
+action_parser.py is generic (regex-based <<ACTION>> tag parsing, no RMS business logic) → move to a shared utility location since it'll be reused by SCM/HRMS workflows later
+Database, DAO, RAG controller, services → stay where they are. Workflows import them as needed. Don't move infrastructure.
 
+Target Final Structure
+app/
+├── workflows/
+│   ├── __init__.py
+│   ├── router.py
+│   └── rms_workflow/
+│       ├── __init__.py
+│       ├── graph.py
+│       ├── state.py
+│       ├── nodes.py
+│       ├── tools.py              ← thin wrappers (existing)
+│       ├── rms_tools.py          ← MOVED FROM app/agents/rms_tools.py
+│       ├── agents.py
+│       ├── prompts.py
+│       └── config.py
+│
+├── utils/                        ← NEW (or use existing app/core/ if it exists)
+│   ├── __init__.py
+│   └── action_parser.py          ← MOVED FROM app/agents/action_parser.py
+│
+├── agents/                       ← TO BE DELETED at the end
+│   ├── rms_tools.py              ← will be deleted (moved)
+│   ├── action_parser.py          ← will be deleted (moved)
+│   └── orchestrator.py           ← already obsolete from prior refactor
+Step-by-Step Instructions
+Step 1: Verify before moving
 
+view the directory app/agents/ and list everything in it.
+view both app/agents/rms_tools.py and app/agents/action_parser.py to confirm what we're moving.
+Search the entire codebase for any imports of app.agents.rms_tools, app.agents.action_parser, and app.agents.orchestrator using grep/search. List every file that imports from these paths. Print this list before moving anything.
 
-TASK: Add a dev-mode authentication bypass that lets users log in using emp_no + dept lookup from the resources table, while keeping the existing LDAP code path intact. Mode controlled by AUTH_MODE environment variable.
+Step 2: Move rms_tools.py into the workflow
 
-==============================================================================
-STEP 1 — Add AUTH_MODE config
-==============================================================================
-A. In your config or .env file (whatever pattern the project already uses for env-driven settings — check app/config.py or a settings module if it exists):
+Copy app/agents/rms_tools.py → app/workflows/rms_workflow/rms_tools.py. Preserve content exactly.
+Update app/workflows/rms_workflow/tools.py import:
 
-   Add a new setting:
-       AUTH_MODE = os.getenv("AUTH_MODE", "prod")  # values: 'dev' or 'prod'
+python   # OLD
+   from app.agents.rms_tools import (...)
+   # NEW
+   from app.workflows.rms_workflow.rms_tools import (...)
 
-   If no central config module exists, just read os.getenv("AUTH_MODE", "prod") directly inside auth_controller.py.
+Update app/workflows/rms_workflow/nodes.py import the same way (if nodes.py imports rms_tools directly anywhere).
+Update any other workflow file that imports from app.agents.rms_tools → switch to relative path from .rms_tools import ... or absolute path from app.workflows.rms_workflow.rms_tools import ... (pick one style and stay consistent — prefer absolute for clarity).
 
-B. Document it: at the top of auth_controller.py, add a comment block:
+Step 3: Decide where action_parser.py goes
 
-   # AUTH_MODE controls authentication mode:
-   #   'prod' (default) — use LDAP authentication (current production behavior)
-   #   'dev'            — bypass LDAP, look up emp_no + dept in resources table
-   #
-   # Set via environment variable: AUTH_MODE=dev
-   # CRITICAL: Before production deployment, verify AUTH_MODE is unset OR explicitly 'prod'.
+Check if app/utils/, app/core/, or app/common/ already exists. If one exists, use it. If none exist, create app/utils/.
+Copy app/agents/action_parser.py → app/utils/action_parser.py (or chosen location). Preserve content exactly.
+Make sure that location has an __init__.py. Create one if missing.
 
-==============================================================================
-STEP 2 — Add the dev-mode login function
-==============================================================================
-In app/controllers/auth_controller.py, ADD a new function (do NOT replace existing functions):
+Step 4: Update action_parser imports
+Replace every occurrence of:
+pythonfrom app.agents.action_parser import extract_actions, strip_actions
+with:
+pythonfrom app.utils.action_parser import extract_actions, strip_actions
+This includes (at minimum):
 
-  def authenticate_dev_mode(emp_no: str, dept: str, db: Session) -> dict:
-      """
-      Dev-mode authentication: looks up emp_no + dept in the resources table.
-      No password check. Returns the same user_context shape as the LDAP path.
-      Raises ValueError if user not found or dept doesn't match.
-      """
-      from app.models.db_schema import Resource
-      
-      # Normalize inputs
-      emp_no_clean = (emp_no or "").strip()
-      dept_clean = (dept or "").strip().upper()
-      
-      if not emp_no_clean or not dept_clean:
-          raise ValueError("emp_no and dept are both required for dev login")
-      
-      resource = db.query(Resource).filter(Resource.Emp_no == emp_no_clean).first()
-      if not resource:
-          raise ValueError(f"No employee found with emp_no={emp_no_clean}")
-      
-      # Compare dept case-insensitively
-      resource_dept = (resource.Dept or "").strip().upper()
-      if resource_dept != dept_clean:
-          raise ValueError(f"Dept mismatch — resource {emp_no_clean} is in {resource_dept}, not {dept_clean}")
-      
-      # Build user context using the existing helper (same as LDAP path)
-      user_context = build_user_context_by_empno(emp_no_clean, db)
-      return user_context
+app/workflows/rms_workflow/nodes.py
+Any other file the grep search in Step 1 found
 
-  IMPORTANT: build_user_context_by_empno already exists from earlier work and is what the LDAP path uses to build the JWT payload after authentication. Reuse it — do NOT duplicate that logic.
+Step 5: Verify nothing is broken
 
-==============================================================================
-STEP 3 — Wire AUTH_MODE into the login route
-==============================================================================
-In app/routes/auth_route.py (or wherever the /api/v1/auth/login endpoint lives), find the login function. Currently it calls the LDAP authenticate function.
+Run python -c "from app.workflows.rms_workflow.nodes import *" — must succeed.
+Run python -c "from app.workflows.rms_workflow.tools import *" — must succeed.
+Run python -c "from app.utils.action_parser import extract_actions, strip_actions" — must succeed.
+Run a grep across the whole app/ folder for app.agents. (with the trailing dot) — there should be zero results outside of app/agents/ itself. If any results appear, fix those imports too.
 
-UPDATE the login flow:
+Step 6: Delete app/agents/
+Only after Step 5 is fully clean:
 
-  import os
-  AUTH_MODE = os.getenv("AUTH_MODE", "prod").lower()
-  
-  @router.post("/login")
-  def login(payload: LoginRequest, db: Session = Depends(get_db)):
-      try:
-          if AUTH_MODE == "dev":
-              # Dev-mode: payload.username = emp_no, payload.password = dept
-              # We're repurposing the existing fields to avoid changing the request schema.
-              user_context = authenticate_dev_mode(
-                  emp_no=payload.username,
-                  dept=payload.password,
-                  db=db,
-              )
-          else:
-              # Production: standard LDAP flow (unchanged)
-              user_context = authenticate_ldap(
-                  username=payload.username,
-                  password=payload.password,
-                  db=db,
-              )
-          
-          # Token generation (same path as before)
-          access_token = create_access_token(user_context)
-          return {
-              "access_token": access_token,
-              "token_type": "bearer",
-              "user_profile": user_context,
-          }
-      except ValueError as ve:
-          raise HTTPException(status_code=401, detail=str(ve))
-      except Exception as e:
-          raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+Delete app/agents/rms_tools.py
+Delete app/agents/action_parser.py
+Delete app/agents/orchestrator.py (already obsolete)
+Delete any remaining files in app/agents/
+Delete the empty app/agents/ folder itself
+Re-run the grep from Step 5 point 4 — confirm zero results.
 
-  Find the actual function names used in your code — authenticate_ldap or generate_user_context — and use the right ones. If you're unsure, inspect auth_controller.py first and report back what you find.
+Step 7: Final end-to-end verification
 
-==============================================================================
-STEP 4 — Update login UI hint (frontend)
-==============================================================================
-In frontend/views/login.html, find the form labels.
+Run python -c "from app.workflows.router import get_workflow; g = get_workflow('RMS'); print(g)" — should print the compiled graph.
+Start the FastAPI app (or import app.routes.chat_route / app.controllers.chat_controller) — must succeed with no import errors.
+If a test exists, run it. Otherwise, manually test one RMS chat query (creator, reviewer, or approver path).
 
-If AUTH_MODE were known to the frontend we'd change the labels. But the frontend doesn't know the mode. Two options:
+Constraints
 
-  Option A (recommended): leave the labels as "Username" and "Password" as-is. Document the dev-mode usage outside the UI.
-  Option B: update placeholder text to hint at dual-purpose: "Username (or emp_no in dev mode)" and "Password (or dept in dev mode)".
+Do not change any function logic. This is purely a file relocation + import update task.
+Do not move infrastructure (db_schema.py, SessionLocal, RAGController, timesheet_store.py). Workflows import them as-is.
+Do not create a common/ folder inside workflows/ — keep action_parser.py at the app level since it's not workflow-specific.
+Use absolute imports (from app.workflows.rms_workflow.rms_tools import ...) over relative imports for cross-module clarity. Within the same workflow folder, relative imports (from .rms_tools import ...) are fine.
+After deletion, app/agents/ must not exist at all.
 
-Pick Option A. The form stays generic. Users testing in dev mode just type emp_no and dept into the existing fields.
+Deliverables
 
-==============================================================================
-STEP 5 — Verify
-==============================================================================
-A. Stop the server. Set AUTH_MODE=dev in your environment:
-   In Windows cmd:
-       set AUTH_MODE=dev
-   Then start the server in the same window:
-       uvicorn main:app --host 0.0.0.0 --port 5969
+The grep result from Step 1 (list of every file that referenced app.agents.*)
+The decision on where action_parser.py landed (app/utils/ vs other) and why
+Confirmation of all 4 verification commands in Step 5 passing
+Confirmation that app/agents/ is fully deleted
+A short summary at the end: every file moved, every import updated, anything you noticed during cleanup that might warrant a follow-up (e.g., dead code in rms_tools.py, unused exports — note but don't fix in this pass).
 
-B. Test dev mode in browser:
-   - Login with username=3428, password=EAG (or whatever Vinay's dept actually is in resources)
-   - Should succeed, dashboard should load with Vinay's tile
-   - Login with username=3428, password=WRONG → should fail with 401 and helpful message
+Start by running the grep in Step 1.
 
-C. Test that prod mode still works:
-   - Stop server. Set AUTH_MODE=prod (or unset entirely):
-       set AUTH_MODE=prod
-   - Restart server
-   - Login with vinay.neelam / real_password → should hit LDAP and succeed
-   - Login with 3428 / EAG → should FAIL (LDAP doesn't know emp_no)
-
-D. Check the resources table to confirm Dept values are stored consistently. Run:
-       python -c "from app.dao.database import SessionLocal; from app.models.db_schema import Resource; s=SessionLocal(); rs=s.query(Resource).filter(Resource.Emp_no.in_(['3428','3010','3117'])).all(); [print(r.Emp_no, r.Name, r.Dept) for r in rs]; s.close()"
-   Confirm what dept values appear (uppercase? lowercase?). This determines what users type for dev login.
-
-REPORT BACK:
-  - Confirm AUTH_MODE wiring in auth_route.py
-  - Output of the resources query in step D — what depts do 3428, 3010, 3117 have?
-  - Test 5B: dev login with correct credentials — succeed?
-  - Test 5B: dev login with wrong dept — 401?
-  - Test 5C: prod mode LDAP still works after toggling back?
-
-DO NOT:
-  - Modify build_user_context_by_empno or any RBAC logic
-  - Remove the LDAP authenticate function
-  - Hardcode mode in code (must be env-driven)
-  - Change the JWT payload structure
+Why this prompt is structured this way
+A few specifics worth flagging so you can sanity-check Claude Code's work:
+Grep first, move second. The biggest risk in a "delete this folder" cleanup is missing an import somewhere unexpected (a test file, a script, a config). Step 1 forces a full audit before any file moves.
+action_parser.py placement. I suggested app/utils/ because it's the standard FastAPI convention for shared helpers and matches your "global things stay shared" principle. If your codebase already has app/core/ or app/common/, Claude Code will use that instead — the prompt allows it.
+Absolute over relative imports within workflow files makes it obvious at a glance that rms_tools belongs to rms_workflow (vs. some shared location). When you add SCM later, this consistency pays off.
+Verification before deletion. Step 5 must pass before Step 6 runs. The grep for app.agents. after deletion is the final safety net — if anything still references the old path, you'll catch it before runtime errors hit.
+One thing I deliberately did NOT include: moving timesheet_store.py into rms_workflow/. Even though it's RMS-specific right now, it's a service/data layer, not workflow logic — moving it would couple data access to workflow organization, which gets messy when other parts of the app (e.g., direct API endpoints like /api/v1/me/timesheet) also need it. Services stay shared. If you disagree, tell me and I'll add a step for it.Opus 4.7Claude is AI and can make mistakes. Please double-
