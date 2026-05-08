@@ -1,179 +1,31 @@
-Here's the migration checklist for nodes.py - all node functions from orchestrator.py:
+Good progress — the 4 small nodes are done. For the 3 large agent nodes (creator_agent_node, reviewer_agent_node, approver_agent_node), change strategy again. Each ~250-line append is timing out because the single edit is too large.
+New approach for each large agent node:
 
-Node Function	Line Range	Complexity	Order
-parse_intent_node	63-133	~70 lines	3rd (intent inference)
-permission_check_node	136-193	~57 lines	2nd (routing/prep)
-creator_agent_node	196-443	~247 lines	5th (largest agent)
-reviewer_agent_node	446-673	~227 lines	6th (large agent)
-approver_agent_node	676-906	~230 lines	7th (large agent)
-permission_blocked_node	909-936	~27 lines	1st (leaf/utility)
-permission_router	943-961	~18 lines	4th (routing logic)
-Total: 7 functions, ~876 lines
+Append a stub first. Use str_replace to add ONLY the function signature, docstring, and a pass placeholder. This commits a working file to disk.
 
-Execution Plan (smallest → largest)
-✅ permission_blocked_node (27 lines) - leaf node, simplest
-✅ permission_check_node (57 lines) - routing/prep node
-✅ parse_intent_node (70 lines) - intent inference
-✅ permission_router (18 lines) - conditional routing
-⏳ creator_agent_node (247 lines) - will split into 2 parts
-⏳ reviewer_agent_node (227 lines) - will split into 2 parts
-⏳ approver_agent_node (230 lines) - will split into 2 parts
-Let me start by creating nodes.py with the imports and module docstring, then append each function:
+pythondef creator_agent_node(state: RMSState) -> RMSState:
+    """[Brief docstring]"""
+    pass  # body added in chunks below
 
-Write d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-99 lines
-"""
-RMS Workflow Node Functions
-===========================
-All node functions for the RMS LangGraph workflow.
-Each takes state and returns updated state - no graph construction here.
+Then fill the body in 3–4 logical chunks using str_replace, replacing pass with the first chunk, then appending each subsequent chunk by replacing the last line of the previous chunk with itself + the new chunk.
+Logical chunk boundaries for an agent node usually are:
 
-Imports: state, agents, tools, prompts (no circular deps)
-"""
-
-# =============================================================================
-# IMPORTS
-# =============================================================================
-
-from typing import Any
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
-
-from app.workflows.rms_workflow.state import RMSState
-from app.workflows.rms_workflow.config import get_llm
-from app.workflows.rms_workflow.prompts import (
-    CREATOR_KEYWORDS,
-    FILLER_KEYWORDS,
-    APPROVER_KEYWORDS,
-    PERSONA_ACTIONS,
-    AGENT_DB_NAMES,
-    DEFAULT_PERSONA,
-)
-from app.workflows.rms_workflow.tools import (
-    tool_list_tasks,
-    tool_create_task,
-    tool_list_my_tasks,
-    tool_log_hours,
-    tool_log_bulk_hours,
-    tool_list_pending_approvals,
-    tool_approve_worklog,
-)
-from app.workflows.rms_workflow.agents import AGENT_REGISTRY
-
-from app.controllers.rag_controller import RAGController
-from app.services import timesheet_store
-from app.dao.database import SessionLocal
-from app.models.db_schema import Resource, Agent
-from app.agents.action_parser import extract_actions, strip_actions
+Chunk A: Setup (state extraction, user context, persona resolution, prompt loading)
+Chunk B: Tool binding + LLM invocation
+Chunk C: Tool execution loop
+Chunk D: Response assembly + state update + return
 
 
-# =============================================================================
-# SHARED HELPER FUNCTIONS
-# =============================================================================
+After each chunk, do a quick view of the last 20 lines to confirm the file is syntactically intact before the next chunk.
+Do not re-read the full orchestrator.py between chunks. Read only the specific line range for the chunk you're about to write (e.g., lines 197–230 for chunk A of creator_agent_node). This keeps your context window light and reduces timeout risk.
+About the pre-existing bug you spotted (system_prompt referenced outside the if selected_collection == "RMS" block on lines 421–433): preserve it exactly as-is. Add a # TODO: pre-existing bug — system_prompt undefined for non-RMS path; preserved for zero-behavior-change refactor comment above the line. Do not fix it in this refactor.
+Order: finish creator_agent_node completely before starting reviewer_agent_node. Don't interleave.
 
-def _get_user_context(user_id: str, user_dept: str, persona: str) -> dict:
-    """Build user context dict for tool calls."""
-    return {
-        "sub": user_id,
-        "user_id": user_id,
-        "persona": persona,
-        "dept": user_dept
-    }
+If a chunk still 504s, halve it again. There is no shame in 6 small edits per function — there is only failure in retrying the same too-large edit.
+Resume with creator_agent_node chunk A.
 
-
-def _get_user_grade(user_id: str) -> str | None:
-    """Fetch user's grade from Resource table."""
-    db_snap = SessionLocal()
-    try:
-        resource = db_snap.query(Resource).filter(Resource.Emp_no == user_id).first()
-        return resource.Grade if resource else None
-    finally:
-        db_snap.close()
-
-
-def _get_agent_prompt(agent_name: str) -> str:
-    """Get persona-specific prompt from database."""
-    db_session = SessionLocal()
-    try:
-        agent_row = db_session.query(Agent).filter(
-            Agent.agent_name == agent_name
-        ).first()
-        return agent_row.system_prompt if agent_row else ""
-    finally:
-        db_session.close()
-
-
-def _build_uploaded_files_context(uploaded_files: list) -> str:
-    """Build context string for uploaded files (bulk processing)."""
-    if not uploaded_files:
-        return ""
-
-    files_context = []
-    for f in uploaded_files:
-        files_context.append(
-            f"File: {f.get('filename', 'unknown')} ({f.get('file_type', 'unknown')}, {f.get('row_count', 0)} rows)"
-        )
-        preview = f.get("preview", []) or []
-        for row in preview[:3]:
-            files_context.append(f"  - {row}")
-        if len(preview) > 3:
-            files_context.append(f"  ... and {len(preview) - 3} more rows")
-        files_context.append("")
-    return "\n".join(files_context)
-Now let me append the first node function - permission_blocked_node (simplest, 27 lines):
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 910-944)
-Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Added 35 lines
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 137-196)
-Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Added 60 lines
-[DONE] permission_blocked_node (27 lines) - migrated
-
-[DONE] permission_check_node (57 lines) - migrated
-
-Now let me add parse_intent_node:
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 64-138)
-Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Edit failed
-Let me add more context to uniquely identify the location:
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Now I can add parse_intent_node after permission_check_node:
-
-Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Added 73 lines
-[DONE] parse_intent_node (70 lines) - migrated
-
-Now let me add the permission_router function:
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 944-968)
-Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Added 21 lines
-[DONE] permission_router_router (18 lines) - migrated
-
-Now I need to add the three large agent nodes. Let me start with creator_agent_node - I'll split it into two parts due to its size (~247 lines):
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 197-326)
-Let me continue reading the rest of creator_agent_node:
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 327-456)
-Now I have the full creator_agent_node. This is a large function (~247 lines). Let me add it in parts. First, let me add the beginning part (lines 196-338 from orchestrator):
-
-I see the issue - the original creator_agent_node has a bug on lines 421-433: it references system_prompt which is only defined inside the if selected_collection == "RMS": block. This is a pre-existing bug that I should preserve for "zero behavior change" but it means the non-RMS path will fail.
-
-Let me now add the creator_agent_node to nodes.py. Due to its size, I'll add it in parts:
-
-Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 181-210)
-Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 251-280)
-Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 276-295)
-Now let me append the creator_agent_node function. I'll add it after permission_router:
-
-Now let me append the creator_agent_node function. Due to its size, I'll add it as one large edit at the end of the file:
-
-Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
-Modified
-Now let me add the creator_agent_node. Due to its size, I'll write it as a complete function:
-
-Now let me append the creator_agent_node function:
+Why this will work
+The previous chunked approach reduced number of writes, but each remaining write is still 250 lines. The real fix is making each individual edit small (~60–80 lines max). Stub-then-fill also has a nice property: even if a later chunk fails, your file is still syntactically valid Python and you can resume cleanly.
+One more thing — the bug you flagged
+Good catch on the system_prompt scoping issue at lines 421–433. You made the right call to preserve it. Add a TODO comment so future-you knows it's intentional, not a missed bug from the refactor. After the migration is done and verified, that's a separate one-line follow-up fix — not part of this PR.
+Send the prompt above and let it grind through. The three big nodes should each take 4 small edits instead of one giant one. If any single chunk still times out, tell it to halve again — eventually it'll fit.Opus 4.7
