@@ -1,39 +1,179 @@
-The nodes.py creation keeps failing with a 504 gateway timeout because the file is too large to generate in one write. Change strategy:
+Here's the migration checklist for nodes.py - all node functions from orchestrator.py:
 
-Don't write nodes.py in a single create_file call. Instead:
+Node Function	Line Range	Complexity	Order
+parse_intent_node	63-133	~70 lines	3rd (intent inference)
+permission_check_node	136-193	~57 lines	2nd (routing/prep)
+creator_agent_node	196-443	~247 lines	5th (largest agent)
+reviewer_agent_node	446-673	~227 lines	6th (large agent)
+approver_agent_node	676-906	~230 lines	7th (large agent)
+permission_blocked_node	909-936	~27 lines	1st (leaf/utility)
+permission_router	943-961	~18 lines	4th (routing logic)
+Total: 7 functions, ~876 lines
 
-First, create nodes.py with ONLY the imports, module docstring, and any shared helper functions at the top. Save and stop.
-Then, append node functions one at a time using str_replace or appending edits — one node function per tool call.
-After each append, confirm the file is syntactically valid before moving to the next.
+Execution Plan (smallest → largest)
+✅ permission_blocked_node (27 lines) - leaf node, simplest
+✅ permission_check_node (57 lines) - routing/prep node
+✅ parse_intent_node (70 lines) - intent inference
+✅ permission_router (18 lines) - conditional routing
+⏳ creator_agent_node (247 lines) - will split into 2 parts
+⏳ reviewer_agent_node (227 lines) - will split into 2 parts
+⏳ approver_agent_node (230 lines) - will split into 2 parts
+Let me start by creating nodes.py with the imports and module docstring, then append each function:
+
+Write d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+99 lines
+"""
+RMS Workflow Node Functions
+===========================
+All node functions for the RMS LangGraph workflow.
+Each takes state and returns updated state - no graph construction here.
+
+Imports: state, agents, tools, prompts (no circular deps)
+"""
+
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
+from typing import Any
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
+
+from app.workflows.rms_workflow.state import RMSState
+from app.workflows.rms_workflow.config import get_llm
+from app.workflows.rms_workflow.prompts import (
+    CREATOR_KEYWORDS,
+    FILLER_KEYWORDS,
+    APPROVER_KEYWORDS,
+    PERSONA_ACTIONS,
+    AGENT_DB_NAMES,
+    DEFAULT_PERSONA,
+)
+from app.workflows.rms_workflow.tools import (
+    tool_list_tasks,
+    tool_create_task,
+    tool_list_my_tasks,
+    tool_log_hours,
+    tool_log_bulk_hours,
+    tool_list_pending_approvals,
+    tool_approve_worklog,
+)
+from app.workflows.rms_workflow.agents import AGENT_REGISTRY
+
+from app.controllers.rag_controller import RAGController
+from app.services import timesheet_store
+from app.dao.database import SessionLocal
+from app.models.db_schema import Resource, Agent
+from app.agents.action_parser import extract_actions, strip_actions
 
 
-Order of appending (smallest/simplest nodes first to catch issues early):
+# =============================================================================
+# SHARED HELPER FUNCTIONS
+# =============================================================================
 
-Start with leaf/utility nodes (formatting, response shaping)
-Then routing/conditional nodes
-Then intent inference nodes
-Finally the largest agent execution nodes
-
-
-Print a checklist before starting: list every node function you're about to migrate from orchestrator.py with its line range. After each successful append, mark it done.
-If any single node function is itself larger than ~150 lines, split its creation: write the function signature + docstring + first half, then str_replace to add the second half.
-Do not retry the same monolithic write. The 504 will keep happening.
-
-Resume from where you left off. The folder structure, state.py, config.py, prompts.py, tools.py, and agents.py are already done. You're on nodes.py.
-
-
-Why this works
-
-Each create_file / str_replace call is a separate request to the API. Splitting one 600-line write into ten 60-line writes means each individual call finishes well within the gateway's timeout window.
-It also gives you better recovery — if call #7 fails, you don't lose calls #1–6.
-
-Two extra tips
-
-Check what's already on disk before resuming. Yesterday's run may have partially written nodes.py before the 504. Tell Claude Code to view the current nodes.py first and only append what's missing — don't let it overwrite progress.
-If 504s persist even on chunked writes, the issue may be Claude Code's context size (it's holding the whole orchestrator.py + plan + history). Tell it to:
-
-Re-read only the specific line range of orchestrator.py you need for the next node, write that node, then discard. Don't keep the full orchestrator in working memory.
+def _get_user_context(user_id: str, user_dept: str, persona: str) -> dict:
+    """Build user context dict for tool calls."""
+    return {
+        "sub": user_id,
+        "user_id": user_id,
+        "persona": persona,
+        "dept": user_dept
+    }
 
 
+def _get_user_grade(user_id: str) -> str | None:
+    """Fetch user's grade from Resource table."""
+    db_snap = SessionLocal()
+    try:
+        resource = db_snap.query(Resource).filter(Resource.Emp_no == user_id).first()
+        return resource.Grade if resource else None
+    finally:
+        db_snap.close()
 
-Try the prompt above and let me know what happens — if it still 504s after chunking, we'll go to the context-pruning approach.Opus 4.7
+
+def _get_agent_prompt(agent_name: str) -> str:
+    """Get persona-specific prompt from database."""
+    db_session = SessionLocal()
+    try:
+        agent_row = db_session.query(Agent).filter(
+            Agent.agent_name == agent_name
+        ).first()
+        return agent_row.system_prompt if agent_row else ""
+    finally:
+        db_session.close()
+
+
+def _build_uploaded_files_context(uploaded_files: list) -> str:
+    """Build context string for uploaded files (bulk processing)."""
+    if not uploaded_files:
+        return ""
+
+    files_context = []
+    for f in uploaded_files:
+        files_context.append(
+            f"File: {f.get('filename', 'unknown')} ({f.get('file_type', 'unknown')}, {f.get('row_count', 0)} rows)"
+        )
+        preview = f.get("preview", []) or []
+        for row in preview[:3]:
+            files_context.append(f"  - {row}")
+        if len(preview) > 3:
+            files_context.append(f"  ... and {len(preview) - 3} more rows")
+        files_context.append("")
+    return "\n".join(files_context)
+Now let me append the first node function - permission_blocked_node (simplest, 27 lines):
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 910-944)
+Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Added 35 lines
+Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 137-196)
+Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Added 60 lines
+[DONE] permission_blocked_node (27 lines) - migrated
+
+[DONE] permission_check_node (57 lines) - migrated
+
+Now let me add parse_intent_node:
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 64-138)
+Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Edit failed
+Let me add more context to uniquely identify the location:
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Now I can add parse_intent_node after permission_check_node:
+
+Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Added 73 lines
+[DONE] parse_intent_node (70 lines) - migrated
+
+Now let me add the permission_router function:
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 944-968)
+Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Added 21 lines
+[DONE] permission_router_router (18 lines) - migrated
+
+Now I need to add the three large agent nodes. Let me start with creator_agent_node - I'll split it into two parts due to its size (~247 lines):
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 197-326)
+Let me continue reading the rest of creator_agent_node:
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\agents\orchestrator.py (lines 327-456)
+Now I have the full creator_agent_node. This is a large function (~247 lines). Let me add it in parts. First, let me add the beginning part (lines 196-338 from orchestrator):
+
+I see the issue - the original creator_agent_node has a bug on lines 421-433: it references system_prompt which is only defined inside the if selected_collection == "RMS": block. This is a pre-existing bug that I should preserve for "zero behavior change" but it means the non-RMS path will fail.
+
+Let me now add the creator_agent_node to nodes.py. Due to its size, I'll add it in parts:
+
+Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 181-210)
+Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 251-280)
+Read d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py (lines 276-295)
+Now let me append the creator_agent_node function. I'll add it after permission_router:
+
+Now let me append the creator_agent_node function. Due to its size, I'll add it as one large edit at the end of the file:
+
+Edit d:\Sakthi\Gen AI\dpah_backend\app\workflows\rms_workflow\nodes.py
+Modified
+Now let me add the creator_agent_node. Due to its size, I'll write it as a complete function:
+
+Now let me append the creator_agent_node function:
