@@ -12,6 +12,11 @@ Tool definitions (list_pending_approvals, approve_worklog)
 Action parsing (lines 932-985): Handles <<ACTION>> markers, normal tool calls, and streaming fallback
 Non-RMS path (lines 986-993): Simple streaming without tools (preserves the pre-existing bug where system_prompt is undefined)
 Return statement (lines 995-1001): Execution log and updated messages
+
+
+** it is completed but one issue i have found from there.
+** in the current workflow folder still it is using exisitng files functions and something like below , if we delete that older folder which contain sorchestrator and other things means our current app wont work, so we need to
+keeep all functions and everything in one workflow folder only
 ===============================================================================
 
 
