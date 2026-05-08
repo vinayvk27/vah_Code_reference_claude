@@ -1,127 +1,52 @@
+TASK: Generate a complete API handoff document for our React frontend developer. The document must describe the authentication flow EXACTLY as currently implemented in the codebase — not how it was specified.
 
-Context
-The RMS workflow refactor is complete — all nodes, graph, state, tools, agents, prompts, and config are migrated to app/workflows/rms_workflow/. However, the workflow still imports from app/agents/ for two things:
-python# In app/workflows/rms_workflow/nodes.py and tools.py
-from app.agents.rms_tools import (
-    tool_list_tasks, tool_create_task, tool_list_my_tasks,
-    tool_log_hours, tool_log_bulk_hours,
-    tool_list_pending_approvals, tool_approve_worklog,
-)
-from app.agents.action_parser import extract_actions, strip_actions
-We plan to delete app/agents/ entirely. So we must move these imports to their correct final homes first.
-Goal
-Make rms_workflow/ fully self-contained for RMS-specific logic, and relocate the truly generic helper (action_parser.py) to a shared utility location. After this is done, app/agents/ can be deleted with zero broken imports.
-Decisions (already made — don't re-debate)
+REPORT FORMAT:
 
-rms_tools.py is RMS-specific → move into app/workflows/rms_workflow/
-action_parser.py is generic (regex-based <<ACTION>> tag parsing, no RMS business logic) → move to a shared utility location since it'll be reused by SCM/HRMS workflows later
-Database, DAO, RAG controller, services → stay where they are. Workflows import them as needed. Don't move infrastructure.
+## 1. Auth Mode Behavior
+- What environment variable controls auth mode
+- What values it accepts and what each value does
+- Default value if env var is absent
+- Where in the code this is read
 
-Target Final Structure
-app/
-├── workflows/
-│   ├── __init__.py
-│   ├── router.py
-│   └── rms_workflow/
-│       ├── __init__.py
-│       ├── graph.py
-│       ├── state.py
-│       ├── nodes.py
-│       ├── tools.py              ← thin wrappers (existing)
-│       ├── rms_tools.py          ← MOVED FROM app/agents/rms_tools.py
-│       ├── agents.py
-│       ├── prompts.py
-│       └── config.py
-│
-├── utils/                        ← NEW (or use existing app/core/ if it exists)
-│   ├── __init__.py
-│   └── action_parser.py          ← MOVED FROM app/agents/action_parser.py
-│
-├── agents/                       ← TO BE DELETED at the end
-│   ├── rms_tools.py              ← will be deleted (moved)
-│   ├── action_parser.py          ← will be deleted (moved)
-│   └── orchestrator.py           ← already obsolete from prior refactor
-Step-by-Step Instructions
-Step 1: Verify before moving
+## 2. Login Endpoint — Exact Current Behavior
+- Full URL path
+- HTTP method
+- Required headers
+- Exact request body schema (field names, types, required vs optional)
+- Show 2 example request bodies — one for prod mode, one for dev mode
+- Exact success response body (field names, types, including any nested 
+  objects like user_profile — show the FULL shape)
+- All possible error responses with their HTTP codes and exact 
+  "detail" message strings the user might see
 
-view the directory app/agents/ and list everything in it.
-view both app/agents/rms_tools.py and app/agents/action_parser.py to confirm what we're moving.
-Search the entire codebase for any imports of app.agents.rms_tools, app.agents.action_parser, and app.agents.orchestrator using grep/search. List every file that imports from these paths. Print this list before moving anything.
+## 3. JWT Payload Shape
+List every field in the JWT payload (decode and inspect a sample if 
+needed). Mark which fields are critical for the frontend to read.
 
-Step 2: Move rms_tools.py into the workflow
+## 4. localStorage Contract
+- Which keys must the frontend store after login
+- What is the value of each key
+- When should each key be cleared (on logout, 401, etc.)
 
-Copy app/agents/rms_tools.py → app/workflows/rms_workflow/rms_tools.py. Preserve content exactly.
-Update app/workflows/rms_workflow/tools.py import:
+## 5. Test Credentials (Dev Mode)
+- Run a query on the resources table to get the dept values for 
+  emp_no 3428, 3010, 3117
+- Show the actual emp_no/dept pairs the React dev should use to test
 
-python   # OLD
-   from app.agents.rms_tools import (...)
-   # NEW
-   from app.workflows.rms_workflow.rms_tools import (...)
+## 6. What Other Endpoints Changed
+- List every endpoint that was modified in this auth-bypass change
+- For each, note if request/response shape changed or stayed the same
 
-Update app/workflows/rms_workflow/nodes.py import the same way (if nodes.py imports rms_tools directly anywhere).
-Update any other workflow file that imports from app.agents.rms_tools → switch to relative path from .rms_tools import ... or absolute path from app.workflows.rms_workflow.rms_tools import ... (pick one style and stay consistent — prefer absolute for clarity).
+## 7. Anything the React Dev Should Know
+- Edge cases discovered during implementation
+- Caveats (e.g., "dept comparison is case-insensitive on the backend")
+- Anything unusual or different from a textbook auth flow
 
-Step 3: Decide where action_parser.py goes
+Format the entire report as plain markdown text. The output will be 
+copy-pasted into a chat message and sent to the React developer.
 
-Check if app/utils/, app/core/, or app/common/ already exists. If one exists, use it. If none exist, create app/utils/.
-Copy app/agents/action_parser.py → app/utils/action_parser.py (or chosen location). Preserve content exactly.
-Make sure that location has an __init__.py. Create one if missing.
-
-Step 4: Update action_parser imports
-Replace every occurrence of:
-pythonfrom app.agents.action_parser import extract_actions, strip_actions
-with:
-pythonfrom app.utils.action_parser import extract_actions, strip_actions
-This includes (at minimum):
-
-app/workflows/rms_workflow/nodes.py
-Any other file the grep search in Step 1 found
-
-Step 5: Verify nothing is broken
-
-Run python -c "from app.workflows.rms_workflow.nodes import *" — must succeed.
-Run python -c "from app.workflows.rms_workflow.tools import *" — must succeed.
-Run python -c "from app.utils.action_parser import extract_actions, strip_actions" — must succeed.
-Run a grep across the whole app/ folder for app.agents. (with the trailing dot) — there should be zero results outside of app/agents/ itself. If any results appear, fix those imports too.
-
-Step 6: Delete app/agents/
-Only after Step 5 is fully clean:
-
-Delete app/agents/rms_tools.py
-Delete app/agents/action_parser.py
-Delete app/agents/orchestrator.py (already obsolete)
-Delete any remaining files in app/agents/
-Delete the empty app/agents/ folder itself
-Re-run the grep from Step 5 point 4 — confirm zero results.
-
-Step 7: Final end-to-end verification
-
-Run python -c "from app.workflows.router import get_workflow; g = get_workflow('RMS'); print(g)" — should print the compiled graph.
-Start the FastAPI app (or import app.routes.chat_route / app.controllers.chat_controller) — must succeed with no import errors.
-If a test exists, run it. Otherwise, manually test one RMS chat query (creator, reviewer, or approver path).
-
-Constraints
-
-Do not change any function logic. This is purely a file relocation + import update task.
-Do not move infrastructure (db_schema.py, SessionLocal, RAGController, timesheet_store.py). Workflows import them as-is.
-Do not create a common/ folder inside workflows/ — keep action_parser.py at the app level since it's not workflow-specific.
-Use absolute imports (from app.workflows.rms_workflow.rms_tools import ...) over relative imports for cross-module clarity. Within the same workflow folder, relative imports (from .rms_tools import ...) are fine.
-After deletion, app/agents/ must not exist at all.
-
-Deliverables
-
-The grep result from Step 1 (list of every file that referenced app.agents.*)
-The decision on where action_parser.py landed (app/utils/ vs other) and why
-Confirmation of all 4 verification commands in Step 5 passing
-Confirmation that app/agents/ is fully deleted
-A short summary at the end: every file moved, every import updated, anything you noticed during cleanup that might warrant a follow-up (e.g., dead code in rms_tools.py, unused exports — note but don't fix in this pass).
-
-Start by running the grep in Step 1.
-
-Why this prompt is structured this way
-A few specifics worth flagging so you can sanity-check Claude Code's work:
-Grep first, move second. The biggest risk in a "delete this folder" cleanup is missing an import somewhere unexpected (a test file, a script, a config). Step 1 forces a full audit before any file moves.
-action_parser.py placement. I suggested app/utils/ because it's the standard FastAPI convention for shared helpers and matches your "global things stay shared" principle. If your codebase already has app/core/ or app/common/, Claude Code will use that instead — the prompt allows it.
-Absolute over relative imports within workflow files makes it obvious at a glance that rms_tools belongs to rms_workflow (vs. some shared location). When you add SCM later, this consistency pays off.
-Verification before deletion. Step 5 must pass before Step 6 runs. The grep for app.agents. after deletion is the final safety net — if anything still references the old path, you'll catch it before runtime errors hit.
-One thing I deliberately did NOT include: moving timesheet_store.py into rms_workflow/. Even though it's RMS-specific right now, it's a service/data layer, not workflow logic — moving it would couple data access to workflow organization, which gets messy when other parts of the app (e.g., direct API endpoints like /api/v1/me/timesheet) also need it. Services stay shared. If you disagree, tell me and I'll add a step for it.Opus 4.7Claude is AI and can make mistakes. Please double-
+DO NOT:
+- Document features not actually present in the code
+- Speculate about future changes
+- Include any information about the LDAP code path beyond "still 
+  works as before, no contract changes there"
