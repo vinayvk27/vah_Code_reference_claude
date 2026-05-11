@@ -1,347 +1,54 @@
-TASK H2: Wire HRMS collection end-to-end. Add service layer (queries), tools (8 functions), update agent prompts in DB, and add HRMS branches to the orchestrator's 3 agent nodes (creator/reviewer/approver). Mirror RMS structure exactly. Do NOT touch RMS code.
+TASK H2.1: Create the HRMS service layer. This task ONLY creates app/services/hrms_store.py with database query functions. No tools, no orchestrator changes.
 
-PRECONDITIONS (verify before starting):
-- hr_leave_types_demo, hr_leave_requests_demo, hr_payslips_demo tables exist
-- SQLAlchemy models HrLeaveType, HrLeaveRequest, HrPayslip exist in db_schema.py
-- Seed data present: 3 leave types, 6 requests, 12 payslips
-- HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER agents already exist in the `agents` table
+PRECONDITIONS:
+- Tables hr_leave_types_demo, hr_leave_requests_demo, hr_payslips_demo exist
+- Models HrLeaveType, HrLeaveRequest, HrPayslip exist in app/models/db_schema.py
 
-If any precondition fails, STOP and report — do not proceed.
-
-==============================================================================
-STEP 1 — Create hrms_store.py service layer
-==============================================================================
 Create file: app/services/hrms_store.py
 
-This mirrors timesheet_store.py for HRMS. All functions take a `db: Session` parameter and run SQL queries.
-
-Functions to implement:
-
-  list_leave_types(db) -> list[dict]
-    Returns all leave types: [{leave_type_id, name, max_days, created_by, created_date}]
-    Date columns converted to YYYY-MM-DD strings.
-
-  create_leave_type(db, name, max_days, created_by) -> dict
-    Inserts into hr_leave_types_demo. Sets CreatedDate to today.
-    Returns the created row as dict.
-
-  list_leave_requests(db, resource_id=None, is_approved=None) -> list[dict]
-    Joins hr_leave_requests_demo with hr_leave_types_demo to get leave type names.
-    Filters by resource_id if provided.
-    Filters by is_approved if provided: "PENDING", "APPROVED", "REJECTED".
-    Returns: [{request_id, resource_id, leave_type_id, leave_type_name, from_date, to_date, num_days, reason, status, approved_by, approver_remarks, created_date}]
-    Status mapping: NULL→"PENDING", 1→"APPROVED", 0→"REJECTED"
-    Dates as YYYY-MM-DD strings.
-
-  create_leave_request(db, resource_id, leave_type_id, from_date, to_date, reason) -> dict
-    Inserts a new pending request (IsApproved=NULL).
-    NumDays computed as (to_date - from_date) + 1 (inclusive).
-    CreatedDate = today.
-    Returns the created row.
-
-  approve_leave_request(db, request_id, approver_id, decision, remarks="") -> dict
-    Updates row: IsApproved = 1 (APPROVED) or 0 (REJECTED), ApprovedBy, ApprovedDate=today, ApproverRemarks.
-    decision parameter: "APPROVED" or "REJECTED" (uppercase string).
-    Returns {success, request_id, new_status, approver}.
-    If request not found or already decided, return {"error": "..."} dict.
-
-  compute_leave_balance(db, resource_id) -> list[dict]
-    For each leave type, compute remaining days = MaxDays - SUM(NumDays of APPROVED requests for this resource for this leave type).
-    Returns: [{leave_type_id, leave_type_name, max_days, used_days, remaining_days}]
-    Only count IsApproved=1 (approved). Ignore pending and rejected.
-
-  list_payslips(db, resource_id=None, pay_month=None) -> list[dict]
-    Returns payslips. Filter by resource_id if provided. Filter by pay_month if provided.
-    Returns: [{payslip_id, resource_id, pay_month, basic, allowances, deductions, net_pay, created_by, created_date}]
-
-  create_payslip(db, resource_id, pay_month, basic, allowances, deductions, created_by) -> dict
-    Inserts new payslip. NetPay = basic + allowances - deductions. CreatedDate = today.
-    Returns the created row.
-
-==============================================================================
-STEP 2 — Create hrms_tools.py with 8 tool functions
-==============================================================================
-Create file: app/agents/hrms_tools.py  (or app/workflows/hrms_workflow/tools.py if the workflows refactor structure is now in place — check which pattern is used and follow it)
-
-For each tool function:
-  - Opens its own SessionLocal at start, closes in `finally`
-  - Checks user_context.persona — raises PermissionError if wrong persona
-  - Returns a formatted human-readable string (the LLM summarizes it)
-
-CREATOR persona tools:
-
-  tool_create_leave_type(name: str, max_days: int, user_context: dict) -> str
-    Requires persona == "creator". Calls hrms_store.create_leave_type.
-
-  tool_create_payslip(resource_id: int, pay_month: str, basic: float, allowances: float, deductions: float, user_context: dict) -> str
-    Requires persona == "creator". Calls hrms_store.create_payslip.
-    pay_month format: "YYYY-MM"
-
-FILLER persona tools:
-
-  tool_list_my_leave_balance(user_context: dict) -> str
-    Requires persona == "reviewer". Uses user_context.user_id as resource_id.
-    Calls compute_leave_balance. Returns formatted table.
-
-  tool_request_leave(leave_type_id: int, from_date: str, to_date: str, reason: str, user_context: dict) -> str
-    Requires persona == "reviewer". Uses user_context.user_id as resource_id.
-    Validates: from_date <= to_date.
-    Calls create_leave_request.
-
-  tool_my_payslip(pay_month: str, user_context: dict) -> str
-    Requires persona == "reviewer". Uses user_context.user_id as resource_id.
-    Calls list_payslips. If no result, returns "No payslip found for that month".
-
-  tool_list_my_leave_requests(user_context: dict) -> str
-    Requires persona == "reviewer". Uses user_context.user_id as resource_id.
-    Calls list_leave_requests. Returns all requests for this user (any status).
-
-APPROVER persona tools:
-
-  tool_list_pending_leaves(user_context: dict) -> str
-    Requires persona == "approver".
-    Calls list_leave_requests with is_approved="PENDING". Returns formatted table.
-
-  tool_decide_leave(request_id: int, decision: str, remarks: str, user_context: dict) -> str
-    Requires persona == "approver".
-    decision: "APPROVED" or "REJECTED".
-    Calls approve_leave_request with approver_id from user_context.user_id.
-
-  tool_view_any_payslip(resource_id: int, pay_month: str, user_context: dict) -> str
-    Requires persona == "approver".
-    Calls list_payslips. Used when approver wants to see a team member's payslip.
-
-==============================================================================
-STEP 3 — Update agent prompts in DB
-==============================================================================
-Create script update_hrms_prompts.py at project root:
-
-  from app.dao.database import SessionLocal
-  from app.models.db_schema import Agent
-
-  CREATOR_PROMPT = """You are the HRMS Creator agent for Data Patterns. You help HR administrators define leave types and generate payslips.
-
-  Your tools:
-    - tool_create_leave_type: define a new company-wide leave type
-      args: {"name": "<string>", "max_days": <int>}
-    - tool_create_payslip: generate a payslip for an employee
-      args: {"resource_id": <int>, "pay_month": "YYYY-MM", "basic": <float>, "allowances": <float>, "deductions": <float>}
-
-  When the user gives all required details, IMMEDIATELY emit the action protocol (no 'shall I proceed?'). If asked to approve a leave or submit a request, politely refuse:
-  'I only define leave types and generate payslips. To approve leaves, use the Approver agent. To submit a leave request, use the Filler agent.'"""
-
-  FILLER_PROMPT = """You are the HRMS Filler agent for Data Patterns. You help employees check their leave balance, submit leave requests, and view their own payslips.
-
-  Your tools:
-    - tool_list_my_leave_balance: show remaining leave days by type (no args)
-    - tool_request_leave: submit a new leave request
-      args: {"leave_type_id": <int>, "from_date": "YYYY-MM-DD", "to_date": "YYYY-MM-DD", "reason": "<string>"}
-    - tool_my_payslip: view your payslip for a month
-      args: {"pay_month": "YYYY-MM"}
-    - tool_list_my_leave_requests: list all your leave requests (no args)
-
-  When the user gives all required details for a leave request, IMMEDIATELY emit the action protocol. If asked to view another employee's payslip or approve a request, politely refuse:
-  'I only handle your own data. To view someone else's payslip, you need approver access. To approve leaves, use the Approver agent.'"""
-
-  APPROVER_PROMPT = """You are the HRMS Approver agent for Data Patterns. You review and approve/reject employee leave requests, and you can view any employee's payslip.
-
-  Your tools:
-    - tool_list_pending_leaves: show all pending leave requests (no args)
-    - tool_decide_leave: approve or reject a leave request
-      args: {"request_id": <int>, "decision": "APPROVED" or "REJECTED", "remarks": "<string>"}
-    - tool_view_any_payslip: view any employee's payslip
-      args: {"resource_id": <int>, "pay_month": "YYYY-MM"}
-
-  When deciding on a leave, IMMEDIATELY emit the action protocol. If asked to create leave types or submit a request, politely refuse:
-  'I only review and approve leaves. To define new leave types, use the Creator agent. To submit your own request, use the Filler agent.'"""
-
-  s = SessionLocal()
-  try:
-      for name, prompt in [("HRMS_CREATOR", CREATOR_PROMPT), ("HRMS_REVIEWER", FILLER_PROMPT), ("HRMS_APPROVER", APPROVER_PROMPT)]:
-          agent = s.query(Agent).filter_by(agent_name=name).first()
-          if agent:
-              agent.system_prompt = prompt
-              print(f"Updated {name} prompt")
-          else:
-              print(f"!! Agent {name} not found")
-      s.commit()
-  finally:
-      s.close()
-
-Run: python update_hrms_prompts.py
-
-==============================================================================
-STEP 4 — Update orchestrator: add HRMS branches to all 3 agent nodes
-==============================================================================
-For each of the 3 agent nodes (creator_agent_node, reviewer_agent_node, approver_agent_node), add an HRMS branch that mirrors the RMS branch.
-
-The pattern:
-
-  selected_collection = state.get("selected_collection", "RMS")
-
-  if selected_collection == "RMS":
-      # ... existing RMS logic (unchanged) ...
-  elif selected_collection == "HRMS":
-      # NEW HRMS logic — see below
-  else:
-      # existing fallback for SCM/FINANCE generic agents
-
-For each HRMS branch:
-
-A. Fetch DB-backed snapshot via hrms_store.
-
-   creator_agent_node HRMS snapshot:
-     - leave_types = hrms_store.list_leave_types(db)
-     - payslips_recent = hrms_store.list_payslips(db) limited to last 30
-     - snapshot_block lists both
-
-   reviewer_agent_node HRMS snapshot:
-     - leave_balance = hrms_store.compute_leave_balance(db, user_emp_id)
-     - my_requests = hrms_store.list_leave_requests(db, resource_id=user_emp_id)
-     - my_payslips = hrms_store.list_payslips(db, resource_id=user_emp_id)
-     - snapshot_block lists all three
-
-   approver_agent_node HRMS snapshot:
-     - pending_leaves = hrms_store.list_leave_requests(db, is_approved="PENDING")
-     - leave_types = hrms_store.list_leave_types(db)
-     - snapshot_block lists both
-
-B. Build system_prompt:
-   - Same structure as RMS: load base_prompt from agents table (HRMS_CREATOR / HRMS_REVIEWER / HRMS_APPROVER)
-   - Then append CURRENT USER CONTEXT, CONVERSATION HISTORY IS AUTHORITATIVE, HOW TO PERFORM ACTIONS, CURRENT DATA SNAPSHOT sections
-   - Same action protocol explanation, just with HRMS tools listed:
-
-     For CREATOR section:
-       Available tools for HRMS CREATOR:
-       - tool_create_leave_type: define a leave type
-         args: {"name": "<string>", "max_days": <int>}
-       - tool_create_payslip: generate a payslip
-         args: {"resource_id": <int>, "pay_month": "YYYY-MM", "basic": <float>, "allowances": <float>, "deductions": <float>}
-
-     For FILLER (reviewer) section:
-       Available tools for HRMS FILLER:
-       - tool_list_my_leave_balance (no args)
-       - tool_request_leave
-         args: {"leave_type_id": <int>, "from_date": "YYYY-MM-DD", "to_date": "YYYY-MM-DD", "reason": "<string>"}
-       - tool_my_payslip
-         args: {"pay_month": "YYYY-MM"}
-       - tool_list_my_leave_requests (no args)
-
-     For APPROVER section:
-       Available tools for HRMS APPROVER:
-       - tool_list_pending_leaves (no args)
-       - tool_decide_leave
-         args: {"request_id": <int>, "decision": "APPROVED" or "REJECTED", "remarks": "<string>"}
-       - tool_view_any_payslip
-         args: {"resource_id": <int>, "pay_month": "YYYY-MM"}
-
-C. Define the @tool decorated wrappers (mirror RMS pattern):
-
-   In creator_agent_node HRMS branch:
-     @tool
-     def create_leave_type(name: str, max_days: int) -> str:
-         """Define a new leave type."""
-         return hrms_tools.tool_create_leave_type(name, max_days, user_context)
-     @tool
-     def create_payslip(resource_id: int, pay_month: str, basic: float, allowances: float, deductions: float) -> str:
-         """Create a payslip."""
-         return hrms_tools.tool_create_payslip(resource_id, pay_month, basic, allowances, deductions, user_context)
-     llm_with_tools = llm.bind_tools([create_leave_type, create_payslip])
-
-   In reviewer_agent_node HRMS branch:
-     @tool
-     def list_my_leave_balance() -> str: return hrms_tools.tool_list_my_leave_balance(user_context)
-     @tool
-     def request_leave(leave_type_id: int, from_date: str, to_date: str, reason: str) -> str:
-         return hrms_tools.tool_request_leave(leave_type_id, from_date, to_date, reason, user_context)
-     @tool
-     def my_payslip(pay_month: str) -> str: return hrms_tools.tool_my_payslip(pay_month, user_context)
-     @tool
-     def list_my_leave_requests() -> str: return hrms_tools.tool_list_my_leave_requests(user_context)
-     llm_with_tools = llm.bind_tools([list_my_leave_balance, request_leave, my_payslip, list_my_leave_requests])
-
-   In approver_agent_node HRMS branch:
-     @tool
-     def list_pending_leaves() -> str: return hrms_tools.tool_list_pending_leaves(user_context)
-     @tool
-     def decide_leave(request_id: int, decision: str, remarks: str = "") -> str:
-         return hrms_tools.tool_decide_leave(request_id, decision, remarks, user_context)
-     @tool
-     def view_any_payslip(resource_id: int, pay_month: str) -> str:
-         return hrms_tools.tool_view_any_payslip(resource_id, pay_month, user_context)
-     llm_with_tools = llm.bind_tools([list_pending_leaves, decide_leave, view_any_payslip])
-
-D. Action dispatch (mirror RMS):
-
-   Action parser dispatch in creator HRMS branch:
-     if tool_name == "tool_create_leave_type": result = create_leave_type.invoke(tool_args)
-     elif tool_name == "tool_create_payslip": result = create_payslip.invoke(tool_args)
-
-   Action parser dispatch in reviewer HRMS branch:
-     if tool_name == "tool_list_my_leave_balance": result = list_my_leave_balance.invoke(tool_args)
-     elif tool_name == "tool_request_leave": result = request_leave.invoke(tool_args)
-     elif tool_name == "tool_my_payslip": result = my_payslip.invoke(tool_args)
-     elif tool_name == "tool_list_my_leave_requests": result = list_my_leave_requests.invoke(tool_args)
-
-   Action parser dispatch in approver HRMS branch:
-     if tool_name == "tool_list_pending_leaves": result = list_pending_leaves.invoke(tool_args)
-     elif tool_name == "tool_decide_leave": result = decide_leave.invoke(tool_args)
-     elif tool_name == "tool_view_any_payslip": result = view_any_payslip.invoke(tool_args)
-
-E. Imports at top of orchestrator: from app.services import hrms_store, from app.agents import hrms_tools (or matching workflows path).
-
-==============================================================================
-STEP 5 — Update parse_intent_node keywords for HRMS
-==============================================================================
-The existing keyword logic from Task R2 was tuned for RMS. Add HRMS-aware keywords:
-
-  APPROVER keywords (additions): 'approve leave', 'pending leaves', 'leave approvals'
-  CREATOR keywords (additions): 'create leave type', 'new leave type', 'add leave type', 'generate payslip', 'create payslip'
-  FILLER keywords (additions): 'request leave', 'apply leave', 'apply for leave', 'leave balance', 'my leaves', 'my payslip', 'show my payslip'
-  QUERY keywords stay the same.
-
-Keep existing RMS keywords intact. Detection priority unchanged.
-
-==============================================================================
-STEP 6 — Verify
-==============================================================================
-A. python -c "import main; print('OK')"
-B. Restart server.
-C. Test as 2633 (JUNIOR, RMS+HRMS Filler):
-   1. Login as 2633.
-   2. Dashboard should show TWO tiles: RMS Assistant + HRMS Assistant.
-   3. Click HRMS Assistant. Welcome should mention only filler capabilities.
-   4. Send: "what's my leave balance?"
-      → tool_list_my_leave_balance fires. Returns balance computed from MaxDays - approved days.
-   5. Send: "I want to apply for leave from 2026-06-10 to 2026-06-12, type 1, reason: personal work"
-      → tool_request_leave fires. New row created in hr_leave_requests_demo (IsApproved=NULL).
-   6. Verify in DB: SELECT * FROM hr_leave_requests_demo WHERE Resource=2633 ORDER BY RequestIdx DESC LIMIT 1;
-
-D. Test as 2830 (SENIOR, full HRMS):
-   1. Login as 2830.
-   2. Click HRMS Assistant. Welcome mentions all 3 capabilities.
-   3. Send: "show me pending leave requests"
-      → tool_list_pending_leaves fires. Lists all pending (should include 2633's new one + earlier seed rows 4, 5, 6).
-   4. Send: "approve request 5 with remarks 'go ahead'"
-      → tool_decide_leave fires. Row 5 updated: IsApproved=1, ApprovedBy=2830.
-   5. Send: "show me 2633's payslip for 2026-03"
-      → tool_view_any_payslip fires. Returns 2633's March payslip.
-
-E. RBAC test:
-   1. Login as 2633 again. Open HRMS Assistant.
-   2. Send: "approve request 4"
-      → Should be denied politely (2633 has no approver persona).
-   3. Send: "show me 2830's payslip"
-      → Filler refuses; "I only see my own data."
+Functions (all take db: Session as first arg; convert dates to YYYY-MM-DD strings in output):
+
+1) list_leave_types(db) -> list[dict]
+   Returns all rows from hr_leave_types_demo as:
+   {leave_type_id, name, max_days, created_by, created_date}
+
+2) create_leave_type(db, name, max_days, created_by) -> dict
+   Inserts row. CreatedDate = today. Returns created row.
+
+3) list_leave_requests(db, resource_id=None, is_approved=None) -> list[dict]
+   Joins with hr_leave_types_demo to get leave_type_name.
+   resource_id filter: WHERE Resource = resource_id (if provided).
+   is_approved filter: "PENDING" → IS NULL, "APPROVED" → =1, "REJECTED" → =0.
+   Returns: {request_id, resource_id, leave_type_id, leave_type_name, from_date, to_date, num_days, reason, status, approved_by, approver_remarks, created_date}
+   status: NULL→"PENDING", 1→"APPROVED", 0→"REJECTED"
+
+4) create_leave_request(db, resource_id, leave_type_id, from_date, to_date, reason) -> dict
+   NumDays = (to_date - from_date).days + 1.
+   IsApproved = NULL. CreatedDate = today. Returns created row.
+
+5) approve_leave_request(db, request_id, approver_id, decision, remarks="") -> dict
+   decision: "APPROVED" → IsApproved=1; "REJECTED" → IsApproved=0.
+   Sets ApprovedBy, ApprovedDate=today, ApproverRemarks.
+   Returns {success, request_id, new_status, approver}.
+   If not found, returns {"error": "Request not found"}.
+
+6) compute_leave_balance(db, resource_id) -> list[dict]
+   For each leave_type: sum NumDays where Resource=resource_id and IsApproved=1.
+   Returns: [{leave_type_id, leave_type_name, max_days, used_days, remaining_days}]
+
+7) list_payslips(db, resource_id=None, pay_month=None) -> list[dict]
+   Returns: {payslip_id, resource_id, pay_month, basic, allowances, deductions, net_pay, created_by, created_date}
+
+8) create_payslip(db, resource_id, pay_month, basic, allowances, deductions, created_by) -> dict
+   NetPay = basic + allowances - deductions. CreatedDate = today.
+
+VERIFY:
+A. python -c "from app.services import hrms_store; print('imports OK')"
+B. Run a quick test:
+   python -c "from app.dao.database import SessionLocal; from app.services import hrms_store; s=SessionLocal(); print('Leave types:', len(hrms_store.list_leave_types(s))); print('Requests:', len(hrms_store.list_leave_requests(s))); print('Payslips:', len(hrms_store.list_payslips(s))); print('2633 balance:', hrms_store.compute_leave_balance(s, 2633)); s.close()"
+   Expected: 3 leave types, 6 requests, 12 payslips, balance shows 3 leave types with remaining days for 2633
 
 REPORT BACK:
-- Confirmation each step completed (files created, models added, prompts updated)
-- For each test 6C-1 through 6E-3: agent reply (3-4 lines) + DB verification where applicable
-- Any errors encountered
-- Cross-verify: GET /api/v1/me/timesheet still works for Vinay (RMS unbroken)
-
-DO NOT:
-- Touch RMS code paths
-- Modify auth, RBAC tables, or db_schema for non-HRMS models
-- Add new endpoints
-- Change parse_intent_node logic beyond adding HRMS keywords
+- The file content (or confirmation it was created)
+- Output of the verify command
+- Any errors
