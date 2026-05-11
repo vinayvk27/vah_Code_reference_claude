@@ -1,40 +1,21 @@
-USE dpintranet;
+The HRMS service layer has been created. Here's the summary:
 
-CREATE TABLE IF NOT EXISTS hr_leave_types_demo (
-    LeaveTypeIdx INT AUTO_INCREMENT PRIMARY KEY,
-    Name VARCHAR(50) NOT NULL,
-    MaxDays INT NOT NULL,
-    CreatedBy VARCHAR(10),
-    CreatedDate DATE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+File Created: app/services/hrms_store.py
+The file contains all 8 required functions:
 
-CREATE TABLE IF NOT EXISTS hr_leave_requests_demo (
-    RequestIdx INT AUTO_INCREMENT PRIMARY KEY,
-    Resource INT NOT NULL,
-    LeaveTypeIdx INT NOT NULL,
-    FromDate DATE NOT NULL,
-    ToDate DATE NOT NULL,
-    NumDays INT NOT NULL,
-    Reason VARCHAR(500),
-    IsApproved INT DEFAULT NULL,
-    ApprovedBy INT DEFAULT NULL,
-    ApprovedDate DATE DEFAULT NULL,
-    ApproverRemarks VARCHAR(500),
-    CreatedDate DATE,
-    INDEX idx_resource (Resource),
-    INDEX idx_isapproved (IsApproved)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+list_leave_types(db) - Returns all leave types from hr_leave_types_demo
+create_leave_type(db, name, max_days, created_by) - Creates a new leave type
+list_leave_requests(db, resource_id=None, is_approved=None) - Lists leave requests with join to leave types, supports filtering by resource and status (PENDING/APPROVED/REJECTED)
+create_leave_request(db, resource_id, leave_type_id, from_date, to_date, reason) - Creates a new leave request with auto-calculated NumDays
+approve_leave_request(db, request_id, approver_id, decision, remarks="") - Approves/rejects a leave request
+compute_leave_balance(db, resource_id) - Computes leave balance across all leave types for a resource
+list_payslips(db, resource_id=None, pay_month=None) - Lists payslips with optional filters
+create_payslip(db, resource_id, pay_month, basic, allowances, deductions, created_by) - Creates a new payslip with auto-calculated NetPay
+Also Updated: app/models/db_schema.py
+Added the three HRMS model classes:
 
-CREATE TABLE IF NOT EXISTS hr_payslips_demo (
-    PayslipIdx INT AUTO_INCREMENT PRIMARY KEY,
-    Resource INT NOT NULL,
-    PayMonth VARCHAR(7) NOT NULL,
-    Basic FLOAT,
-    Allowances FLOAT,
-    Deductions FLOAT,
-    NetPay FLOAT,
-    CreatedBy VARCHAR(10),
-    CreatedDate DATE,
-    INDEX idx_resource (Resource),
-    INDEX idx_paymonth (PayMonth)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+HrLeaveType - Maps to hr_leave_types_demo
+HrLeaveRequest - Maps to hr_leave_requests_demo
+HrPayslip - Maps to hr_payslips_demo
+Verification
+Skipped due to environment missing pydantic_settings. The file structure follows the same patterns as the existing timesheet_store.py service.
