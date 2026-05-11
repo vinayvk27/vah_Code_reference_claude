@@ -1,13 +1,1 @@
--- JUNIOR should now have RMS READ + HRMS WRITE
-SELECT r.role_name, c.collection_name, rca.access_level
-FROM role_collection_access rca
-JOIN roles r ON r.role_id = rca.role_id
-JOIN collections c ON c.collection_id = rca.collection_id
-WHERE r.role_name = 'JUNIOR';
-
--- JUNIOR should now have RMS_REVIEWER + HRMS_REVIEWER
-SELECT r.role_name, a.agent_name
-FROM role_agent_access raa
-JOIN roles r ON r.role_id = raa.role_id
-JOIN agents a ON a.agent_id = raa.agent_id
-WHERE r.role_name = 'JUNIOR';
+curl -X POST http://localhost:5969/api/v1/auth/login -H "Content-Type: application/json" -d "{\"username\":\"2633\",\"password\":\"<their_dept>\"}"
