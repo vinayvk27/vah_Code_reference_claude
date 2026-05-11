@@ -1,52 +1,208 @@
-TASK: Generate a complete API handoff document for our React frontend developer. The document must describe the authentication flow EXACTLY as currently implemented in the codebase — not how it was specified.
+TASK H1: Add HRMS collection with 3 demo tables, seed sample data, add SQLAlchemy models, and update RBAC seed to grant HRMS access to 4 new test users. Do NOT add any HRMS agent logic, tools, or services yet — those come in H2.
 
-REPORT FORMAT:
+CONSTRAINTS:
+- Do NOT touch RMS tables, tools, agents, or orchestrator.
+- The HRMS agents (HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER) already exist in the `agents` table from earlier seeding — DO NOT re-create them. We just grant access to roles in this task.
+- Existing test users (3428, 3010, 3117) keep their RMS access exactly as is — no HRMS for them.
 
-## 1. Auth Mode Behavior
-- What environment variable controls auth mode
-- What values it accepts and what each value does
-- Default value if env var is absent
-- Where in the code this is read
+==============================================================================
+STEP 1 — Create the 3 demo tables
+==============================================================================
+Create script create_hrms_demo_tables.py at project root that:
 
-## 2. Login Endpoint — Exact Current Behavior
-- Full URL path
-- HTTP method
-- Required headers
-- Exact request body schema (field names, types, required vs optional)
-- Show 2 example request bodies — one for prod mode, one for dev mode
-- Exact success response body (field names, types, including any nested 
-  objects like user_profile — show the FULL shape)
-- All possible error responses with their HTTP codes and exact 
-  "detail" message strings the user might see
+1) Connects via SessionLocal/engine from app.dao.database
 
-## 3. JWT Payload Shape
-List every field in the JWT payload (decode and inspect a sample if 
-needed). Mark which fields are critical for the frontend to read.
+2) Executes CREATE TABLE IF NOT EXISTS for these 3 tables:
 
-## 4. localStorage Contract
-- Which keys must the frontend store after login
-- What is the value of each key
-- When should each key be cleared (on logout, 401, etc.)
+CREATE TABLE IF NOT EXISTS hr_leave_types_demo (
+    LeaveTypeIdx INT AUTO_INCREMENT PRIMARY KEY,
+    Name VARCHAR(50) NOT NULL,
+    MaxDays INT NOT NULL,
+    CreatedBy VARCHAR(10),
+    CreatedDate DATE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-## 5. Test Credentials (Dev Mode)
-- Run a query on the resources table to get the dept values for 
-  emp_no 3428, 3010, 3117
-- Show the actual emp_no/dept pairs the React dev should use to test
+CREATE TABLE IF NOT EXISTS hr_leave_requests_demo (
+    RequestIdx INT AUTO_INCREMENT PRIMARY KEY,
+    Resource INT NOT NULL,
+    LeaveTypeIdx INT NOT NULL,
+    FromDate DATE NOT NULL,
+    ToDate DATE NOT NULL,
+    NumDays INT NOT NULL,
+    Reason VARCHAR(500),
+    IsApproved INT DEFAULT NULL,
+    ApprovedBy INT DEFAULT NULL,
+    ApprovedDate DATE DEFAULT NULL,
+    ApproverRemarks VARCHAR(500),
+    CreatedDate DATE,
+    INDEX idx_resource (Resource),
+    INDEX idx_isapproved (IsApproved)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-## 6. What Other Endpoints Changed
-- List every endpoint that was modified in this auth-bypass change
-- For each, note if request/response shape changed or stayed the same
+CREATE TABLE IF NOT EXISTS hr_payslips_demo (
+    PayslipIdx INT AUTO_INCREMENT PRIMARY KEY,
+    Resource INT NOT NULL,
+    PayMonth VARCHAR(7) NOT NULL,
+    Basic FLOAT,
+    Allowances FLOAT,
+    Deductions FLOAT,
+    NetPay FLOAT,
+    CreatedBy VARCHAR(10),
+    CreatedDate DATE,
+    INDEX idx_resource (Resource),
+    INDEX idx_paymonth (PayMonth)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-## 7. Anything the React Dev Should Know
-- Edge cases discovered during implementation
-- Caveats (e.g., "dept comparison is case-insensitive on the backend")
-- Anything unusual or different from a textbook auth flow
+3) Seed sample data (idempotent — skip insert if same key fields already exist):
 
-Format the entire report as plain markdown text. The output will be 
-copy-pasted into a chat message and sent to the React developer.
+  Leave types (3 rows):
+    Casual Leave / 12 days, Sick Leave / 8 days, Earned Leave / 15 days
+    CreatedBy=685, CreatedDate=2026-01-01
+
+  Leave requests (6 rows):
+    Row 1: Resource=2633, LeaveType=1, 2026-03-10 to 2026-03-11, 2 days, reason="Personal work", IsApproved=1, ApprovedBy=2830, ApprovedDate=2026-03-09, ApproverRemarks="Approved", CreatedDate=2026-03-08
+    Row 2: Resource=2291, LeaveType=2, 2026-04-02 to 2026-04-03, 2 days, reason="Fever", IsApproved=1, ApprovedBy=2830, ApprovedDate=2026-04-01, ApproverRemarks="Approved", CreatedDate=2026-04-01
+    Row 3: Resource=2633, LeaveType=3, 2026-04-20 to 2026-04-24, 5 days, reason="Family function", IsApproved=0, ApprovedBy=2830, ApprovedDate=2026-04-16, ApproverRemarks="Workload high this week", CreatedDate=2026-04-15
+    Row 4: Resource=2291, LeaveType=1, 2026-05-15 to 2026-05-16, 2 days, reason="Friend's wedding", IsApproved=NULL, ApprovedBy=NULL, ApprovedDate=NULL, ApproverRemarks=NULL, CreatedDate=2026-05-10
+    Row 5: Resource=2633, LeaveType=2, 2026-05-18 to 2026-05-18, 1 day, reason="Migraine", IsApproved=NULL, ApprovedBy=NULL, ApprovedDate=NULL, ApproverRemarks=NULL, CreatedDate=2026-05-12
+    Row 6: Resource=2830, LeaveType=3, 2026-06-01 to 2026-06-05, 5 days, reason="Annual trip", IsApproved=NULL, ApprovedBy=NULL, ApprovedDate=NULL, ApproverRemarks=NULL, CreatedDate=2026-05-12
+
+  Payslips (12 rows — 4 users × 3 months: Feb, March, April 2026):
+    Resource=2633: Basic=30000, Allowances=8000, Deductions=5000, NetPay=33000
+    Resource=2291: Basic=32000, Allowances=8500, Deductions=5500, NetPay=35000
+    Resource=2830: Basic=70000, Allowances=18000, Deductions=12000, NetPay=76000
+    Resource=685:  Basic=55000, Allowances=14000, Deductions=9000,  NetPay=60000
+
+    For each user, insert 3 rows with PayMonth: "2026-02", "2026-03", "2026-04"
+    CreatedBy="685", CreatedDate="2026-04-30"
+
+  Idempotency: for leave_types, check by (Name); for leave_requests, check by (Resource, FromDate, ToDate, Reason); for payslips, check by (Resource, PayMonth).
+
+4) Print summary: "Created N leave types, M leave requests, K payslips"
+
+5) Run: python create_hrms_demo_tables.py
+
+==============================================================================
+STEP 2 — Add SQLAlchemy models
+==============================================================================
+Add 3 new models to app/models/db_schema.py (do NOT modify existing models):
+
+class HrLeaveType(Base):
+    __tablename__ = "hr_leave_types_demo"
+    LeaveTypeIdx = Column(Integer, primary_key=True, autoincrement=True)
+    Name = Column(String(50), nullable=False)
+    MaxDays = Column(Integer, nullable=False)
+    CreatedBy = Column(String(10))
+    CreatedDate = Column(Date)
+
+class HrLeaveRequest(Base):
+    __tablename__ = "hr_leave_requests_demo"
+    RequestIdx = Column(Integer, primary_key=True, autoincrement=True)
+    Resource = Column(Integer, nullable=False)
+    LeaveTypeIdx = Column(Integer, nullable=False)
+    FromDate = Column(Date, nullable=False)
+    ToDate = Column(Date, nullable=False)
+    NumDays = Column(Integer, nullable=False)
+    Reason = Column(String(500))
+    IsApproved = Column(Integer, nullable=True)
+    ApprovedBy = Column(Integer, nullable=True)
+    ApprovedDate = Column(Date, nullable=True)
+    ApproverRemarks = Column(String(500))
+    CreatedDate = Column(Date)
+
+class HrPayslip(Base):
+    __tablename__ = "hr_payslips_demo"
+    PayslipIdx = Column(Integer, primary_key=True, autoincrement=True)
+    Resource = Column(Integer, nullable=False)
+    PayMonth = Column(String(7), nullable=False)
+    Basic = Column(Float)
+    Allowances = Column(Float)
+    Deductions = Column(Float)
+    NetPay = Column(Float)
+    CreatedBy = Column(String(10))
+    CreatedDate = Column(Date)
+
+Ensure imports Date, Float, String are present.
+
+==============================================================================
+STEP 3 — Update seed_db.py for HRMS access
+==============================================================================
+In seed_db.py, find the user_roles and role_agent_access seeding sections.
+
+A. user_roles — ADD 4 new entries (keep existing RMS users untouched):
+    emp_id=685,  role=SENIOR
+    emp_id=2633, role=JUNIOR
+    emp_id=2291, role=JUNIOR
+    emp_id=2830, role=SENIOR
+
+    Note: if 685 or 2830 already have a role assignment in user_roles, leave them — get_or_create logic should handle it.
+
+B. role_collection_access — ADD HRMS access:
+    SENIOR + HRMS + ADMIN  (already exists from earlier seeding — re-running is fine)
+    JUNIOR + HRMS + WRITE  (NEW — juniors can submit leave requests, which is a write)
+
+C. role_agent_access — ADD new grants:
+    685's persona scope is "HRMS Creator + Approver". 685 is mapped to SENIOR role.
+    SENIOR role already has all 4 collections from earlier seeding — DO NOT change SENIOR's grants. Instead, we rely on the existing SENIOR ADMIN access being sufficient.
+
+    Wait — we need a NEW behavior here: some SENIORs (3117) should have RMS but not HRMS; others (685, 2830) should have HRMS but not RMS. So SENIOR role alone can't differentiate.
+
+    SOLUTION: explicitly model this via role_agent_access removals.
+
+    Actions in seed_db.py:
+    1. For 685 and 2830: their SENIOR role grants ALL agents by default (per existing seed). 
+       We add NO new RMS-removing logic — leave them as-is.
+       This means 685 and 2830 will technically have RMS access. ACCEPT THIS for the demo.
+       But document in the report that 685 and 2830 have full SENIOR access — they're "approver-style" users for HRMS in our demo narrative.
+
+    The CLEAN solution would be a finer-grained role table, but that's a refactor we don't need for the demo.
+
+    INSTEAD: just add JUNIOR HRMS agent access:
+    Add to ACCESS_MATRIX:
+        JUNIOR: agents include "HRMS_REVIEWER"  (Filler — submit leave requests)
+
+D. Run python seed_db.py and confirm:
+    - JUNIOR role now has both RMS_REVIEWER and HRMS_REVIEWER access
+    - 685, 2633, 2291, 2830 have role assignments
+
+==============================================================================
+STEP 4 — Sanity check
+==============================================================================
+A. python -c "import main; print('OK')"
+B. Test /api/v1/me/capabilities for each user (use Postman or curl with their JWT):
+
+    For 2633 (JUNIOR): collection_agents should be {"RMS": ["reviewer"], "HRMS": ["reviewer"]}
+        Wait — 2633 should have HRMS only, not RMS.
+
+    PROBLEM: The current ACCESS_MATRIX gives JUNIOR access to RMS_REVIEWER. So 2633 will inherit RMS access too — but he shouldn't have RMS.
+
+    SOLUTION for the demo: accept that 2633 has both RMS and HRMS Filler access. The story becomes:
+        - 2633 can log work hours AND submit leave requests (multi-collection user)
+        - 3428 (Vinay) only has RMS (we don't grant HRMS to him)
+        - The "user with HRMS but no RMS" demo would require a custom emp_no with a different role.
+
+    If the user wants strict separation (HRMS-only users), we need a new role like 'HR_EMPLOYEE' that has only HRMS access. For now: log this as a known caveat and proceed.
+
+    Best path: in the report, show capabilities for all 4 users and clearly state which has which access. The user can decide if they want to add HR_EMPLOYEE role later.
+
+C. Query the DB to verify seed inserts succeeded:
+    SELECT COUNT(*) FROM hr_leave_types_demo;       → expect 3
+    SELECT COUNT(*) FROM hr_leave_requests_demo;    → expect 6
+    SELECT COUNT(*) FROM hr_payslips_demo;          → expect 12
+    SELECT IsApproved, COUNT(*) FROM hr_leave_requests_demo GROUP BY IsApproved;
+        → expect: NULL=3, 1=2, 0=1
+
+==============================================================================
+REPORT BACK
+==============================================================================
+- Output of create_hrms_demo_tables.py (table creation + seed counts)
+- Output of the 3 DB COUNT queries
+- For each test user (685, 2633, 2291, 2830, 3428, 3010, 3117), fetch their /me/capabilities and show their collection_agents
+- Note any cross-collection inheritance issues (e.g., 2633 may get RMS by mistake) — flag don't fix
+- python -c "import main; print('OK')" output
 
 DO NOT:
-- Document features not actually present in the code
-- Speculate about future changes
-- Include any information about the LDAP code path beyond "still 
-  works as before, no contract changes there"
+- Add HRMS tools, services, agent logic, or orchestrator routing yet
+- Touch RMS code
+- Modify auth or LDAP code paths
+- Touch the resources table
