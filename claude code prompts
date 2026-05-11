@@ -1,8 +1,7 @@
-SELECT ur.emp_id, r.role_name, a.agent_name, c.collection_name
-FROM user_roles ur
-JOIN roles r ON r.role_id = ur.role_id
-JOIN role_agent_access raa ON raa.role_id = r.role_id
-JOIN agents a ON a.agent_id = raa.agent_id
-JOIN collections c ON c.collection_id = a.collection_id
-WHERE ur.emp_id IN ('685', '2291', '2633', '2830')
-ORDER BY ur.emp_id, c.collection_name, a.agent_name;
+-- 1. Grant JUNIOR access to HRMS collection (WRITE — includes read)
+INSERT INTO role_collection_access (role_id, collection_id, access_level, granted_by, granted_at)
+VALUES (7, 11, 'WRITE', 'manual', NOW());
+
+-- 2. Grant JUNIOR access to HRMS_REVIEWER agent (the Filler)
+INSERT INTO role_agent_access (role_id, agent_id, granted_by, granted_at)
+VALUES (7, 8, 'manual', NOW());
