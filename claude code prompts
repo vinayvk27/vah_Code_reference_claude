@@ -1,1 +1,26 @@
-curl -X POST http://localhost:5969/api/v1/auth/login -H "Content-Type: application/json" -d "{\"username\":\"2633\",\"password\":\"<their_dept>\"}"
+TASK: Show me the current rms_workflow folder structure so I can mirror it for HRMS. Read-only. No code changes.
+
+Inspect and report:
+
+1. Show the folder tree of app/workflows/ with file paths and line counts:
+   powershell "Get-ChildItem -Path app\workflows -Recurse | Select-Object FullName, Length | Format-Table -AutoSize"
+
+2. For each file inside app/workflows/rms_workflow/, show:
+   - File name
+   - First 20 lines (imports + top-level definitions)
+   - List of functions/classes defined
+   
+   Use this command for each file:
+   powershell "Get-Content app\workflows\rms_workflow\<filename>.py | Select-Object -First 20"
+
+3. Show the file that wires the orchestrator together (the graph builder / state machine assembly). I want to see:
+   - How nodes are imported
+   - How edges are defined
+   - How the state class is used
+   - The function that other code calls to invoke the graph
+
+4. Show where the workflow is referenced from outside. Most likely app/controllers/chat_controller.py. Show the import statements and any function calls related to the workflow.
+
+5. Confirm: is there a "router" or "supervisor" node that picks which agent handles a request? Or does every request go through parse_intent → permission_check → one of [creator, reviewer, approver] → end?
+
+Output as plain markdown text. No code changes.
