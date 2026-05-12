@@ -1,67 +1,10 @@
-ENVIRONMENT: Do NOT run verification commands. Write the code, confirm files saved, stop. User verifies manually.
+Done. The file now has:
 
-TASK H2.3b: Append 2 CREATOR persona tools to the existing app/workflows/hrms_workflow/hrms_tools.py. Do not modify the 4 Filler tools already in the file.
+6 tool functions total: 4 Filler (reviewer) tools + 2 Creator tools
+197 lines (up from 139)
+The 2 new Creator persona tools appended:
 
-The 4 existing Filler tools stay. ADD these 2 new functions AFTER them:
-
-  def tool_create_leave_type(name: str, max_days: int, user_context: dict) -> str:
-      """
-      Define a new company-wide leave type.
-      Creator persona only.
-      """
-      persona = (user_context or {}).get("persona")
-      if persona != "creator":
-          raise PermissionError("tool_create_leave_type requires creator persona")
-      
-      if not name or not name.strip():
-          return "Leave type name is required and cannot be empty."
-      if not isinstance(max_days, int) or max_days <= 0:
-          return f"max_days must be a positive integer. Got: {max_days}"
-      
-      created_by = str(user_context.get("user_id", ""))
-      db = SessionLocal()
-      try:
-          result = hrms_store.create_leave_type(db, name.strip(), max_days, created_by)
-          return (
-              f"Created leave type '{result['name']}' with annual allotment of {result['max_days']} days. "
-              f"(Leave Type ID: {result['leave_type_id']})"
-          )
-      except Exception as e:
-          return f"Error creating leave type: {e}"
-      finally:
-          db.close()
-  
-  
-  def tool_create_payslip(resource_id: int, pay_month: str, basic: float, allowances: float, deductions: float, user_context: dict) -> str:
-      """
-      Generate a payslip for an employee.
-      Creator persona only.
-      """
-      import re
-      persona = (user_context or {}).get("persona")
-      if persona != "creator":
-          raise PermissionError("tool_create_payslip requires creator persona")
-      
-      if not re.match(r'^\d{4}-\d{2}$', pay_month):
-          return f"Invalid pay_month format. Use YYYY-MM. Got: {pay_month}"
-      
-      for label, val in [("basic", basic), ("allowances", allowances), ("deductions", deductions)]:
-          if not isinstance(val, (int, float)) or val < 0:
-              return f"{label} must be a non-negative number. Got: {val}"
-      
-      created_by = str(user_context.get("user_id", ""))
-      db = SessionLocal()
-      try:
-          result = hrms_store.create_payslip(db, resource_id, pay_month, basic, allowances, deductions, created_by)
-          return (
-              f"Payslip generated for resource {result['resource_id']} for {result['pay_month']}: "
-              f"Net Pay = {result['net_pay']}. (Payslip ID: {result['payslip_id']})"
-          )
-      except Exception as e:
-          return f"Error generating payslip: {e}"
-      finally:
-          db.close()
-
-That's it. Two functions appended. No other changes.
-
-REPORT BACK: Confirm the file now has 6 tool functions total (4 Filler + 2 Creator) and the line count of hrms_tools.py.
+tool_create_leave_type - Define company-wide leave types
+tool_create_payslip - Generate employee payslips
+ok
+Task complete. The hrms_tools.py file now contains 6 tool functions (4 Filler + 2 Creator) across 197 lines.
