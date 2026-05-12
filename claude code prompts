@@ -1,390 +1,191 @@
-Now I have all the information needed. Here's the complete report:
-
-RMS Workflow Folder Structure Report
-1. Folder Tree with Line Counts
-
-app/workflows/
-├── __init__.py (15 lines)
-└── rms_workflow/
-    ├── __init__.py (35 lines)
-    ├── agents.py (92 lines)
-    ├── config.py (15 lines)
-    ├── graph.py (80 lines)
-    ├── nodes.py (1056 lines)
-    ├── prompts.py (63 lines)
-    ├── rms_tools.py (488 lines)
-    ├── state.py (38 lines)
-    └── tools.py (28 lines)
-Total: 1,895 lines of code
-
-2. File Summaries (First 20 Lines + Functions/Classes)
-state.py (38 lines)
-First 20 lines:
-
-
-"""
-RMS Workflow State Schema
-=========================
-Defines the state container for the RMS LangGraph workflow.
-Field-for-field parity with original AgentOrchestrationState.
-"""
-from typing import TypedDict, Optional
-
-
-class RMSState(TypedDict):
-    """
-    State container for RMS agent orchestration workflow.
-
-    Field-for-field parity with original AgentOrchestrationState:
-    - user_id: str (was user_id)
-    - user_dept: str (was user_dept)
-    - collection_agents: dict (was collection_agents)
-    - selected_collection: str (was selected_collection)
-Classes/Functions:
-
-RMSState (TypedDict) - State container with fields: user_id, user_dept, collection_agents, selected_collection, selected_agent_role, parsed_intent, has_permission, messages, execution_log, uploaded_files, denial_message
-config.py (15 lines)
-First 20 lines (entire file):
-
-
-"""
-RMS Workflow Configuration
-==========================
-LLM client setup, model selection, temperature, API keys via env.
-No business logic - pure configuration wrapper.
-"""
-from app.core.llm import get_llm as base_get_llm
-
-
-def get_llm():
-    """
-    Returns a ChatOpenAI instance for RMS workflow.
-    Delegates to app.core.llm.get_llm() - RMS-specific defaults can be added here later.
-    """
-    return base_get_llm()
-Classes/Functions:
-
-get_llm() - Returns LLM instance from core
-agents.py (92 lines)
-First 20 lines:
-
-
-"""
-RMS Workflow Agents
-===================
-Persona-specific agent configurations (RMS_CREATOR, RMS_REVIEWER, RMS_APPROVER).
-Returns agent config objects - actual node logic is in nodes.py.
-"""
-from typing import Dict, List, Any
-
-
-class RMSAgentConfig:
-    """
-    Configuration for an RMS agent persona.
-
-    Attributes:
-        name: Agent name as stored in database (e.g., "RMS_CREATOR")
-        persona: Internal persona identifier (e.g., "creator")
-        allowed_tools: List of tool function names this persona can use
-        description: Human-readable description of the agent's role
-    """
-Classes/Functions:
-
-RMSAgentConfig class - Config container with name, persona, allowed_tools, description
-RMS_CREATOR - Agent config for task creation
-RMS_REVIEWER - Agent config for timesheet filling
-RMS_APPROVER - Agent config for approvals
-AGENT_REGISTRY - Dict mapping persona names to configs
-get_agent_config(persona) - Lookup function
-graph.py (80 lines) - THE WIRING FILE
-First 20 lines:
-
-
-"""
-RMS Workflow Graph
-==================
-Builds the LangGraph workflow graph for RMS agent orchestration.
-"""
-
-from langgraph.graph import StateGraph, END
-
-from app.workflows.rms_workflow.state import RMSState
-from app.workflows.rms_workflow.nodes import (
-    parse_intent_node,
-    permission_check_node,
-    permission_router,
-    permission_blocked_node,
-    creator_agent_node,
-    reviewer_agent_node,
-    approver_agent_node,
-)
-
-
-def build_rms_graph() -> StateGraph:
-Classes/Functions:
-
-build_rms_graph() - Builds and compiles the state graph
-_rms_graph - Singleton instance (lazy-loaded)
-get_rms_graph() - Entry point other code calls to invoke the graph
-nodes.py (1056 lines) - LARGEST FILE
-First 20 lines:
-
-
-"""
-RMS Workflow Node Functions
-===========================
-All node functions for the RMS LangGraph workflow.
-Each takes state and returns updated state - no graph construction here.
-
-Imports: state, agents, tools, prompts (no circular deps)
-"""
-
-# MIGRATION STATUS (handoff):
-# - All nodes complete EXCEPT approver_agent_node (still a stub at line ~785)
-# - Source: app/agents/orchestrator.py lines 677–906
-# ...
-Classes/Functions:
-
-_get_user_context() - Build context dict for tools
-_get_user_grade() - Fetch user grade from DB
-_get_agent_prompt() - Get persona prompt from DB
-_build_uploaded_files_context() - Build file context for bulk processing
-permission_blocked_node() - Handle permission denial
-permission_check_node() - Check user permissions
-parse_intent_node() - Infer persona from keywords
-permission_router() - Conditional router after permission_check
-creator_agent_node() - Creator persona handler
-reviewer_agent_node() - Reviewer/Filler persona handler
-approver_agent_node() - Approver persona handler
-prompts.py (63 lines)
-First 20 lines:
-
-
-"""
-RMS Workflow Prompts and Mappings
-=================================
-All string constants: system prompts, persona instructions,
-keyword-to-intent mapping dict. Pure data - no business logic.
-"""
-
-# =============================================================================
-# INTENT INFERENCE KEYWORDS
-# =============================================================================
-
-CREATOR_KEYWORDS = [
-    'create task', 'new task', 'assign', 'plan task', 'add task', 'create a task'
-]
-
-FILLER_KEYWORDS = [
-    'log hours', 'log time', 'fill timesheet', 'my tasks', 'my entries',
-    'my timesheet', 'work hours', 'i worked'
-]
-Classes/Functions:
-
-Keyword lists: CREATOR_KEYWORDS, FILLER_KEYWORDS, APPROVER_KEYWORDS, QUERY_KEYWORDS
-KEYWORD_TO_PERSONA - Mapping dict
-DEFAULT_PERSONA - Default fallback
-PERSONA_ACTIONS - Action descriptions per persona
-AGENT_DB_NAMES - Maps persona to DB agent names
-rms_tools.py (488 lines)
-First 20 lines:
-
-
-"""
-RMS Tools for LangChain agent integration.
-DB-backed tools for task management and worklog operations.
-
-Personas:
-- CREATOR: Can list all tasks and create new tasks
-- FILLER (uses reviewer agent slot): Can list their tasks and log hours
-- APPROVER: Can list pending approvals and approve/reject worklogs
-"""
-
-from typing import Optional
-from app.dao.database import SessionLocal
-from app.services import timesheet_store
-
-
-def tool_list_tasks(
-    resource_id_filter: Optional[int] = None,
-    user_context: Optional[dict] = None
-) -> str:
-Classes/Functions:
-
-tool_list_tasks() - List all tasks (CREATOR only)
-tool_create_task() - Create new task (CREATOR only)
-tool_list_my_tasks() - List user's tasks (REVIEWER only)
-tool_log_hours() - Log hours (REVIEWER only)
-tool_log_bulk_hours() - Bulk hour logging (REVIEWER only)
-tool_list_pending_approvals() - List pending approvals (APPROVER only)
-tool_approve_worklog() - Approve/reject worklog (APPROVER only)
-tools.py (28 lines)
-First 20 lines:
-
-
-"""
-RMS Workflow Tools
-==================
-Thin wrappers around rms_workflow.rms_tools.py.
-Re-exports tool functions for use in nodes.
-If LangGraph @tool decorators are needed, they are applied in nodes.py.
-"""
-
-# Re-export all RMS tool functions from rms_workflow.rms_tools
-from app.workflows.rms_workflow.rms_tools import (
-    tool_list_tasks,
-    tool_create_task,
-    tool_list_my_tasks,
-    tool_log_hours,
-    tool_log_bulk_hours,
-    tool_list_pending_approvals,
-    tool_approve_worklog,
-)
-Classes/Functions:
-
-Re-exports from rms_tools.py
-__init__.py (35 lines)
-First 20 lines:
-
-
-"""
-RMS Workflow Package
-====================
-LangGraph-based workflow for RMS (Resource Management System) agent orchestration.
-
-Personas:
-- CREATOR: Can create and list tasks
-- REVIEWER (Filler): Can list their tasks and log hours
-- APPROVER: Can approve/reject worklogs
-"""
-
-from app.workflows.rms_workflow.graph import get_rms_graph, build_rms_graph
-from app.workflows.rms_workflow.state import RMSState
-from app.workflows.rms_workflow.nodes import (
-    parse_intent_node,
-    permission_check_node,
-    permission_router,
-    permission_blocked_node,
-    creator_agent_node,
-Exports:
-
-get_rms_graph, build_rms_graph, RMSState, all node functions
-3. Graph Builder / State Machine Assembly (graph.py)
-How nodes are imported (lines 10-18):
-
-from app.workflows.rms_workflow.nodes import (
-    parse_intent_node,
-    permission_check_node,
-    permission_router,
-    permission_blocked_node,
-    creator_agent_node,
-    reviewer_agent_node,
-    approver_agent_node,
-)
-How edges are defined (lines 46-65):
-
-# Set entry point
-graph_builder.set_entry_point("parse_intent")
-
-# Add edges
-graph_builder.add_edge("parse_intent", "permission_check")
-
-# Conditional edges from permission_check
-graph_builder.add_conditional_edges(
-    "permission_check",
-    permission_router,
-    {
-        "permission_blocked": "permission_blocked",
-        "creator_agent": "creator_agent",
-        "reviewer_agent": "reviewer_agent",
-        "approver_agent": "approver_agent",
-    }
-)
-
-# All agent nodes lead to END
-graph_builder.add_edge("permission_blocked", END)
-graph_builder.add_edge("creator_agent", END)
-graph_builder.add_edge("reviewer_agent", END)
-graph_builder.add_edge("approver_agent", END)
-How the state class is used (line 33):
-
-graph_builder = StateGraph(RMSState)
-The function other code calls to invoke the graph (lines 75-80):
-
-def get_rms_graph():
-    """Lazy initialization of the RMS graph."""
-    global _rms_graph
-    if _rms_graph is None:
-        _rms_graph = build_rms_graph()
-    return _rms_graph
-4. External References (chat_controller.py)
-Import statements (line 17):
-
-from app.workflows.rms_workflow import get_rms_graph
-Wrapper function (lines 84-89):
-
-@classmethod
-def get_rms_graph(cls):
-    """Lazy initialization of the RMS workflow graph"""
-    if cls._rms_graph is None:
-        cls._rms_graph = get_rms_graph()
-    return cls._rms_graph
-Function call to invoke the graph (line 152):
-
-graph = ChatController.get_rms_graph()
-The workflow is invoked in stream_chat_with_orchestrator() method which:
-
-Gets the graph via ChatController.get_rms_graph()
-Initializes state with user context
-Streams events via graph.astream_events(initial_state, version="v1")
-5. Architecture Confirmation
-NO supervisor/router node that picks which agent handles a request.
-
-The flow is deterministic and linear:
-
-
-START
-  ↓
-parse_intent_node → infers persona from keywords
-  ↓
-permission_check_node → checks if user has permission for selected collection
-  ↓
-permission_router (conditional) → routes based on has_permission + selected_agent_role
-  ↓
-├─→ permission_blocked → END (if no permission)
-├─→ creator_agent → END (if creator)
-├─→ reviewer_agent → END (if reviewer)
-└─→ approver_agent → END (if approver)
-Key points:
-No intent-based agent selection beyond the initial parse_intent - the router only decides which of the 3 agent nodes to call based on selected_agent_role
-
-Every request goes through the same pipeline:
-
-parse_intent_node → keyword matching (CREATOR/FILLER/APPROVER/QUERY keywords)
-permission_check_node → validates against user's collection_agents
-One of [creator_agent, reviewer_agent, approver_agent] based on inferred/selected persona
-END
-The permission_router is NOT a supervisor - it's a simple conditional that checks:
-
-If has_permission == False → route to permission_blocked
-If has_permission == True → route to the agent matching selected_agent_role
-No dynamic routing based on request content after the initial parse - once the persona is inferred, the path is fixed
-
-Mirror Structure for HRMS
-To mirror this for HRMS, create:
-
-
-app/workflows/hrms_workflow/
-├── __init__.py
-├── state.py          # HRMSState (TypedDict)
-├── config.py         # get_llm()
-├── agents.py         # HRMSAgentConfig class + AGENT_REGISTRY
-├── graph.py          # build_hrms_graph(), get_hrms_graph()
-├── nodes.py          # All node functions (~1000 lines)
-├── prompts.py        # Keyword mappings
-├── hrms_tools.py     # HRMS-specific tools (~500 lines)
-└── tools.py          # Re-exports from hrms_tools
-Then update:
-
-app/workflows/__init__.py to export get_hrms_graph
-app/controllers/chat_controller.py to handle HRMS collection
+TASK H2.2: Create the HRMS workflow folder skeleton. Build state.py, config.py, agents.py, prompts.py, and __init__.py — mirroring the rms_workflow pattern. No node logic, no tools, no graph yet. This is just the scaffolding.
+
+PRECONDITIONS:
+- app/workflows/rms_workflow/ exists with state.py, config.py, agents.py, prompts.py
+- app/services/hrms_store.py exists (created in H2.1)
+- HrLeaveType, HrLeaveRequest, HrPayslip models exist in db_schema.py
+
+==============================================================================
+STEP 1 — Create folder structure
+==============================================================================
+Create: app/workflows/hrms_workflow/
+
+Inside, create these empty placeholder files (we fill the rest in H2.3 and H2.4):
+- nodes.py (just a docstring comment for now)
+- graph.py (just a docstring comment for now)
+- hrms_tools.py (just a docstring comment for now)
+- tools.py (just a docstring comment for now)
+
+==============================================================================
+STEP 2 — Create state.py
+==============================================================================
+File: app/workflows/hrms_workflow/state.py
+
+Mirror rms_workflow/state.py exactly. Just rename class RMSState to HRMSState. Use the same fields:
+
+  user_id: str
+  user_dept: str
+  collection_agents: dict
+  selected_collection: str
+  selected_agent_role: Optional[str]
+  parsed_intent: Optional[str]
+  has_permission: bool
+  messages: list
+  execution_log: list
+  uploaded_files: Optional[list]
+  denial_message: Optional[str]
+
+==============================================================================
+STEP 3 — Create config.py
+==============================================================================
+File: app/workflows/hrms_workflow/config.py
+
+Identical pattern to rms_workflow/config.py — wrapper around get_llm:
+
+  """HRMS Workflow Configuration"""
+  from app.core.llm import get_llm as base_get_llm
+  
+  def get_llm():
+      """Returns ChatOpenAI instance for HRMS workflow."""
+      return base_get_llm()
+
+==============================================================================
+STEP 4 — Create agents.py
+==============================================================================
+File: app/workflows/hrms_workflow/agents.py
+
+Mirror rms_workflow/agents.py pattern. Define HRMSAgentConfig class and 3 agent configs:
+
+  class HRMSAgentConfig:
+      def __init__(self, name, persona, allowed_tools, description):
+          self.name = name
+          self.persona = persona
+          self.allowed_tools = allowed_tools
+          self.description = description
+  
+  HRMS_CREATOR = HRMSAgentConfig(
+      name="HRMS_CREATOR",
+      persona="creator",
+      allowed_tools=["tool_create_leave_type", "tool_create_payslip"],
+      description="Defines leave types and generates payslips."
+  )
+  
+  HRMS_REVIEWER = HRMSAgentConfig(
+      name="HRMS_REVIEWER",
+      persona="reviewer",
+      allowed_tools=[
+          "tool_list_my_leave_balance",
+          "tool_request_leave",
+          "tool_my_payslip",
+          "tool_list_my_leave_requests",
+      ],
+      description="Submits leave requests and views own payslip/balance."
+  )
+  
+  HRMS_APPROVER = HRMSAgentConfig(
+      name="HRMS_APPROVER",
+      persona="approver",
+      allowed_tools=[
+          "tool_list_pending_leaves",
+          "tool_decide_leave",
+          "tool_view_any_payslip",
+      ],
+      description="Reviews and approves/rejects leave requests; views team payslips."
+  )
+  
+  AGENT_REGISTRY = {
+      "creator": HRMS_CREATOR,
+      "reviewer": HRMS_REVIEWER,
+      "approver": HRMS_APPROVER,
+  }
+  
+  def get_agent_config(persona: str) -> HRMSAgentConfig:
+      return AGENT_REGISTRY.get(persona)
+
+==============================================================================
+STEP 5 — Create prompts.py
+==============================================================================
+File: app/workflows/hrms_workflow/prompts.py
+
+Mirror rms_workflow/prompts.py — but for HRMS keywords. Define:
+
+  # Intent inference keywords
+  CREATOR_KEYWORDS = [
+      'create leave type', 'new leave type', 'add leave type',
+      'generate payslip', 'create payslip', 'new payslip'
+  ]
+  
+  FILLER_KEYWORDS = [
+      'request leave', 'apply leave', 'apply for leave',
+      'leave balance', 'my leaves', 'my leave',
+      'my payslip', 'show my payslip', 'view my payslip',
+      'my leave requests'
+  ]
+  
+  APPROVER_KEYWORDS = [
+      'approve leave', 'pending leaves', 'pending leave requests',
+      'leave approvals', 'reject leave'
+  ]
+  
+  QUERY_KEYWORDS = [
+      'show', 'list', 'details', 'what is', 'who is', 'how many',
+      'tell me', 'view', 'display', 'fetch', 'give me'
+  ]
+  
+  KEYWORD_TO_PERSONA = {}
+  for k in CREATOR_KEYWORDS: KEYWORD_TO_PERSONA[k] = 'creator'
+  for k in FILLER_KEYWORDS: KEYWORD_TO_PERSONA[k] = 'reviewer'
+  for k in APPROVER_KEYWORDS: KEYWORD_TO_PERSONA[k] = 'approver'
+  
+  DEFAULT_PERSONA = 'reviewer'
+  
+  PERSONA_ACTIONS = {
+      'creator': 'define leave types or generate payslips',
+      'reviewer': 'apply for leave or check your own data',
+      'approver': 'approve leave requests or view team payslips',
+  }
+  
+  AGENT_DB_NAMES = {
+      'creator': 'HRMS_CREATOR',
+      'reviewer': 'HRMS_REVIEWER',
+      'approver': 'HRMS_APPROVER',
+  }
+
+==============================================================================
+STEP 6 — Create __init__.py for hrms_workflow
+==============================================================================
+File: app/workflows/hrms_workflow/__init__.py
+
+For now, only export what we have. The graph/nodes will be added later.
+
+  """HRMS Workflow Package"""
+  from app.workflows.hrms_workflow.state import HRMSState
+  from app.workflows.hrms_workflow.agents import (
+      HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER, get_agent_config
+  )
+  
+  __all__ = [
+      "HRMSState", "HRMS_CREATOR", "HRMS_REVIEWER",
+      "HRMS_APPROVER", "get_agent_config"
+  ]
+
+==============================================================================
+STEP 7 — Update app/workflows/__init__.py
+==============================================================================
+The existing app/workflows/__init__.py exports get_rms_graph. We'll add get_hrms_graph LATER in H2.4. For now do NOT change this file — graph doesn't exist yet.
+
+==============================================================================
+STEP 8 — Verify
+==============================================================================
+A. python -c "from app.workflows.hrms_workflow import HRMSState, HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER; print('OK')"
+B. python -c "from app.workflows.hrms_workflow.prompts import KEYWORD_TO_PERSONA, DEFAULT_PERSONA; print('keywords:', len(KEYWORD_TO_PERSONA), 'default:', DEFAULT_PERSONA)"
+C. python -c "from app.workflows.hrms_workflow.config import get_llm; print('config OK')"
+
+REPORT BACK:
+- Folder tree of app/workflows/hrms_workflow/ after creation
+- Output of the 3 verify commands
+- Any errors
+
+DO NOT:
+- Create nodes, graph, tools, or chat_controller changes yet
+- Modify rms_workflow or any existing code
