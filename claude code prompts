@@ -1,191 +1,66 @@
-TASK H2.2: Create the HRMS workflow folder skeleton. Build state.py, config.py, agents.py, prompts.py, and __init__.py — mirroring the rms_workflow pattern. No node logic, no tools, no graph yet. This is just the scaffolding.
+cd "d:/Sakthi/Gen AI/dpah_backend" && python -c "from app.workflows.hrms_workflow.config import get_llm; print('config OK')"
 
-PRECONDITIONS:
-- app/workflows/rms_workflow/ exists with state.py, config.py, agents.py, prompts.py
-- app/services/hrms_store.py exists (created in H2.1)
-- HrLeaveType, HrLeaveRequest, HrPayslip models exist in db_schema.py
+OUT
+Exit code 1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "D:\Sakthi\Gen AI\dpah_backend\app\workflows\__init__.py", line 10, in <module>
+    from app.workflows.rms_workflow imp
 
-==============================================================================
-STEP 1 — Create folder structure
-==============================================================================
-Create: app/workflows/hrms_workflow/
 
-Inside, create these empty placeholder files (we fill the rest in H2.3 and H2.4):
-- nodes.py (just a docstring comment for now)
-- graph.py (just a docstring comment for now)
-- hrms_tools.py (just a docstring comment for now)
-- tools.py (just a docstring comment for now)
+The verification fails due to langgraph not being installed in the environment - this is not an issue with our hrms_workflow code. The error originates from rms_workflow trying to import langgraph, not from our new hrms_workflow files.
 
-==============================================================================
-STEP 2 — Create state.py
-==============================================================================
-File: app/workflows/hrms_workflow/state.py
+Let me verify the syntax of our hrms_workflow files directly without going through the workflows __init__.py:
 
-Mirror rms_workflow/state.py exactly. Just rename class RMSState to HRMSState. Use the same fields:
+** for every import this error is coming all my libraries are available in C:\ml_env_311\Scripts . so it is unable to verify , so i need to provide instruction everytime.
+it has done all the things but it is failing at last step. it has completed the below steps but it has taken more time for last step
 
-  user_id: str
-  user_dept: str
-  collection_agents: dict
-  selected_collection: str
-  selected_agent_role: Optional[str]
-  parsed_intent: Optional[str]
-  has_permission: bool
-  messages: list
-  execution_log: list
-  uploaded_files: Optional[list]
-  denial_message: Optional[str]
+Update Todos
 
-==============================================================================
-STEP 3 — Create config.py
-==============================================================================
-File: app/workflows/hrms_workflow/config.py
+Create app/workflows/hrms_workflow/ folder structure with placeholder files
 
-Identical pattern to rms_workflow/config.py — wrapper around get_llm:
+Create state.py mirroring rms_workflow pattern
 
-  """HRMS Workflow Configuration"""
-  from app.core.llm import get_llm as base_get_llm
-  
-  def get_llm():
-      """Returns ChatOpenAI instance for HRMS workflow."""
-      return base_get_llm()
+Create config.py with get_llm wrapper
 
-==============================================================================
-STEP 4 — Create agents.py
-==============================================================================
-File: app/workflows/hrms_workflow/agents.py
+Create agents.py with HRMSAgentConfig and 3 agents
 
-Mirror rms_workflow/agents.py pattern. Define HRMSAgentConfig class and 3 agent configs:
+Create prompts.py with keyword mappings
 
-  class HRMSAgentConfig:
-      def __init__(self, name, persona, allowed_tools, description):
-          self.name = name
-          self.persona = persona
-          self.allowed_tools = allowed_tools
-          self.description = description
-  
-  HRMS_CREATOR = HRMSAgentConfig(
-      name="HRMS_CREATOR",
-      persona="creator",
-      allowed_tools=["tool_create_leave_type", "tool_create_payslip"],
-      description="Defines leave types and generates payslips."
-  )
-  
-  HRMS_REVIEWER = HRMSAgentConfig(
-      name="HRMS_REVIEWER",
-      persona="reviewer",
-      allowed_tools=[
-          "tool_list_my_leave_balance",
-          "tool_request_leave",
-          "tool_my_payslip",
-          "tool_list_my_leave_requests",
-      ],
-      description="Submits leave requests and views own payslip/balance."
-  )
-  
-  HRMS_APPROVER = HRMSAgentConfig(
-      name="HRMS_APPROVER",
-      persona="approver",
-      allowed_tools=[
-          "tool_list_pending_leaves",
-          "tool_decide_leave",
-          "tool_view_any_payslip",
-      ],
-      description="Reviews and approves/rejects leave requests; views team payslips."
-  )
-  
-  AGENT_REGISTRY = {
-      "creator": HRMS_CREATOR,
-      "reviewer": HRMS_REVIEWER,
-      "approver": HRMS_APPROVER,
-  }
-  
-  def get_agent_config(persona: str) -> HRMSAgentConfig:
-      return AGENT_REGISTRY.get(persona)
+Create __init__.py exports
 
-==============================================================================
-STEP 5 — Create prompts.py
-==============================================================================
-File: app/workflows/hrms_workflow/prompts.py
+Run verification commands
 
-Mirror rms_workflow/prompts.py — but for HRMS keywords. Define:
 
-  # Intent inference keywords
-  CREATOR_KEYWORDS = [
-      'create leave type', 'new leave type', 'add leave type',
-      'generate payslip', 'create payslip', 'new payslip'
-  ]
-  
-  FILLER_KEYWORDS = [
-      'request leave', 'apply leave', 'apply for leave',
-      'leave balance', 'my leaves', 'my leave',
-      'my payslip', 'show my payslip', 'view my payslip',
-      'my leave requests'
-  ]
-  
-  APPROVER_KEYWORDS = [
-      'approve leave', 'pending leaves', 'pending leave requests',
-      'leave approvals', 'reject leave'
-  ]
-  
-  QUERY_KEYWORDS = [
-      'show', 'list', 'details', 'what is', 'who is', 'how many',
-      'tell me', 'view', 'display', 'fetch', 'give me'
-  ]
-  
-  KEYWORD_TO_PERSONA = {}
-  for k in CREATOR_KEYWORDS: KEYWORD_TO_PERSONA[k] = 'creator'
-  for k in FILLER_KEYWORDS: KEYWORD_TO_PERSONA[k] = 'reviewer'
-  for k in APPROVER_KEYWORDS: KEYWORD_TO_PERSONA[k] = 'approver'
-  
-  DEFAULT_PERSONA = 'reviewer'
-  
-  PERSONA_ACTIONS = {
-      'creator': 'define leave types or generate payslips',
-      'reviewer': 'apply for leave or check your own data',
-      'approver': 'approve leave requests or view team payslips',
-  }
-  
-  AGENT_DB_NAMES = {
-      'creator': 'HRMS_CREATOR',
-      'reviewer': 'HRMS_REVIEWER',
-      'approver': 'HRMS_APPROVER',
-  }
 
-==============================================================================
-STEP 6 — Create __init__.py for hrms_workflow
-==============================================================================
-File: app/workflows/hrms_workflow/__init__.py
+HRMS Workflow Scaffolding Complete
+Folder structure created:
 
-For now, only export what we have. The graph/nodes will be added later.
 
-  """HRMS Workflow Package"""
-  from app.workflows.hrms_workflow.state import HRMSState
-  from app.workflows.hrms_workflow.agents import (
-      HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER, get_agent_config
-  )
-  
-  __all__ = [
-      "HRMSState", "HRMS_CREATOR", "HRMS_REVIEWER",
-      "HRMS_APPROVER", "get_agent_config"
-  ]
+app/workflows/hrms_workflow/
+├── __init__.py
+├── agents.py
+├── config.py
+├── graph.py
+├── hrms_tools.py
+├── nodes.py
+├── prompts.py
+├── state.py
+└── tools.py
+Syntax verification results:
 
-==============================================================================
-STEP 7 — Update app/workflows/__init__.py
-==============================================================================
-The existing app/workflows/__init__.py exports get_rms_graph. We'll add get_hrms_graph LATER in H2.4. For now do NOT change this file — graph doesn't exist yet.
+state.py: OK
+agents.py: OK
+prompts.py: OK
+__init__.py: OK
+config.py: OK
+Note on verification commands: The full import verification (A, B, C) fails because langgraph is not installed in the current Python environment. The error comes from rms_workflow importing langgraph, not from our new hrms_workflow code. All hrms_workflow files compile successfully with py_compile.
 
-==============================================================================
-STEP 8 — Verify
-==============================================================================
-A. python -c "from app.workflows.hrms_workflow import HRMSState, HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER; print('OK')"
-B. python -c "from app.workflows.hrms_workflow.prompts import KEYWORD_TO_PERSONA, DEFAULT_PERSONA; print('keywords:', len(KEYWORD_TO_PERSONA), 'default:', DEFAULT_PERSONA)"
-C. python -c "from app.workflows.hrms_workflow.config import get_llm; print('config OK')"
+Files created per spec:
 
-REPORT BACK:
-- Folder tree of app/workflows/hrms_workflow/ after creation
-- Output of the 3 verify commands
-- Any errors
-
-DO NOT:
-- Create nodes, graph, tools, or chat_controller changes yet
-- Modify rms_workflow or any existing code
+state.py - HRMSState class mirroring RMSState
+config.py - get_llm wrapper
+agents.py - HRMSAgentConfig + 3 agents (CREATOR, REVIEWER, APPROVER)
+prompts.py - Keyword mappings for intent inference
+__init__.py - Exports HRMSState, HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER, get_agent_config
+nodes.py, graph.py, hrms_tools.py, tools.py - Placeholder files with docstrings
