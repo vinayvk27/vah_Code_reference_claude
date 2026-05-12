@@ -1,182 +1,170 @@
-ENVIRONMENT: All Python commands must use C:\ml_env_311\Scripts\python.exe — required libraries (langgraph, langchain, sqlalchemy, etc.) are installed there, not in the default python on PATH. Never use the bare `python` command for verification.
+ENVIRONMENT: All Python commands must use C:\ml_env_311\Scripts\python.exe — required libraries are installed there.
 
-
-ENVIRONMENT: All Python verification commands must use C:\ml_env_311\Scripts\python.exe — required libraries are installed there, not in the default python on PATH.
-
-TASK H2.3: Create the HRMS tools layer that wraps hrms_store service functions, mirroring the RMS pattern. This task populates hrms_tools.py and tools.py only. No node logic, no graph yet.
+TASK H2.3a: Create app/workflows/hrms_workflow/hrms_tools.py with ONLY the 4 Filler (reviewer) persona tools. No Creator tools, no Approver tools yet — those come in H2.3b and H2.3c.
 
 PRECONDITIONS:
-- app/services/hrms_store.py exists with all 8 service functions
-- app/workflows/hrms_workflow/ folder exists with placeholder hrms_tools.py and tools.py
-- Refer to app/workflows/rms_workflow/rms_tools.py for the exact wrapping pattern
+- app/services/hrms_store.py exists with the 8 service functions
+- app/workflows/hrms_workflow/hrms_tools.py is currently a placeholder
 
-==============================================================================
-STEP 1 — Populate app/workflows/hrms_workflow/hrms_tools.py
-==============================================================================
+Pattern to mirror: app/workflows/rms_workflow/rms_tools.py — same structure (SessionLocal usage, persona check, return formatted strings).
 
-The file must mirror rms_tools.py structure exactly: function naming, parameter signatures, error handling, SessionLocal usage, persona checks, and human-readable string output.
+Each tool function:
+- Opens fresh SessionLocal at top, closes in finally
+- First check: raise PermissionError if user_context["persona"] != "reviewer"
+- Returns formatted human-readable string
 
-For EACH tool function below:
-- Open a fresh SessionLocal at the top, close in finally
-- First line: read persona from user_context.get("persona") — raise PermissionError if mismatched
-- Returns a formatted human-readable string (the LLM will summarize for the user)
-- Handle exceptions: catch and return a clear error string
-
-CREATOR persona tools:
-
-  tool_create_leave_type(name: str, max_days: int, user_context: dict) -> str
-    - Requires persona == "creator"
-    - Calls hrms_store.create_leave_type(db, name, max_days, created_by=user_context["user_id"])
-    - Returns: "Created leave type '<name>' with annual allotment of <max_days> days. (Leave Type ID: <leave_type_id>)"
-
-  tool_create_payslip(resource_id: int, pay_month: str, basic: float, allowances: float, deductions: float, user_context: dict) -> str
-    - Requires persona == "creator"
-    - Validate pay_month format YYYY-MM (regex r'^\d{4}-\d{2}$')
-    - Validate basic, allowances, deductions >= 0
-    - Calls hrms_store.create_payslip(db, resource_id, pay_month, basic, allowances, deductions, created_by=user_context["user_id"])
-    - Returns: "Payslip generated for resource <resource_id> for <pay_month>: Net Pay = <net_pay>. (Payslip ID: <payslip_id>)"
-
-FILLER (reviewer) persona tools:
-
-  tool_list_my_leave_balance(user_context: dict) -> str
-    - Requires persona == "reviewer"
-    - resource_id = int(user_context["user_id"])
-    - Calls hrms_store.compute_leave_balance(db, resource_id)
-    - Returns a formatted table:
-        "Your leave balance:
-         - Casual Leave: 12 max, 2 used, 10 remaining
-         - Sick Leave: 8 max, 0 used, 8 remaining
-         - Earned Leave: 15 max, 0 used, 15 remaining"
-    - If no leave types found: "No leave types defined yet."
-
-  tool_request_leave(leave_type_id: int, from_date: str, to_date: str, reason: str, user_context: dict) -> str
-    - Requires persona == "reviewer"
-    - resource_id = int(user_context["user_id"])
-    - Validate from_date <= to_date (parse YYYY-MM-DD)
-    - Validate reason is not empty
-    - Calls hrms_store.create_leave_request(db, resource_id, leave_type_id, from_date, to_date, reason)
-    - Returns: "Leave request submitted: <num_days> days from <from_date> to <to_date>. Status: PENDING. (Request ID: <request_id>)"
-
-  tool_my_payslip(pay_month: str, user_context: dict) -> str
-    - Requires persona == "reviewer"
-    - resource_id = int(user_context["user_id"])
-    - Validate pay_month format YYYY-MM
-    - Calls hrms_store.list_payslips(db, resource_id=resource_id, pay_month=pay_month)
-    - If empty: "No payslip found for <pay_month>."
-    - Else format the single payslip: "Payslip for <pay_month>: Basic=<basic>, Allowances=<allowances>, Deductions=<deductions>, Net Pay=<net_pay>"
-
-  tool_list_my_leave_requests(user_context: dict) -> str
-    - Requires persona == "reviewer"
-    - resource_id = int(user_context["user_id"])
-    - Calls hrms_store.list_leave_requests(db, resource_id=resource_id)
-    - If empty: "You have no leave requests yet."
-    - Else format as a table with: Request ID, Leave Type, From, To, Days, Status, Reason
-    - Sort by created_date descending (most recent first)
-
-APPROVER persona tools:
-
-  tool_list_pending_leaves(user_context: dict) -> str
-    - Requires persona == "approver"
-    - Calls hrms_store.list_leave_requests(db, is_approved="PENDING")
-    - If empty: "No pending leave requests."
-    - Else format as a table with: Request ID, Resource ID, Leave Type, From, To, Days, Reason
-
-  tool_decide_leave(request_id: int, decision: str, remarks: str, user_context: dict) -> str
-    - Requires persona == "approver"
-    - Validate decision in {"APPROVED", "REJECTED"} (uppercase)
-    - approver_id = int(user_context["user_id"])
-    - Calls hrms_store.approve_leave_request(db, request_id, approver_id, decision, remarks)
-    - If service returns {"error": ...}, surface that error
-    - Else: "Leave request <request_id> has been <decision>. Approver remarks: '<remarks>'"
-
-  tool_view_any_payslip(resource_id: int, pay_month: str, user_context: dict) -> str
-    - Requires persona == "approver"
-    - Validate pay_month format YYYY-MM
-    - Calls hrms_store.list_payslips(db, resource_id=resource_id, pay_month=pay_month)
-    - If empty: "No payslip found for resource <resource_id> for <pay_month>."
-    - Else format the payslip details.
-
-==============================================================================
-STEP 2 — Populate app/workflows/hrms_workflow/tools.py
-==============================================================================
-
-Mirror the rms_workflow/tools.py pattern. Just re-exports:
+CREATE app/workflows/hrms_workflow/hrms_tools.py with file header and 4 functions:
 
   """
   HRMS Workflow Tools
   ===================
-  Thin wrappers around hrms_workflow.hrms_tools.py.
-  Re-exports tool functions for use in nodes.
+  DB-backed tools for HRMS personas.
+  This file currently has FILLER (reviewer) persona tools only.
+  CREATOR and APPROVER tools will be added in subsequent tasks.
   """
   
-  from app.workflows.hrms_workflow.hrms_tools import (
-      tool_create_leave_type,
-      tool_create_payslip,
-      tool_list_my_leave_balance,
-      tool_request_leave,
-      tool_my_payslip,
-      tool_list_my_leave_requests,
-      tool_list_pending_leaves,
-      tool_decide_leave,
-      tool_view_any_payslip,
-  )
+  from typing import Optional
+  from app.dao.database import SessionLocal
+  from app.services import hrms_store
+  
+  
+  def tool_list_my_leave_balance(user_context: dict) -> str:
+      """
+      List the user's leave balance per leave type.
+      Filler persona only.
+      """
+      persona = (user_context or {}).get("persona")
+      if persona != "reviewer":
+          raise PermissionError("tool_list_my_leave_balance requires reviewer persona")
+      
+      resource_id = int(user_context["user_id"])
+      db = SessionLocal()
+      try:
+          balances = hrms_store.compute_leave_balance(db, resource_id)
+          if not balances:
+              return "No leave types are defined yet."
+          
+          lines = ["Your leave balance:"]
+          for b in balances:
+              lines.append(f"  - {b['leave_type_name']}: {b['max_days']} max, {b['used_days']} used, {b['remaining_days']} remaining")
+          return "\n".join(lines)
+      except Exception as e:
+          return f"Error fetching leave balance: {e}"
+      finally:
+          db.close()
+  
+  
+  def tool_request_leave(leave_type_id: int, from_date: str, to_date: str, reason: str, user_context: dict) -> str:
+      """
+      Submit a leave request for the current user.
+      Filler persona only.
+      """
+      persona = (user_context or {}).get("persona")
+      if persona != "reviewer":
+          raise PermissionError("tool_request_leave requires reviewer persona")
+      
+      resource_id = int(user_context["user_id"])
+      
+      # Validate dates
+      from datetime import datetime
+      try:
+          from_dt = datetime.strptime(from_date, "%Y-%m-%d").date()
+          to_dt = datetime.strptime(to_date, "%Y-%m-%d").date()
+      except ValueError:
+          return f"Invalid date format. Use YYYY-MM-DD. Got from_date={from_date}, to_date={to_date}"
+      
+      if from_dt > to_dt:
+          return f"from_date ({from_date}) must be on or before to_date ({to_date})"
+      
+      if not reason or not reason.strip():
+          return "Reason is required and cannot be empty."
+      
+      db = SessionLocal()
+      try:
+          result = hrms_store.create_leave_request(db, resource_id, leave_type_id, from_date, to_date, reason.strip())
+          return (
+              f"Leave request submitted: {result['num_days']} day(s) from {result['from_date']} to {result['to_date']}. "
+              f"Status: PENDING. (Request ID: {result['request_id']})"
+          )
+      except Exception as e:
+          return f"Error submitting leave request: {e}"
+      finally:
+          db.close()
+  
+  
+  def tool_my_payslip(pay_month: str, user_context: dict) -> str:
+      """
+      View the user's payslip for a specific month.
+      Filler persona only.
+      """
+      import re
+      persona = (user_context or {}).get("persona")
+      if persona != "reviewer":
+          raise PermissionError("tool_my_payslip requires reviewer persona")
+      
+      if not re.match(r'^\d{4}-\d{2}$', pay_month):
+          return f"Invalid pay_month format. Use YYYY-MM. Got: {pay_month}"
+      
+      resource_id = int(user_context["user_id"])
+      db = SessionLocal()
+      try:
+          payslips = hrms_store.list_payslips(db, resource_id=resource_id, pay_month=pay_month)
+          if not payslips:
+              return f"No payslip found for {pay_month}."
+          p = payslips[0]
+          return (
+              f"Payslip for {p['pay_month']}: "
+              f"Basic = {p['basic']}, Allowances = {p['allowances']}, "
+              f"Deductions = {p['deductions']}, Net Pay = {p['net_pay']}"
+          )
+      except Exception as e:
+          return f"Error fetching payslip: {e}"
+      finally:
+          db.close()
+  
+  
+  def tool_list_my_leave_requests(user_context: dict) -> str:
+      """
+      List all leave requests for the current user (any status).
+      Filler persona only.
+      """
+      persona = (user_context or {}).get("persona")
+      if persona != "reviewer":
+          raise PermissionError("tool_list_my_leave_requests requires reviewer persona")
+      
+      resource_id = int(user_context["user_id"])
+      db = SessionLocal()
+      try:
+          requests = hrms_store.list_leave_requests(db, resource_id=resource_id)
+          if not requests:
+              return "You have no leave requests yet."
+          
+          # Sort by created_date desc
+          requests_sorted = sorted(requests, key=lambda r: r.get('created_date') or '', reverse=True)
+          lines = [f"Your leave requests ({len(requests_sorted)} total):"]
+          for r in requests_sorted:
+              lines.append(
+                  f"  - #{r['request_id']}: {r['leave_type_name']} | "
+                  f"{r['from_date']} to {r['to_date']} ({r['num_days']}d) | "
+                  f"Status: {r['status']} | Reason: {r['reason']}"
+              )
+          return "\n".join(lines)
+      except Exception as e:
+          return f"Error fetching your leave requests: {e}"
+      finally:
+          db.close()
 
-==============================================================================
-STEP 3 — Update hrms_workflow/__init__.py to re-export the new tools (optional)
-==============================================================================
-
-We can re-export the tools at the package level for easier access:
-
-  from app.workflows.hrms_workflow.tools import (
-      tool_create_leave_type, tool_create_payslip,
-      tool_list_my_leave_balance, tool_request_leave,
-      tool_my_payslip, tool_list_my_leave_requests,
-      tool_list_pending_leaves, tool_decide_leave, tool_view_any_payslip,
-  )
-
-Add these to __all__ list.
-
-==============================================================================
-STEP 4 — Verify
-==============================================================================
-
-Use C:\ml_env_311\Scripts\python.exe for all commands.
-
-A. Import test:
-   C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance, tool_request_leave, tool_decide_leave; print('Tools import OK')"
-
-B. Functional test (queries seeded DB):
-   C:\ml_env_311\Scripts\python.exe -c "
-   from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance, tool_list_pending_leaves
-   
-   # Test as filler (resource 2633)
-   ctx_filler = {'user_id': '2633', 'persona': 'reviewer'}
-   print('--- Filler balance ---')
-   print(tool_list_my_leave_balance(ctx_filler))
-   
-   # Test as approver
-   ctx_approver = {'user_id': '2830', 'persona': 'approver'}
-   print('--- Pending leaves ---')
-   print(tool_list_pending_leaves(ctx_approver))
-   "
-
-C. Permission test (should raise PermissionError):
-   C:\ml_env_311\Scripts\python.exe -c "
-   from app.workflows.hrms_workflow.hrms_tools import tool_decide_leave
-   try:
-       tool_decide_leave(1, 'APPROVED', '', {'user_id': '2633', 'persona': 'reviewer'})
-       print('FAIL: should have raised PermissionError')
-   except PermissionError as e:
-       print('OK PermissionError raised:', str(e)[:80])
-   "
+VERIFY:
+A. Syntax: C:\ml_env_311\Scripts\python.exe -m py_compile app\workflows\hrms_workflow\hrms_tools.py
+B. Import: C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance, tool_request_leave, tool_my_payslip, tool_list_my_leave_requests; print('4 Filler tools OK')"
+C. Functional: C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance; print(tool_list_my_leave_balance({'user_id':'2633','persona':'reviewer'}))"
 
 REPORT BACK:
-  - Confirmation each tool function present in hrms_tools.py
-  - Output of all 3 verify commands (A, B, C)
-  - Any errors encountered
+- Confirmation file created with 4 functions
+- Output of verify commands A, B, C
+- Any errors
 
 DO NOT:
-  - Touch RMS tools
-  - Create graph or node logic
-  - Modify chat_controller
-  - Touch DB schema or service layer
+- Add Creator or Approver tools
+- Touch tools.py re-exports yet
+- Modify any other files
