@@ -2,3 +2,5 @@ cd /d "D:\Sakthi\Gen AI\dpah_backend"
 C:\ml_env_311\Scripts\python.exe -m py_compile app\workflows\hrms_workflow\hrms_tools.py
 
 C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance, tool_request_leave, tool_my_payslip, tool_list_my_leave_requests; print('4 Filler tools OK')"
+
+C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance; print(tool_list_my_leave_balance({'user_id':'2633','persona':'reviewer'}))"
