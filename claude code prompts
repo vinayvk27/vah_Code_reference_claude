@@ -1,10 +1,1 @@
-Done. The file now has:
-
-6 tool functions total: 4 Filler (reviewer) tools + 2 Creator tools
-197 lines (up from 139)
-The 2 new Creator persona tools appended:
-
-tool_create_leave_type - Define company-wide leave types
-tool_create_payslip - Generate employee payslips
-ok
-Task complete. The hrms_tools.py file now contains 6 tool functions (4 Filler + 2 Creator) across 197 lines.
+C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_create_leave_type, tool_create_payslip; print('Creator tools OK')"
