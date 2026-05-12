@@ -1,45 +1,231 @@
 ENVIRONMENT: Do NOT run verification commands. User verifies manually.
 
-TASK H2.3d: Update app/workflows/hrms_workflow/tools.py to re-export all 9 tools. This is a 1-file, 1-block change.
+TASK H2.4a: Replace placeholder app/workflows/hrms_workflow/nodes.py with parse_intent_node, permission_check_node, permission_router, and permission_blocked_node. Mirror the RMS pattern but using HRMS prompts/persona mapping. Agent nodes (creator/reviewer/approver) come in H2.4b and H2.4c — for now, leave placeholder stubs.
 
-REPLACE the entire contents of app/workflows/hrms_workflow/tools.py with:
+REFERENCE: Read app/workflows/rms_workflow/nodes.py for the EXACT patterns of these 4 functions. Copy structurally, only changing:
+- Imports: pull from hrms_workflow.prompts, hrms_workflow.state
+- Persona mapping uses HRMS keyword sets (already in hrms_workflow/prompts.py)
+- DB agent names use AGENT_DB_NAMES from hrms_workflow.prompts (HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER)
+
+WRITE app/workflows/hrms_workflow/nodes.py:
 
   """
-  HRMS Workflow Tools
-  ===================
-  Thin wrappers around hrms_workflow.hrms_tools.py.
-  Re-exports tool functions for use in nodes.
+  HRMS Workflow Node Functions
+  ============================
+  Node functions for the HRMS LangGraph workflow.
+  Mirrors rms_workflow/nodes.py — only HRMS-specific changes inside each function.
   """
   
-  from app.workflows.hrms_workflow.hrms_tools import (
-      tool_list_my_leave_balance,
-      tool_request_leave,
-      tool_my_payslip,
-      tool_list_my_leave_requests,
-      tool_create_leave_type,
-      tool_create_payslip,
-      tool_list_pending_leaves,
-      tool_decide_leave,
-      tool_view_any_payslip,
+  from typing import Optional
+  from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+  from sqlalchemy.orm import Session
+  
+  from app.dao.database import SessionLocal
+  from app.models.db_schema import Agent, Resource
+  from app.workflows.hrms_workflow.state import HRMSState
+  from app.workflows.hrms_workflow.prompts import (
+      KEYWORD_TO_PERSONA,
+      DEFAULT_PERSONA,
+      QUERY_KEYWORDS,
+      PERSONA_ACTIONS,
+      AGENT_DB_NAMES,
   )
+  
+  
+  # ===========================================================================
+  # Helpers (mirror RMS pattern)
+  # ===========================================================================
+  
+  def _get_user_context(state: HRMSState) -> dict:
+      """Build user context dict consumed by tools."""
+      return {
+          "user_id": state.get("user_id"),
+          "user_dept": state.get("user_dept"),
+          "persona": state.get("selected_agent_role"),
+          "collection_agents": state.get("collection_agents", {}),
+      }
+  
+  
+  def _get_agent_prompt(agent_name: str) -> str:
+      """Fetch system_prompt for the given agent from the DB."""
+      db = SessionLocal()
+      try:
+          row = db.query(Agent).filter(Agent.agent_name == agent_name).first()
+          return row.system_prompt if row and row.system_prompt else ""
+      finally:
+          db.close()
+  
+  
+  # ===========================================================================
+  # parse_intent_node
+  # ===========================================================================
+  
+  def parse_intent_node(state: HRMSState) -> HRMSState:
+      """
+      Infer the persona to handle the user's message based on keywords.
+      Sets state['selected_agent_role'] and state['parsed_intent'].
+      """
+      # Get the most recent user message
+      messages = state.get("messages") or []
+      user_msg = ""
+      for m in reversed(messages):
+          if isinstance(m, HumanMessage):
+              user_msg = (m.content or "").lower()
+              break
+      
+      # If explicit role provided AND user has it, prefer that
+      explicit_role = state.get("selected_agent_role")
+      collection = state.get("selected_collection", "HRMS")
+      user_personas = (state.get("collection_agents") or {}).get(collection, []) or []
+      
+      if explicit_role and explicit_role in user_personas:
+          state["parsed_intent"] = "explicit_hint"
+          state["selected_agent_role"] = explicit_role
+          return state
+      
+      # Keyword scan — priority: APPROVER > CREATOR > FILLER > QUERY > default
+      matched_persona = None
+      matched_keyword = None
+      
+      # Build priority order from KEYWORD_TO_PERSONA grouped by persona
+      priority = ["approver", "creator", "reviewer"]
+      for target_persona in priority:
+          for kw, persona in KEYWORD_TO_PERSONA.items():
+              if persona == target_persona and kw in user_msg:
+                  matched_persona = persona
+                  matched_keyword = kw
+                  break
+          if matched_persona:
+              break
+      
+      # QUERY intent: route to user's highest privilege persona
+      if not matched_persona:
+          for kw in QUERY_KEYWORDS:
+              if kw in user_msg:
+                  if "approver" in user_personas:
+                      matched_persona = "approver"
+                  elif "creator" in user_personas:
+                      matched_persona = "creator"
+                  else:
+                      matched_persona = "reviewer"
+                  matched_keyword = kw
+                  break
+      
+      # Default
+      if not matched_persona:
+          matched_persona = DEFAULT_PERSONA
+          matched_keyword = "(default)"
+      
+      state["selected_agent_role"] = matched_persona
+      state["parsed_intent"] = f"keyword:{matched_keyword}"
+      return state
+  
+  
+  # ===========================================================================
+  # permission_check_node
+  # ===========================================================================
+  
+  def permission_check_node(state: HRMSState) -> HRMSState:
+      """
+      Check if the user has the inferred persona for the selected collection.
+      If not, populate state['denial_message'] with a helpful redirect.
+      """
+      collection = state.get("selected_collection", "HRMS")
+      wanted = state.get("selected_agent_role")
+      user_personas = (state.get("collection_agents") or {}).get(collection, []) or []
+      
+      if wanted in user_personas:
+          state["has_permission"] = True
+          state["denial_message"] = None
+          return state
+      
+      # Build a helpful denial
+      state["has_permission"] = False
+      
+      # Map internal persona to user-facing label (reviewer -> filler)
+      label_map = {"creator": "creator", "reviewer": "filler", "approver": "approver"}
+      ui_user_personas = [label_map.get(p, p) for p in user_personas]
+      ui_wanted = label_map.get(wanted, wanted)
+      
+      wanted_action = PERSONA_ACTIONS.get(wanted, f"perform {wanted} actions")
+      
+      if user_personas:
+          suggested = user_personas[0]
+          suggested_action = PERSONA_ACTIONS.get(suggested, f"perform {suggested} actions")
+          state["denial_message"] = (
+              f"I see you want to {wanted_action}, "
+              f"but you only have {', '.join(ui_user_personas)} access for {collection}. "
+              f"Did you want to {suggested_action} instead?"
+          )
+      else:
+          state["denial_message"] = (
+              f"You don't have access to {collection}."
+          )
+      return state
+  
+  
+  # ===========================================================================
+  # permission_router
+  # ===========================================================================
+  
+  def permission_router(state: HRMSState) -> str:
+      """
+      Conditional edge after permission_check.
+      Returns one of: 'permission_blocked', 'creator_agent', 'reviewer_agent', 'approver_agent'.
+      """
+      if not state.get("has_permission"):
+          return "permission_blocked"
+      
+      role = state.get("selected_agent_role")
+      if role == "creator":
+          return "creator_agent"
+      if role == "approver":
+          return "approver_agent"
+      return "reviewer_agent"  # default for reviewer or unknown
+  
+  
+  # ===========================================================================
+  # permission_blocked_node
+  # ===========================================================================
+  
+  def permission_blocked_node(state: HRMSState) -> HRMSState:
+      """
+      Emit the denial message as an AIMessage and end.
+      """
+      denial = state.get("denial_message") or "You do not have permission for this action."
+      msgs = list(state.get("messages") or [])
+      msgs.append(AIMessage(content=denial))
+      state["messages"] = msgs
+      return state
+  
+  
+  # ===========================================================================
+  # PLACEHOLDER agent nodes — filled in by H2.4b and H2.4c
+  # ===========================================================================
+  
+  def creator_agent_node(state: HRMSState) -> HRMSState:
+      """STUB — H2.4c will populate."""
+      msgs = list(state.get("messages") or [])
+      msgs.append(AIMessage(content="[HRMS Creator agent not yet implemented — placeholder]"))
+      state["messages"] = msgs
+      return state
+  
+  
+  def reviewer_agent_node(state: HRMSState) -> HRMSState:
+      """STUB — H2.4b will populate."""
+      msgs = list(state.get("messages") or [])
+      msgs.append(AIMessage(content="[HRMS Filler agent not yet implemented — placeholder]"))
+      state["messages"] = msgs
+      return state
+  
+  
+  def approver_agent_node(state: HRMSState) -> HRMSState:
+      """STUB — H2.4c will populate."""
+      msgs = list(state.get("messages") or [])
+      msgs.append(AIMessage(content="[HRMS Approver agent not yet implemented — placeholder]"))
+      state["messages"] = msgs
+      return state
 
-ALSO update app/workflows/hrms_workflow/__init__.py to re-export the 9 tools at the package level. Find the existing __init__.py content and ADD:
+REPORT BACK: Confirm file written. Line count.
 
-  from app.workflows.hrms_workflow.tools import (
-      tool_list_my_leave_balance,
-      tool_request_leave,
-      tool_my_payslip,
-      tool_list_my_leave_requests,
-      tool_create_leave_type,
-      tool_create_payslip,
-      tool_list_pending_leaves,
-      tool_decide_leave,
-      tool_view_any_payslip,
-  )
-
-And update __all__ to include all 9 tool names alongside the existing exports.
-
-REPORT BACK: Confirm both files updated.
-
-
-C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow import tool_request_leave, tool_decide_leave, tool_create_leave_type; print('All 9 tools accessible from package level')"
+DO NOT run verification commands.
