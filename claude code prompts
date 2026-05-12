@@ -1,94 +1,45 @@
-ENVIRONMENT: Do NOT run verification commands. Write the code, confirm files saved, stop. User verifies manually.
+ENVIRONMENT: Do NOT run verification commands. User verifies manually.
 
-TASK H2.3c: Append 3 APPROVER persona tools to the existing app/workflows/hrms_workflow/hrms_tools.py. Do not modify the existing 4 Filler + 2 Creator tools.
+TASK H2.3d: Update app/workflows/hrms_workflow/tools.py to re-export all 9 tools. This is a 1-file, 1-block change.
 
-ADD these 3 functions AFTER the existing ones:
+REPLACE the entire contents of app/workflows/hrms_workflow/tools.py with:
 
-  def tool_list_pending_leaves(user_context: dict) -> str:
-      """
-      List all pending leave requests across the organization.
-      Approver persona only.
-      """
-      persona = (user_context or {}).get("persona")
-      if persona != "approver":
-          raise PermissionError("tool_list_pending_leaves requires approver persona")
-      
-      db = SessionLocal()
-      try:
-          requests = hrms_store.list_leave_requests(db, is_approved="PENDING")
-          if not requests:
-              return "No pending leave requests."
-          
-          lines = [f"Pending leave requests ({len(requests)} total):"]
-          for r in requests:
-              lines.append(
-                  f"  - #{r['request_id']} | Resource {r['resource_id']} | "
-                  f"{r['leave_type_name']} | {r['from_date']} to {r['to_date']} "
-                  f"({r['num_days']}d) | Reason: {r['reason']}"
-              )
-          return "\n".join(lines)
-      except Exception as e:
-          return f"Error listing pending leaves: {e}"
-      finally:
-          db.close()
+  """
+  HRMS Workflow Tools
+  ===================
+  Thin wrappers around hrms_workflow.hrms_tools.py.
+  Re-exports tool functions for use in nodes.
+  """
   
-  
-  def tool_decide_leave(request_id: int, decision: str, remarks: str, user_context: dict) -> str:
-      """
-      Approve or reject a leave request.
-      Approver persona only.
-      """
-      persona = (user_context or {}).get("persona")
-      if persona != "approver":
-          raise PermissionError("tool_decide_leave requires approver persona")
-      
-      decision_clean = (decision or "").strip().upper()
-      if decision_clean not in ("APPROVED", "REJECTED"):
-          return f"decision must be 'APPROVED' or 'REJECTED'. Got: {decision}"
-      
-      approver_id = int(user_context["user_id"])
-      db = SessionLocal()
-      try:
-          result = hrms_store.approve_leave_request(db, request_id, approver_id, decision_clean, remarks or "")
-          if "error" in result:
-              return f"Could not process: {result['error']}"
-          return (
-              f"Leave request {result['request_id']} has been {result['new_status']}. "
-              f"Approver remarks: '{remarks or '(no remarks)'}'"
-          )
-      except Exception as e:
-          return f"Error deciding leave request: {e}"
-      finally:
-          db.close()
-  
-  
-  def tool_view_any_payslip(resource_id: int, pay_month: str, user_context: dict) -> str:
-      """
-      View any employee's payslip for a specific month.
-      Approver persona only.
-      """
-      import re
-      persona = (user_context or {}).get("persona")
-      if persona != "approver":
-          raise PermissionError("tool_view_any_payslip requires approver persona")
-      
-      if not re.match(r'^\d{4}-\d{2}$', pay_month):
-          return f"Invalid pay_month format. Use YYYY-MM. Got: {pay_month}"
-      
-      db = SessionLocal()
-      try:
-          payslips = hrms_store.list_payslips(db, resource_id=resource_id, pay_month=pay_month)
-          if not payslips:
-              return f"No payslip found for resource {resource_id} for {pay_month}."
-          p = payslips[0]
-          return (
-              f"Payslip for resource {p['resource_id']} for {p['pay_month']}: "
-              f"Basic = {p['basic']}, Allowances = {p['allowances']}, "
-              f"Deductions = {p['deductions']}, Net Pay = {p['net_pay']}"
-          )
-      except Exception as e:
-          return f"Error viewing payslip: {e}"
-      finally:
-          db.close()
+  from app.workflows.hrms_workflow.hrms_tools import (
+      tool_list_my_leave_balance,
+      tool_request_leave,
+      tool_my_payslip,
+      tool_list_my_leave_requests,
+      tool_create_leave_type,
+      tool_create_payslip,
+      tool_list_pending_leaves,
+      tool_decide_leave,
+      tool_view_any_payslip,
+  )
 
-REPORT BACK: Confirm file now has 9 tool functions total (4 Filler + 2 Creator + 3 Approver) and total line count.
+ALSO update app/workflows/hrms_workflow/__init__.py to re-export the 9 tools at the package level. Find the existing __init__.py content and ADD:
+
+  from app.workflows.hrms_workflow.tools import (
+      tool_list_my_leave_balance,
+      tool_request_leave,
+      tool_my_payslip,
+      tool_list_my_leave_requests,
+      tool_create_leave_type,
+      tool_create_payslip,
+      tool_list_pending_leaves,
+      tool_decide_leave,
+      tool_view_any_payslip,
+  )
+
+And update __all__ to include all 9 tool names alongside the existing exports.
+
+REPORT BACK: Confirm both files updated.
+
+
+C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow import tool_request_leave, tool_decide_leave, tool_create_leave_type; print('All 9 tools accessible from package level')"
