@@ -1,6 +1,10 @@
-cd /d "D:\Sakthi\Gen AI\dpah_backend"
-C:\ml_env_311\Scripts\python.exe -m py_compile app\workflows\hrms_workflow\hrms_tools.py
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>C:\ml_env_311\Scripts\python.exe -m py_compile app\workflows\hrms_workflow\hrms_tools.py
 
-C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance, tool_request_leave, tool_my_payslip, tool_list_my_leave_requests; print('4 Filler tools OK')"
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance, tool_request_leave, tool_my_payslip, tool_list_my_leave_requests; print('4 Filler tools OK')"
+4 Filler tools OK
 
-C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance; print(tool_list_my_leave_balance({'user_id':'2633','persona':'reviewer'}))"
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance; print(tool_list_my_leave_balance({'user_id':'2633','persona':'reviewer'}))"
+Error fetching leave balance: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'hr_leave_types_demo.leave_type_id' in 'field list'
+[SQL: SELECT hr_leave_types_demo.leave_type_id AS hr_leave_types_demo_leave_type_id, hr_leave_types_demo.name AS hr_leave_types_demo_name, hr_leave_types_demo.max_days AS hr_leave_types_demo_max_days, hr_leave_types_demo.created_by AS hr_leave_types_demo_created_by, hr_leave_types_demo.created_date AS hr_leave_types_demo_created_date
+FROM hr_leave_types_demo]
+(Background on this error at: https://sqlalche.me/e/20/f405)
