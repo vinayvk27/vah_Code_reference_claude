@@ -1,1 +1,4 @@
-C:\ml_env_311\Scripts\python.exe -c "from app.dao.database import engine; from sqlalchemy import inspect; ins=inspect(engine); [print(t, [c['name'] for c in ins.get_columns(t)]) for t in ['hr_leave_types_demo','hr_leave_requests_demo','hr_payslips_demo']]"
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>C:\ml_env_311\Scripts\python.exe -c "from app.dao.database import engine; from sqlalchemy import inspect; ins=inspect(engine); [print(t, [c['name'] for c in ins.get_columns(t)]) for t in ['hr_leave_types_demo','hr_leave_requests_demo','hr_payslips_demo']]"
+hr_leave_types_demo ['LeaveTypeIdx', 'Name', 'MaxDays', 'CreatedBy', 'CreatedDate']
+hr_leave_requests_demo ['RequestIdx', 'Resource', 'LeaveTypeIdx', 'FromDate', 'ToDate', 'NumDays', 'Reason', 'IsApproved', 'ApprovedBy', 'ApprovedDate', 'ApproverRemarks', 'CreatedDate']
+hr_payslips_demo ['PayslipIdx', 'Resource', 'PayMonth', 'Basic', 'Allowances', 'Deductions', 'NetPay', 'CreatedBy', 'CreatedDate']
