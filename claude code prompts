@@ -1,4 +1,66 @@
-(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>C:\ml_env_311\Scripts\python.exe -c "from app.dao.database import engine; from sqlalchemy import inspect; ins=inspect(engine); [print(t, [c['name'] for c in ins.get_columns(t)]) for t in ['hr_leave_types_demo','hr_leave_requests_demo','hr_payslips_demo']]"
-hr_leave_types_demo ['LeaveTypeIdx', 'Name', 'MaxDays', 'CreatedBy', 'CreatedDate']
-hr_leave_requests_demo ['RequestIdx', 'Resource', 'LeaveTypeIdx', 'FromDate', 'ToDate', 'NumDays', 'Reason', 'IsApproved', 'ApprovedBy', 'ApprovedDate', 'ApproverRemarks', 'CreatedDate']
-hr_payslips_demo ['PayslipIdx', 'Resource', 'PayMonth', 'Basic', 'Allowances', 'Deductions', 'NetPay', 'CreatedBy', 'CreatedDate']
+findstr /N "Column" app\models\db_schema.py
+
+
+ENVIRONMENT: Run all verification with C:\ml_env_311\Scripts\python.exe
+
+TASK: Fix the 3 HRMS SQLAlchemy models in app/models/db_schema.py. Add the actual DB column name as the first argument to each Column() call so SQLAlchemy queries the right column.
+
+The actual DB columns are CamelCase, but our Python attributes use lowercase. We map them.
+
+In app/models/db_schema.py, find the HrLeaveType, HrLeaveRequest, HrPayslip classes. REPLACE each Column(...) definition with the version below.
+
+HrLeaveType:
+    leave_type_id = Column("LeaveTypeIdx", Integer, primary_key=True, autoincrement=True)
+    name = Column("Name", String(50), nullable=False)
+    max_days = Column("MaxDays", Integer, nullable=False)
+    created_by = Column("CreatedBy", String(10))
+    created_date = Column("CreatedDate", Date)
+
+HrLeaveRequest:
+    request_id = Column("RequestIdx", Integer, primary_key=True, autoincrement=True)
+    resource_id = Column("Resource", Integer, nullable=False)
+    leave_type_id = Column("LeaveTypeIdx", Integer, nullable=False)
+    from_date = Column("FromDate", Date, nullable=False)
+    to_date = Column("ToDate", Date, nullable=False)
+    num_days = Column("NumDays", Integer, nullable=False)
+    reason = Column("Reason", String(500))
+    is_approved = Column("IsApproved", Integer, nullable=True)
+    approved_by = Column("ApprovedBy", Integer, nullable=True)
+    approved_date = Column("ApprovedDate", Date, nullable=True)
+    approver_remarks = Column("ApproverRemarks", String(500))
+    created_date = Column("CreatedDate", Date)
+
+HrPayslip:
+    payslip_id = Column("PayslipIdx", Integer, primary_key=True, autoincrement=True)
+    resource_id = Column("Resource", Integer, nullable=False)
+    pay_month = Column("PayMonth", String(7), nullable=False)
+    basic = Column("Basic", Float)
+    allowances = Column("Allowances", Float)
+    deductions = Column("Deductions", Float)
+    net_pay = Column("NetPay", Float)
+    created_by = Column("CreatedBy", String(10))
+    created_date = Column("CreatedDate", Date)
+
+IMPORTANT — Python attribute names:
+  Use the lowercase names shown above. The HRMS service layer (hrms_store.py) references these attributes, so they MUST match exactly.
+
+  In HrLeaveRequest, the attribute for Resource is `resource_id` (not `resource`).
+  In HrPayslip, the attribute for Resource is `resource_id` (not `resource`).
+  Same for HrLeaveRequest leave_type_id → DB column LeaveTypeIdx.
+
+After updating the models, the service layer in hrms_store.py may still reference these by their old attribute names. INSPECT hrms_store.py and verify each query references attributes by the lowercase Python names above. If any reference uses the wrong attribute name (e.g., `.Resource` instead of `.resource_id`), fix the service code to match.
+
+VERIFY:
+  C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_list_my_leave_balance; print(tool_list_my_leave_balance({'user_id':'2633','persona':'reviewer'}))"
+
+Expected: shows leave balance for 2633 (3 leave types, with computed remaining days from approved leaves).
+
+REPORT BACK:
+- Confirmation of changes in db_schema.py
+- Any changes needed in hrms_store.py (attribute name mismatches found)
+- Output of verify command (the leave balance for 2633)
+- Any errors
+
+DO NOT:
+- Touch RMS models or any other code
+- Modify the actual DB schema
