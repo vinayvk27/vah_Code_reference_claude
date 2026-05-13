@@ -1,138 +1,136 @@
 ENVIRONMENT: Do NOT run verification commands. User verifies manually.
 
-TASK H2.4c.2: Replace the approver_agent_node placeholder in app/workflows/hrms_workflow/nodes.py with the full implementation. Mirror the creator/reviewer node pattern already in place.
+TASK H2.4c.3: Final HRMS wiring. Two changes:
+  1. Populate app/workflows/hrms_workflow/graph.py to build the HRMS state graph.
+  2. Update app/controllers/chat_controller.py to route to HRMS graph when selected_collection == "HRMS".
 
-The Approver handles 3 HRMS tools: tool_list_pending_leaves, tool_decide_leave, tool_view_any_payslip.
+==============================================================================
+STEP 1 — Populate app/workflows/hrms_workflow/graph.py
+==============================================================================
+Mirror app/workflows/rms_workflow/graph.py exactly.
 
-REPLACE the existing approver_agent_node STUB with this full version:
+REPLACE the placeholder contents of app/workflows/hrms_workflow/graph.py with:
 
-  def approver_agent_node(state: HRMSState) -> HRMSState:
-      """
-      HRMS Approver persona agent.
-      Approves/rejects leave requests; views any employee's payslip.
-      """
-      user_emp_id = state.get("user_id")
-      user_dept = state.get("user_dept", "")
-      user_context = _get_user_context(state)
+  """
+  HRMS Workflow Graph
+  ===================
+  Builds the LangGraph workflow graph for HRMS agent orchestration.
+  """
+  
+  from langgraph.graph import StateGraph, END
+  
+  from app.workflows.hrms_workflow.state import HRMSState
+  from app.workflows.hrms_workflow.nodes import (
+      parse_intent_node,
+      permission_check_node,
+      permission_router,
+      permission_blocked_node,
+      creator_agent_node,
+      reviewer_agent_node,
+      approver_agent_node,
+  )
+  
+  _hrms_graph = None
+  
+  
+  def build_hrms_graph() -> StateGraph:
+      """Build and compile the HRMS state graph."""
+      graph_builder = StateGraph(HRMSState)
       
-      user_name = ""
-      user_grade = None
-      db_snap = SessionLocal()
-      try:
-          resource = db_snap.query(Resource).filter(Resource.Emp_no == str(user_emp_id)).first()
-          if resource:
-              user_name = resource.Name or ""
-              user_grade = resource.Grade
-              user_context["name"] = user_name
-              user_context["grade"] = user_grade
-      finally:
-          db_snap.close()
+      # Add nodes
+      graph_builder.add_node("parse_intent", parse_intent_node)
+      graph_builder.add_node("permission_check", permission_check_node)
+      graph_builder.add_node("permission_blocked", permission_blocked_node)
+      graph_builder.add_node("creator_agent", creator_agent_node)
+      graph_builder.add_node("reviewer_agent", reviewer_agent_node)
+      graph_builder.add_node("approver_agent", approver_agent_node)
       
-      # Snapshot: pending leave requests + leave types
-      db_snap = SessionLocal()
-      try:
-          pending = hrms_store.list_leave_requests(db_snap, is_approved="PENDING")
-          leave_types = hrms_store.list_leave_types(db_snap)
-      except Exception:
-          pending = []
-          leave_types = []
-      finally:
-          db_snap.close()
+      # Entry point
+      graph_builder.set_entry_point("parse_intent")
       
-      snapshot_lines = []
-      if pending:
-          snapshot_lines.append(f"Pending leave requests ({len(pending)}):")
-          for r in pending[:20]:
-              snapshot_lines.append(
-                  f"  - #{r['request_id']} resource={r['resource_id']} {r['leave_type_name']} "
-                  f"{r['from_date']} to {r['to_date']} ({r['num_days']}d) reason='{r['reason']}'"
-              )
-      if leave_types:
-          snapshot_lines.append("Leave types available:")
-          for lt in leave_types:
-              snapshot_lines.append(f"  - id={lt['leave_type_id']} {lt['name']} ({lt['max_days']} max days)")
-      snapshot_block = "\n".join(snapshot_lines) if snapshot_lines else "(no pending requests)"
-      
-      base_prompt = _get_agent_prompt("HRMS_APPROVER")
-      
-      system_prompt = (
-          f"{base_prompt}\n\n"
-          f"=== CURRENT USER CONTEXT ===\n"
-          f"Employee ID: {user_emp_id}\n"
-          f"Employee Name: {user_name}\n"
-          f"Department: {user_dept}\n"
-          f"Grade: {user_grade or 'N/A'}\n"
-          f"Persona: APPROVER\n\n"
-          f"=== CONVERSATION HISTORY IS AUTHORITATIVE ===\n"
-          f"Recent messages between you and the user are included. The DATA SNAPSHOT is fetched at request start — it does NOT include actions you took earlier in THIS conversation.\n"
-          f"When the user asks 'what did I just approve', reference the conversation history.\n\n"
-          f"=== HOW TO PERFORM ACTIONS (CRITICAL) ===\n"
-          f"Format: <<ACTION>>{{\"tool\": \"<name>\", \"args\": {{...}}}}<<END>>\n\n"
-          f"Available tools for HRMS APPROVER (you):\n"
-          f"- tool_list_pending_leaves — list all pending leave requests (no args)\n"
-          f"- tool_decide_leave — approve or reject a leave request\n"
-          f"  args: {{\"request_id\": <int>, \"decision\": \"APPROVED\" or \"REJECTED\", \"remarks\": \"<string>\"}}\n"
-          f"- tool_view_any_payslip — view any employee's payslip\n"
-          f"  args: {{\"resource_id\": <int>, \"pay_month\": \"YYYY-MM\"}}\n\n"
-          f"RULES:\n"
-          f"1. When deciding on a leave, IMMEDIATELY emit the <<ACTION>> block. Do not ask 'shall I proceed?'.\n"
-          f"2. If asked to create a leave type or submit your own request, refuse politely:\n"
-          f"   'I only review and approve leaves. To define leave types use the Creator; to submit your own request use the Filler.'\n"
-          f"3. After action block, write a brief confirmation (1-2 sentences).\n\n"
-          f"=== CURRENT DATA SNAPSHOT ===\n{snapshot_block}\n"
+      # Edges
+      graph_builder.add_edge("parse_intent", "permission_check")
+      graph_builder.add_conditional_edges(
+          "permission_check",
+          permission_router,
+          {
+              "permission_blocked": "permission_blocked",
+              "creator_agent": "creator_agent",
+              "reviewer_agent": "reviewer_agent",
+              "approver_agent": "approver_agent",
+          }
       )
+      graph_builder.add_edge("permission_blocked", END)
+      graph_builder.add_edge("creator_agent", END)
+      graph_builder.add_edge("reviewer_agent", END)
+      graph_builder.add_edge("approver_agent", END)
       
-      @tool
-      def list_pending_leaves() -> str:
-          """List all pending leave requests."""
-          return hrms_tools.tool_list_pending_leaves(user_context)
-      
-      @tool
-      def decide_leave(request_id: int, decision: str, remarks: str = "") -> str:
-          """Approve or reject a leave request."""
-          return hrms_tools.tool_decide_leave(request_id, decision, remarks, user_context)
-      
-      @tool
-      def view_any_payslip(resource_id: int, pay_month: str) -> str:
-          """View any employee's payslip for a month."""
-          return hrms_tools.tool_view_any_payslip(resource_id, pay_month, user_context)
-      
-      llm = get_llm()
-      llm_with_tools = llm.bind_tools([list_pending_leaves, decide_leave, view_any_payslip])
-      
-      messages = list(state.get("messages") or [])
-      message_list = [SystemMessage(content=system_prompt)] + messages
-      
-      response = llm_with_tools.invoke(message_list)
-      
-      actions = extract_actions(response.content or "")
-      if actions:
-          for action in actions:
-              tool_name = action.get("tool")
-              tool_args = action.get("args") or {}
-              try:
-                  if tool_name == "tool_list_pending_leaves":
-                      list_pending_leaves.invoke(tool_args)
-                  elif tool_name == "tool_decide_leave":
-                      decide_leave.invoke(tool_args)
-                  elif tool_name == "tool_view_any_payslip":
-                      view_any_payslip.invoke(tool_args)
-              except PermissionError:
-                  pass
-              except Exception:
-                  pass
-          clean_content = strip_actions(response.content)
-          full_text = clean_content.strip()
-      else:
-          full_text = (response.content or "").strip()
-      
-      msgs = list(state.get("messages") or [])
-      msgs.append(AIMessage(content=full_text))
-      state["messages"] = msgs
-      return state
+      return graph_builder.compile()
+  
+  
+  def get_hrms_graph():
+      """Lazy initialization of the HRMS graph."""
+      global _hrms_graph
+      if _hrms_graph is None:
+          _hrms_graph = build_hrms_graph()
+      return _hrms_graph
 
-DO NOT touch creator_agent_node or reviewer_agent_node.
+==============================================================================
+STEP 2 — Update app/workflows/hrms_workflow/__init__.py to export the graph
+==============================================================================
+ADD this import to the top of app/workflows/hrms_workflow/__init__.py:
 
-REPORT BACK: Confirm approver_agent_node updated, file line count.
+  from app.workflows.hrms_workflow.graph import get_hrms_graph, build_hrms_graph
 
-C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.nodes import creator_agent_node, reviewer_agent_node, approver_agent_node; print('All 3 HRMS agent nodes load OK')"
+AND extend the __all__ list to include "get_hrms_graph" and "build_hrms_graph".
+
+==============================================================================
+STEP 3 — Update app/workflows/__init__.py to export get_hrms_graph
+==============================================================================
+ADD this line below the existing get_rms_graph import:
+
+  from app.workflows.hrms_workflow import get_hrms_graph
+
+Update __all__ if it exists.
+
+==============================================================================
+STEP 4 — Update app/controllers/chat_controller.py to route by collection
+==============================================================================
+In chat_controller.py:
+
+A. ADD import at the top (alongside the existing rms import):
+   from app.workflows.hrms_workflow import get_hrms_graph
+
+B. Add a lazy initializer alongside the existing _rms_graph one. Find ChatController._rms_graph and the get_rms_graph classmethod. ADD a parallel class attribute and method:
+
+   _hrms_graph = None  # class attribute, alongside _rms_graph
+   
+   @classmethod
+   def get_hrms_graph(cls):
+       """Lazy initialization of the HRMS workflow graph"""
+       if cls._hrms_graph is None:
+           cls._hrms_graph = get_hrms_graph()
+       return cls._hrms_graph
+
+C. In stream_chat_with_orchestrator method, find where the graph is selected:
+   
+       graph = ChatController.get_rms_graph()
+   
+   REPLACE with collection-aware routing:
+   
+       collection = (request_data.get("collection_name") or "RMS").upper()
+       if collection == "HRMS":
+           graph = ChatController.get_hrms_graph()
+       else:
+           graph = ChatController.get_rms_graph()
+
+   Important: the variable name `collection` may already exist in stream_chat_with_orchestrator. If so, REUSE the existing variable — do not redeclare it. Just add the if/else block where the graph variable is assigned.
+
+REPORT BACK:
+- Confirm graph.py is populated (line count)
+- Confirm both __init__.py files updated
+- Confirm chat_controller has the new import + class attribute + method + routing block
+- DO NOT run verification commands
+
+
+C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow import get_hrms_graph; g = get_hrms_graph(); print('HRMS graph built OK')"
