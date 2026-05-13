@@ -1,1 +1,254 @@
-C:\ml_env_311\Scripts\python.exe -c "from app.controllers.chat_controller import ChatController; from app.forms.registry import get_form_handler; print('Controller + form imports OK')"
+ENVIRONMENT: Do NOT run verification commands. User verifies manually.
+
+TASK FORM-2a: Add the first form — HRMS "Apply for Leave". Three pieces:
+  1. A new form-emitting tool (returns the form spec)
+  2. A new form-submission handler (handles the data when submitted)
+  3. Register the form_id with the registry
+  4. Update HRMS_REVIEWER prompt so the agent knows to emit the form on intent
+
+==============================================================================
+STEP 1 — Add form-emitting tool to hrms_tools.py
+==============================================================================
+In app/workflows/hrms_workflow/hrms_tools.py, ADD this new function at the bottom of the file (alongside the existing 9 tools):
+
+  def tool_show_leave_request_form(user_context: dict, prefill: dict = None) -> str:
+      """
+      Emit a leave request form spec for the chat to render.
+      Filler persona only.
+      
+      Args:
+          user_context: user info
+          prefill: optional dict with pre-filled values (e.g., {"from_date": "2026-06-15"})
+      
+      Returns: a special <<FORM>>...<<ENDFORM>> wrapped JSON string
+      """
+      from app.forms.emit import build_form_emit
+      from app.services import hrms_store
+      
+      persona = (user_context or {}).get("persona")
+      if persona != "reviewer":
+          raise PermissionError("tool_show_leave_request_form requires reviewer persona")
+      
+      resource_id = int(user_context["user_id"])
+      prefill = prefill or {}
+      
+      # Fetch leave balance to populate the dropdown with remaining days
+      db = SessionLocal()
+      try:
+          balances = hrms_store.compute_leave_balance(db, resource_id)
+      except Exception:
+          balances = []
+      finally:
+          db.close()
+      
+      # Build leave type options with balance hints
+      leave_options = []
+      for b in balances:
+          leave_options.append({
+              "value": b["leave_type_id"],
+              "label": f"{b['leave_type_name']} ({b['remaining_days']} of {b['max_days']} left)"
+          })
+      
+      # If no leave types defined yet, fall back to a placeholder
+      if not leave_options:
+          leave_options = [{"value": 0, "label": "(no leave types defined — contact HR)"}]
+      
+      form_spec = {
+          "version": 1,
+          "form_id": "hrms_apply_leave",
+          "title": "Apply for Leave",
+          "description": "Submit a new leave request for approval.",
+          "submit_label": "Submit Request",
+          "cancel_label": "Cancel",
+          "fields": [
+              {
+                  "name": "leave_type_id",
+                  "label": "Leave Type",
+                  "type": "select",
+                  "required": True,
+                  "options": leave_options,
+                  "default": prefill.get("leave_type_id") or leave_options[0]["value"],
+              },
+              {
+                  "name": "from_date",
+                  "label": "From Date",
+                  "type": "date",
+                  "required": True,
+                  "default": prefill.get("from_date") or "",
+              },
+              {
+                  "name": "to_date",
+                  "label": "To Date",
+                  "type": "date",
+                  "required": True,
+                  "default": prefill.get("to_date") or "",
+              },
+              {
+                  "name": "reason",
+                  "label": "Reason",
+                  "type": "textarea",
+                  "required": True,
+                  "max_length": 500,
+                  "placeholder": "Brief explanation",
+                  "default": prefill.get("reason") or "",
+              },
+          ],
+      }
+      
+      return build_form_emit(form_spec)
+
+==============================================================================
+STEP 2 — Add form submission handler
+==============================================================================
+In the SAME file (hrms_tools.py), ADD this handler function at the bottom:
+
+  def _handle_apply_leave_form(form_data: dict, user_context: dict) -> str:
+      """
+      Submission handler for hrms_apply_leave form.
+      Called by chat_controller when user submits the form.
+      Returns a confirmation string to show in chat.
+      """
+      from app.forms.spec import validate_form_data
+      
+      # Re-validate (defense in depth)
+      form_spec_for_validation = {
+          "fields": [
+              {"name": "leave_type_id", "type": "number", "required": True},
+              {"name": "from_date", "type": "date", "required": True},
+              {"name": "to_date", "type": "date", "required": True},
+              {"name": "reason", "type": "text", "required": True, "max_length": 500},
+          ]
+      }
+      err = validate_form_data(form_spec_for_validation, form_data)
+      if err:
+          return f"Form validation failed: {err}"
+      
+      try:
+          leave_type_id = int(form_data["leave_type_id"])
+          from_date = form_data["from_date"]
+          to_date = form_data["to_date"]
+          reason = form_data["reason"]
+      except (KeyError, ValueError, TypeError) as e:
+          return f"Invalid form data: {e}"
+      
+      # Override persona for the underlying tool call
+      reviewer_context = dict(user_context)
+      reviewer_context["persona"] = "reviewer"
+      
+      return tool_request_leave(leave_type_id, from_date, to_date, reason, reviewer_context)
+
+==============================================================================
+STEP 3 — Register the form in the registry
+==============================================================================
+At the bottom of app/workflows/hrms_workflow/hrms_tools.py (after all functions), add the registry call:
+
+  # ===========================================================================
+  # FORM REGISTRATION
+  # ===========================================================================
+  from app.forms.registry import register_form
+  
+  register_form(
+      form_id="hrms_apply_leave",
+      handler=_handle_apply_leave_form,
+      collection="HRMS",
+      required_persona="reviewer",
+  )
+
+This runs when the module is imported. The HRMS workflow already imports hrms_tools, so registration happens automatically.
+
+==============================================================================
+STEP 4 — Update tools.py to re-export the new form tool
+==============================================================================
+In app/workflows/hrms_workflow/tools.py, ADD tool_show_leave_request_form to the imports:
+
+  from app.workflows.hrms_workflow.hrms_tools import (
+      ... existing tools ...,
+      tool_show_leave_request_form,
+  )
+
+==============================================================================
+STEP 5 — Wire the new tool into reviewer_agent_node in nodes.py
+==============================================================================
+In app/workflows/hrms_workflow/nodes.py, find reviewer_agent_node.
+
+A. Find the existing @tool decorators (list_my_leave_balance, request_leave, etc.). ADD a new @tool wrapper right alongside:
+
+  @tool
+  def show_leave_request_form(prefill_from_date: str = "", prefill_to_date: str = "", prefill_reason: str = "") -> str:
+      """Show the leave application form. Use this when user wants to apply for leave."""
+      prefill = {}
+      if prefill_from_date: prefill["from_date"] = prefill_from_date
+      if prefill_to_date: prefill["to_date"] = prefill_to_date
+      if prefill_reason: prefill["reason"] = prefill_reason
+      return hrms_tools.tool_show_leave_request_form(user_context, prefill if prefill else None)
+
+B. Find the llm.bind_tools([...]) line for reviewer_agent_node. ADD show_leave_request_form to the list:
+
+  llm_with_tools = llm.bind_tools([
+      list_my_leave_balance, request_leave, my_payslip, list_my_leave_requests,
+      show_leave_request_form,
+  ])
+
+C. Find the action parser dispatch (the if/elif chain mapping tool_name to invoke). ADD an elif branch:
+
+  elif tool_name == "tool_show_leave_request_form":
+      show_leave_request_form.invoke(tool_args)
+
+==============================================================================
+STEP 6 — Update HRMS_REVIEWER agent prompt in DB
+==============================================================================
+Create script update_hrms_reviewer_prompt_v2.py at project root:
+
+  from app.dao.database import SessionLocal
+  from app.models.db_schema import Agent
+  
+  NEW_PROMPT = """You are the HRMS Filler agent for Data Patterns. You help employees check their leave balance, submit leave requests, and view their own payslips.
+  
+  Your tools:
+    - tool_list_my_leave_balance: show remaining leave days by type (no args)
+    - tool_request_leave: submit a leave request when user provides ALL details inline in chat
+      args: {"leave_type_id": <int>, "from_date": "YYYY-MM-DD", "to_date": "YYYY-MM-DD", "reason": "<string>"}
+    - tool_show_leave_request_form: open a form for the user to fill (USE THIS BY DEFAULT for leave requests)
+      args: {"prefill_from_date": "<optional>", "prefill_to_date": "<optional>", "prefill_reason": "<optional>"}
+    - tool_my_payslip: view your payslip for a month
+      args: {"pay_month": "YYYY-MM"}
+    - tool_list_my_leave_requests: list all your leave requests (no args)
+  
+  CRITICAL RULES FOR LEAVE REQUESTS:
+  1. When the user wants to apply for leave (says things like "apply for leave", "request leave", "I want to take leave"), DEFAULT to calling tool_show_leave_request_form which opens an interactive form.
+  2. If the user has already provided ALL details inline (leave type, from date, to date, reason), you may use tool_request_leave directly to skip the form.
+  3. If the user has provided some details but not all, call tool_show_leave_request_form WITH prefill arguments for what they did provide. The form will pre-fill those fields.
+  4. NEVER ask the user "do you want to use a form?" — just emit the form. The user can cancel if they prefer to type.
+  
+  For other operations (balance, payslip, list requests), call the appropriate tool directly.
+  
+  If asked about another employee's data or to approve leaves, politely refuse:
+  'I only handle your own data. To approve leaves, use the Approver agent.'"""
+  
+  s = SessionLocal()
+  try:
+      a = s.query(Agent).filter_by(agent_name="HRMS_REVIEWER").first()
+      if a:
+          a.system_prompt = NEW_PROMPT
+          s.commit()
+          print(f"Updated HRMS_REVIEWER prompt (length: {len(NEW_PROMPT)})")
+      else:
+          print("!! HRMS_REVIEWER not found")
+  finally:
+      s.close()
+
+Run: C:\ml_env_311\Scripts\python.exe update_hrms_reviewer_prompt_v2.py
+
+==============================================================================
+REPORT BACK
+==============================================================================
+- Confirm tool_show_leave_request_form added to hrms_tools.py
+- Confirm _handle_apply_leave_form added
+- Confirm register_form call added at bottom of hrms_tools.py
+- Confirm tools.py re-exports the new tool
+- Confirm reviewer_agent_node in nodes.py has the new @tool, bind_tools update, and dispatch branch
+- Confirm script ran and prompt updated (paste the script output)
+- DO NOT run other verification commands
+
+
+C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.hrms_tools import tool_show_leave_request_form, _handle_apply_leave_form; from app.forms.registry import get_form_handler; h = get_form_handler('hrms_apply_leave'); print('Form registered:', h is not None, 'persona:', h.get('required_persona') if h else None)"
