@@ -1,3 +1,44 @@
-findstr /N /C:"collection_name" app\controllers\chat_controller.py
-findstr /N /C:"graph" app\controllers\chat_controller.py
-findstr /N /C:"form_submission" app\controllers\chat_controller.py
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>findstr /N "stream_chat_with_orchestrator\|request_data\|get_rms_graph\|get_hrms_graph" app\controllers\chat_controller.py
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>C:\ml_env_311\Scripts\python.exe -c "from app.forms.registry import register_form, get_form_handler, FORM_REGISTRY; from app.forms.spec import validate_form_data; from app.forms.emit import build_form_emit, extract_form_spec; print('Form foundation 5/6 OK')"
+Form foundation 5/6 OK
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>findstr /N "def \|async def " app\controllers\chat_controller.py
+25:    def to_markdown(text: str) -> str:
+87:    def get_rms_graph(cls):
+94:    def get_hrms_graph(cls):
+101:    async def stream_chat_with_orchestrator(
+267:    async def stream_chat(db: Session, user: dict, raw_token: str, request_data: dict):
+275:    def get_user_threads(db: Session, emp_no: str):
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>findstr /N /C:"collection_name" app\controllers\chat_controller.py
+119:        collection = request_data.get("collection_name") or request_data.get("collection", "RMS")
+137:        #         collection_name=collection,
+161:        collection = (request_data.get("collection_name") or "RMS").upper()
+283:        return {"success": True, "collection_name": "", "messages": []}
+427:        - collection_name: "RMS", "SCM", "HRMS", "FINANCE"
+435:        collection = request_data.get("collection_name") or request_data.get("collection", "RMS")
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>findstr /N /C:"graph" app\controllers\chat_controller.py
+17:from app.workflows.rms_workflow import get_rms_graph
+18:from app.workflows.hrms_workflow import get_hrms_graph
+83:    _rms_graph = None
+84:    _hrms_graph = None
+87:    def get_rms_graph(cls):
+88:        """Lazy initialization of the RMS workflow graph"""
+89:        if cls._rms_graph is None:
+90:            cls._rms_graph = get_rms_graph()
+91:        return cls._rms_graph
+94:    def get_hrms_graph(cls):
+95:        """Lazy initialization of the HRMS workflow graph"""
+96:        if cls._hrms_graph is None:
+97:            cls._hrms_graph = get_hrms_graph()
+98:        return cls._hrms_graph
+163:            graph = ChatController.get_hrms_graph()
+165:            graph = ChatController.get_rms_graph()
+167:        # Initialize state for the graph
+207:        async for event in graph.astream_events(initial_state, version="v1"):
+456:        graph = orchestrator.graph
+498:        async for event in graph.astream_events(initial_state, version="v1"):
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>findstr /N /C:"form_submission" app\controllers\chat_controller.py
