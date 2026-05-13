@@ -1,1 +1,78 @@
-powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 100 -First 75"
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 100 -First 75"
+    async def stream_chat_with_orchestrator(
+        db: Session,      
+        user: dict,       
+        raw_token: str,   
+        request_data: dict
+    ):
+        """
+        NEW: Chat flow using LangGraph orchestration with role-based agent routing.
+
+        Request data expects:
+        - collection: "RMS", "SCM", "HRMS", "FINANCE"
+        - agent_role: OPTIONAL - if provided, used as a hint; backend still infers from intent
+        - message: user's prompt
+
+        The orchestrator's parse_intent_node will infer persona from message keywords.
+        If agent_role is provided, it's used only if user has that persona; otherwise
+        the keyword-inferred persona wins.
+        """
+        collection = request_data.get("collection_name") or request_data.get("collection", "RMS")
+        # agent_role is optional - if absent or None, orchestrator will infer from intent
+        agent_role = request_data.get("agent_role") or None
+        user_msg_text = request_data.get("message", "")
+        thread_id = request_data.get("thread_id")
+
+        # Check for forbidden inbound content
+        if any(bad_word in user_msg_text.lower() for bad_word in ChatController.FORBIDDEN_INBOUND):
+            yield json.dumps({"error": "SECURITY FLAG: Message blocked by Inbound Guardrail."})
+            return
+
+        # Create thread if new
+        # TODO(level-2): persist thread to new schema
+        # if not thread_id:
+        #     thread_id = str(uuid.uuid4())
+        #     new_thread = ChatThread(
+        #         thread_id=thread_id,
+        #         emp_no=user["sub"],
+        #         collection_name=collection,
+        #         title=user_msg_text[:50]
+        #     )
+        #     db.add(new_thread)
+        #     db.commit()
+
+        # Save user message
+        # TODO(level-2): persist message to new schema
+        # db.add(ChatMessage(
+        #     thread_id=thread_id,
+        #     sender_type='user',
+        #     sender_emp_no=user["sub"],
+        #     message_text=user_msg_text
+        # ))
+        # db.commit()
+
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
+
+        yield json.dumps({"type": "meta", "thread_id": thread_id})
+
+        # ==========================================
+        # RMS WORKFLOW ORCHESTRATION WITH STREAMING
+        # ==========================================
+        collection = (request_data.get("collection_name") or "RMS").upper()
+        if collection == "HRMS":
+            graph = ChatController.get_hrms_graph()
+        else:
+            graph = ChatController.get_rms_graph()
+
+        # Initialize state for the graph
+        user_dept = user.get("dept", "Operations")
+        user_collection_agents = user.get("collection_agents", {})
+
+        initial_state = {
+            "user_id": user["sub"],
+            "user_dept": user_dept,
+            "collection_agents": user_collection_agents,
+            "selected_collection": collection,
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>
