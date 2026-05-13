@@ -1,1 +1,1 @@
-findstr /N "stream_chat_with_orchestrator\|request_data\|get_rms_graph\|get_hrms_graph" app\controllers\chat_controller.py
+C:\ml_env_311\Scripts\python.exe -c "from app.forms.registry import register_form, get_form_handler, FORM_REGISTRY; from app.forms.spec import validate_form_data; from app.forms.emit import build_form_emit, extract_form_spec; print('Form foundation 5/6 OK')"
