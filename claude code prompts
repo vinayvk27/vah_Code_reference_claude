@@ -1,354 +1,266 @@
-ENVIRONMENT: Do NOT run verification commands. Write the code, confirm files saved, stop. User verifies manually.
+Hey, we're adding a new feature: chat-embedded forms. Sometimes the AI will 
+respond with a structured form for the user to fill (e.g., "Apply for Leave" 
+or "Log Hours") instead of plain text. You need to build a generic 
+FormRenderer that handles any form spec the backend sends.
 
-TASK FORM-1: Add the backend foundation for chat-embedded forms. This task creates the form spec schema, registers form metadata, adds an SSE event type for emitting forms, and handles form submission requests routed back through /chat/stream.
+This is additive — natural-language chat keeps working exactly as before.
 
-This task does NOT define any specific forms yet — that's FORM-2. Phase 1 is just the plumbing.
+═══════════════════════════════════════════════
+WHAT CHANGES IN THE CHAT STREAM
+═══════════════════════════════════════════════
 
-==============================================================================
-STEP 1 — Create form spec schema and registry
-==============================================================================
-Create new file: app/forms/__init__.py (empty)
-Create new file: app/forms/registry.py
+Currently the chat stream sends only text chunks:
 
-In registry.py:
+    data: {"type": "chunk", "text": "..."}
 
-  """
-  Form Spec Registry
-  ==================
-  Maps form_id strings to the tool functions that handle their submission.
-  Tools add forms to this registry; chat_controller looks up by form_id.
-  """
-  
-  from typing import Callable, Dict, Any
-  
-  # form_id -> {"handler": callable, "collection": str, "required_persona": str}
-  FORM_REGISTRY: Dict[str, Dict[str, Any]] = {}
-  
-  
-  def register_form(form_id: str, handler: Callable, collection: str, required_persona: str):
-      """
-      Register a form's submission handler.
-      
-      Args:
-          form_id: unique form identifier (e.g., "hrms_apply_leave")
-          handler: callable that takes (form_data: dict, user_context: dict) -> str
-          collection: collection that owns this form (e.g., "HRMS")
-          required_persona: persona required to submit this form (e.g., "reviewer")
-      """
-      FORM_REGISTRY[form_id] = {
-          "handler": handler,
-          "collection": collection,
-          "required_persona": required_persona,
-      }
-  
-  
-  def get_form_handler(form_id: str) -> Dict[str, Any]:
-      """Returns the registered form info, or None if not found."""
-      return FORM_REGISTRY.get(form_id)
-  
-  
-  def list_forms() -> Dict[str, Dict[str, Any]]:
-      """Debug: list all registered forms."""
-      return dict(FORM_REGISTRY)
+Now a NEW chunk type will appear: "form".
 
-==============================================================================
-STEP 2 — Define form spec data structure (for documentation)
-==============================================================================
-Create new file: app/forms/spec.py
+    data: {"type": "form", "form_spec": { ... }}
 
-This file documents the JSON shape that tools emit and frontend renders. It defines validation helpers but does not enforce schemas at runtime (we trust tool authors).
+When you receive this, render an HTML form INSIDE the chat (as a chat bubble), 
+based on the form_spec JSON. Don't render it as text.
 
-  """
-  Form Spec Schema
-  ================
-  The shape of form_spec JSON that tools emit and frontend renders.
-  
-  EXAMPLE:
+═══════════════════════════════════════════════
+THE form_spec SHAPE
+═══════════════════════════════════════════════
+
+Example form_spec the backend will send:
+
+{
+  "version": 1,
+  "form_id": "hrms_apply_leave",
+  "title": "Apply for Leave",
+  "description": "Submit a new leave request",
+  "submit_label": "Submit Request",
+  "cancel_label": "Cancel",
+  "fields": [
     {
-      "version": 1,
-      "form_id": "hrms_apply_leave",
-      "title": "Apply for Leave",
-      "submit_label": "Submit Request",
-      "cancel_label": "Cancel",
-      "description": "Optional helper text below title",
-      "fields": [
-        {
-          "name": "leave_type_id",
-          "label": "Leave Type",
-          "type": "select",
-          "required": true,
-          "options": [
-            {"value": 1, "label": "Casual Leave (10 left)"},
-            {"value": 2, "label": "Sick Leave (8 left)"}
-          ],
-          "default": 1
-        },
-        {
-          "name": "from_date",
-          "label": "From Date",
-          "type": "date",
-          "required": true,
-          "default": "2026-06-15"
-        },
-        {
-          "name": "reason",
-          "label": "Reason",
-          "type": "textarea",
-          "required": true,
-          "max_length": 500,
-          "placeholder": "Brief explanation"
-        }
-      ]
+      "name": "leave_type_id",
+      "label": "Leave Type",
+      "type": "select",
+      "required": true,
+      "options": [
+        {"value": 1, "label": "Casual Leave (10 left)"},
+        {"value": 2, "label": "Sick Leave (8 left)"},
+        {"value": 3, "label": "Earned Leave (15 left)"}
+      ],
+      "default": 1
+    },
+    {
+      "name": "from_date",
+      "label": "From Date",
+      "type": "date",
+      "required": true,
+      "default": "2026-06-15"
+    },
+    {
+      "name": "to_date",
+      "label": "To Date",
+      "type": "date",
+      "required": true
+    },
+    {
+      "name": "reason",
+      "label": "Reason",
+      "type": "textarea",
+      "required": true,
+      "max_length": 500,
+      "placeholder": "Brief explanation"
     }
-  
-  Supported field types:
-    - text:      single-line string
-    - textarea:  multi-line string
-    - number:    integer or float
-    - date:      YYYY-MM-DD
-    - select:    dropdown from options[]
-    - checkbox:  boolean
-  
-  Common field attributes:
-    - name (required):       field key sent back in submission
-    - label (required):      display label
-    - type (required):       one of above
-    - required (bool):       must be filled
-    - default (any):         pre-filled value
-    - placeholder (str):     hint text inside empty input
-    - help_text (str):       helper text below the field
-    - min_length / max_length:  string length constraints
-    - min / max:             numeric/date constraints
-    - options (for select):  [{"value":..., "label":...}]
-  """
-  
-  from typing import Any, Dict, List, Optional
-  
-  
-  def validate_form_data(form_spec: dict, form_data: dict) -> Optional[str]:
-      """
-      Server-side validation of form submission against its spec.
-      Returns None if valid, or a string error message describing the first failure.
-      
-      Validates: required fields, type basics, min/max where applicable.
-      """
-      fields = form_spec.get("fields", [])
-      
-      for field in fields:
-          name = field.get("name")
-          if not name:
-              continue
-          
-          required = field.get("required", False)
-          value = form_data.get(name)
-          
-          # Required check
-          if required and (value is None or value == ""):
-              return f"Field '{field.get('label', name)}' is required."
-          
-          # Skip remaining checks if no value provided (and not required)
-          if value is None or value == "":
-              continue
-          
-          ftype = field.get("type", "text")
-          
-          # Length constraints (text, textarea)
-          if ftype in ("text", "textarea"):
-              if not isinstance(value, str):
-                  return f"Field '{name}' must be a string."
-              ml = field.get("max_length")
-              mn = field.get("min_length")
-              if ml is not None and len(value) > ml:
-                  return f"Field '{name}' exceeds max length of {ml}."
-              if mn is not None and len(value) < mn:
-                  return f"Field '{name}' below min length of {mn}."
-          
-          # Numeric constraints
-          if ftype == "number":
-              try:
-                  num_val = float(value)
-              except (TypeError, ValueError):
-                  return f"Field '{name}' must be a number."
-              mn = field.get("min")
-              mx = field.get("max")
-              if mn is not None and num_val < mn:
-                  return f"Field '{name}' below min {mn}."
-              if mx is not None and num_val > mx:
-                  return f"Field '{name}' exceeds max {mx}."
-          
-          # Date format
-          if ftype == "date":
-              import re
-              if not isinstance(value, str) or not re.match(r'^\d{4}-\d{2}-\d{2}$', value):
-                  return f"Field '{name}' must be in YYYY-MM-DD format."
-          
-          # Select option validity
-          if ftype == "select":
-              valid_values = [opt.get("value") for opt in field.get("options", [])]
-              # Match value (note: types may differ — compare as strings)
-              if str(value) not in [str(v) for v in valid_values]:
-                  return f"Field '{name}' has invalid option."
-      
-      return None  # all good
+  ]
+}
 
-==============================================================================
-STEP 3 — Update ChatStreamRequest to accept form submissions
-==============================================================================
-In app/models/dto_schemas.py, find ChatStreamRequest. ADD a new optional field:
+═══════════════════════════════════════════════
+FIELD TYPES TO SUPPORT
+═══════════════════════════════════════════════
 
-  form_submission: Optional[Dict[str, Any]] = Field(
-      default=None,
-      description="If user is submitting a form, the form data. Shape: {'form_id': str, 'data': {...}}",
-      example={"form_id": "hrms_apply_leave", "data": {"leave_type_id": 1, "from_date": "2026-06-15"}}
-  )
+Build the FormRenderer to handle ALL these types. Phase 1 forms use only 
+text, textarea, number, date, select — but plan for the rest.
 
-Make sure Dict, Any, Optional are imported at the top.
+  text:      <input type="text">
+  textarea:  <textarea>
+  number:    <input type="number">
+  date:      <input type="date">  (browser native picker is fine)
+  select:    <select> with options[]
+  checkbox:  <input type="checkbox">
 
-==============================================================================
-STEP 4 — Update chat_controller to handle form submissions
-==============================================================================
-In app/controllers/chat_controller.py, find the stream_chat_with_orchestrator method.
+Common attributes ALL fields may have:
+  - name (string, required): the key in submission data
+  - label (string, required): visible label above the input
+  - type (string, required): one of above
+  - required (bool): show asterisk; block submit if empty
+  - default (any): pre-fill value (especially common for date/select)
+  - placeholder (string): input placeholder text
+  - help_text (string): small grey text below input
+  - min_length / max_length: for text/textarea
+  - min / max: for number/date
+  - options (array of {value, label}): for select only
 
-Near the top of the method body (after request_data is parsed but BEFORE the graph is invoked), add a form submission handler:
+═══════════════════════════════════════════════
+RENDERING REQUIREMENTS
+═══════════════════════════════════════════════
 
-  # Check for form submission — if present, route directly to the handler, skip LLM
-  form_submission = request_data.get("form_submission")
-  if form_submission:
-      from app.forms.registry import get_form_handler
-      from app.forms.spec import validate_form_data
-      
-      form_id = form_submission.get("form_id")
-      form_data = form_submission.get("data") or {}
-      
-      handler_info = get_form_handler(form_id)
-      if not handler_info:
-          err_msg = f"Unknown form: {form_id}"
-          yield f"data: {json.dumps({'type': 'chunk', 'text': err_msg})}\n\n"
-          yield "data: [DONE]\n\n"
-          return
-      
-      # Permission check — does user have the required persona?
-      required_persona = handler_info["required_persona"]
-      collection = handler_info["collection"]
-      user_personas = (current_user.get("collection_agents") or {}).get(collection, [])
-      if required_persona not in user_personas:
-          err_msg = f"You don't have permission to submit this form."
-          yield f"data: {json.dumps({'type': 'chunk', 'text': err_msg})}\n\n"
-          yield "data: [DONE]\n\n"
-          return
-      
-      # Build user_context for the handler
-      user_context = {
-          "user_id": current_user.get("sub") or current_user.get("user_id"),
-          "user_dept": current_user.get("dept"),
-          "persona": required_persona,
-          "collection_agents": current_user.get("collection_agents", {}),
-          "name": current_user.get("name", ""),
-      }
-      
-      # Execute the form handler
-      try:
-          result_text = handler_info["handler"](form_data, user_context)
-      except Exception as e:
-          result_text = f"Form submission failed: {e}"
-      
-      # Stream the result back as a regular chat chunk
-      yield f"data: {json.dumps({'type': 'chunk', 'text': result_text})}\n\n"
-      yield "data: [DONE]\n\n"
-      return
-  
-  # ... existing graph-invocation code continues below for non-form messages
+1. Render the form as a chat bubble (NOT a modal, NOT a side panel). It 
+   appears inline in the chat scroll, like a styled message from the AI.
 
-  IMPORTANT: locate the existing function carefully. Place this code AFTER request validation/parsing and BEFORE graph selection or LLM invocation. Keep all existing logic intact for non-form messages.
+2. The form has:
+   - Title at the top (form_spec.title)
+   - Optional description text (form_spec.description) if provided
+   - All fields rendered in order
+   - Submit button (label = form_spec.submit_label or "Submit")
+   - Cancel button (label = form_spec.cancel_label or "Cancel")
 
-==============================================================================
-STEP 5 — Add a helper for tools to emit form specs (SSE chunk format)
-==============================================================================
-Tools that emit forms will eventually return a special string format that chat_controller's streaming filter recognizes and converts to a form SSE chunk. For now, just document the convention.
+3. Form styling should match your existing chat UI — same fonts, colors, 
+   rounded corners. The form should feel like part of the conversation.
 
-Create new file: app/forms/emit.py
+4. Use the `default` value to pre-fill inputs when the form first renders.
 
-  """
-  Helpers for tools to emit form specs.
-  
-  Tools call build_form_emit(form_spec) which returns a string in a special
-  format. The chat_controller streaming filter recognizes this format and
-  yields a {"type": "form", "form_spec": {...}} SSE event instead of a text chunk.
-  """
-  
-  import json
-  
-  FORM_EMIT_PREFIX = "<<FORM>>"
-  FORM_EMIT_SUFFIX = "<<ENDFORM>>"
-  
-  
-  def build_form_emit(form_spec: dict) -> str:
-      """
-      Wrap a form_spec into the special string the streaming layer detects.
-      Tools return this string; the streaming filter parses and emits as form event.
-      """
-      return f"{FORM_EMIT_PREFIX}{json.dumps(form_spec)}{FORM_EMIT_SUFFIX}"
-  
-  
-  def extract_form_spec(text: str):
-      """
-      Find and extract form_spec from text if present. Returns dict or None.
-      Also returns the remaining text after stripping the form block.
-      """
-      if FORM_EMIT_PREFIX not in text:
-          return None, text
-      
-      start = text.find(FORM_EMIT_PREFIX)
-      end = text.find(FORM_EMIT_SUFFIX, start)
-      if end == -1:
-          return None, text  # Incomplete — let it stream more
-      
-      json_str = text[start + len(FORM_EMIT_PREFIX):end]
-      remaining = text[:start] + text[end + len(FORM_EMIT_SUFFIX):]
-      
-      try:
-          form_spec = json.loads(json_str)
-          return form_spec, remaining
-      except json.JSONDecodeError:
-          return None, text  # Malformed — pass through as text
+5. Required fields show a visual indicator (red asterisk after label, 
+   "Required" text, or whatever fits your design language).
 
-==============================================================================
-STEP 6 — Update chat_controller streaming filter to emit form events
-==============================================================================
-In stream_chat_with_orchestrator's streaming loop (the part that processes on_chat_model_stream events and buffers content for <<ACTION>>...<<END>> filtering), add similar handling for <<FORM>>...<<ENDFORM>>.
+6. While a form is showing, the user can STILL type in the chat input 
+   normally. The form is non-blocking. Both the input and form coexist.
 
-Find the existing pending_buffer / in_action state machine. Extend it to ALSO buffer and extract <<FORM>>...<<ENDFORM>> blocks. When a complete form block is found:
-  1. Parse the JSON between the markers
-  2. Yield it as a special event: yield f"data: {json.dumps({'type': 'form', 'form_spec': parsed})}\n\n"
-  3. Continue streaming any remaining text after the block
+═══════════════════════════════════════════════
+CLIENT-SIDE VALIDATION
+═══════════════════════════════════════════════
 
-This means adding a parallel state machine for forms alongside the existing action-suppression one. Approach:
+Validate before sending to backend:
+  - Required fields filled (not empty/null)
+  - min_length / max_length for text fields
+  - min / max for number/date
+  - Date format YYYY-MM-DD (HTML date input enforces this)
+  - For select: value must be one of options
 
-  - Use the existing pending_buffer as before
-  - While draining, also scan for FORM_EMIT_PREFIX (in addition to <<ACTION)
-  - When found, accumulate until FORM_EMIT_SUFFIX
-  - Extract the JSON between markers, yield as type:"form" event
-  - Strip those markers from the user-visible stream
-  - Resume normal streaming after the form
+Show inline error message below the offending field. Don't disable submit 
+preemptively — let user click submit, then highlight all errors at once.
 
-To keep this simple, you may use the helpers in app/forms/emit.py: extract_form_spec(text) returns (parsed_dict_or_None, text_with_form_removed).
+Backend will ALSO validate (defense in depth) and return an error message 
+if anything slips through.
 
-Apply the form-extraction step after the action-extraction step in the buffer drain loop. Order: first strip <<ACTION>> blocks (suppress entirely), then strip <<FORM>> blocks (yield as form event), then stream the remaining text as normal chunks.
+═══════════════════════════════════════════════
+SUBMIT BEHAVIOR
+═══════════════════════════════════════════════
 
-==============================================================================
-STEP 7 — Update agent prompts to mention form-emitting capability
-==============================================================================
-This is a TODO for FORM-2 (when we add the first forms). Do not modify any prompts in this task.
+When user clicks Submit and all validations pass:
 
-==============================================================================
-REPORT BACK
-==============================================================================
-- Confirm app/forms/__init__.py, app/forms/registry.py, app/forms/spec.py, app/forms/emit.py created
-- Confirm ChatStreamRequest has new form_submission field
-- Confirm chat_controller handles form submissions (skips LLM, calls handler, returns result)
-- Confirm streaming filter handles <<FORM>>...<<ENDFORM>> emission
-- Line counts of changed files
-- DO NOT run verification commands
+1. Disable the Submit button (prevent double-clicks).
+
+2. Send a POST to /api/v1/chat/stream with this payload:
+
+   {
+     "collection_name": "<same collection the chat is in, e.g., HRMS>",
+     "form_submission": {
+       "form_id": "<from form_spec.form_id>",
+       "data": {
+         "leave_type_id": 1,
+         "from_date": "2026-06-15",
+         "to_date": "2026-06-16",
+         "reason": "Personal work"
+       }
+     }
+   }
+
+   Notes:
+     - Do NOT send a "message" field for form submissions.
+     - Do NOT send "agent_role".
+     - Do NOT send "chat_history" — the backend reconstructs context from form_id.
+     - Authorization: Bearer <access_token> as usual.
+
+3. The backend responds with an SSE stream (same /chat/stream endpoint). 
+   Process chunks normally. The agent will send back a text confirmation 
+   like "Leave request #5 submitted, pending approval."
+
+4. After successful submission, REPLACE the form bubble with a small 
+   "Submitted ✓" badge or summary. Don't leave the editable form around.
+
+5. The agent's text confirmation appears as a NEW chat bubble below the 
+   submitted form.
+
+═══════════════════════════════════════════════
+CANCEL BEHAVIOR
+═══════════════════════════════════════════════
+
+When user clicks Cancel:
+
+1. Remove the form from the chat (replace with a faded "Form cancelled" 
+   message or just remove the bubble).
+
+2. Send a POST to /api/v1/chat/stream with:
+
+   {
+     "collection_name": "<same collection>",
+     "message": "I cancelled the form."
+   }
+
+   This is just a regular text message. The AI will acknowledge ("No problem, 
+   let me know if you need anything else") and conversation continues.
+
+═══════════════════════════════════════════════
+COMPLETE FLOW EXAMPLE
+═══════════════════════════════════════════════
+
+User types in HRMS chat: "I want to apply for leave"
+
+→ Frontend sends: POST /chat/stream with message + collection_name
+
+→ Backend processes, agent decides to show form
+
+→ SSE stream sends: data: {"type": "form", "form_spec": {form definition}}
+
+→ Frontend receives "form" type → renders FormRenderer inline as chat bubble
+
+→ User fills fields and clicks "Submit Request"
+
+→ Frontend validates → sends POST /chat/stream with form_submission payload
+
+→ Backend processes submission, agent confirms
+
+→ SSE stream sends: data: {"type": "chunk", "text": "Leave request #7 
+   submitted, pending approval."}
+
+→ Frontend replaces form with "Submitted ✓" → shows confirmation as new bubble
+
+═══════════════════════════════════════════════
+WHAT IS NOT CHANGING
+═══════════════════════════════════════════════
+
+  - All existing chat behavior continues to work
+  - Natural-language chat still routes through the same /chat/stream endpoint
+  - Forms are ADDITIONAL — they don't replace typing
+  - JWT, login, capabilities, timesheet endpoints — no changes
+  - SSE event format for text chunks — unchanged
+
+═══════════════════════════════════════════════
+ERROR HANDLING
+═══════════════════════════════════════════════
+
+If the form_spec JSON is malformed (missing fields, unknown field type, 
+etc.):
+  → Log to console, render a fallback text message in chat:
+    "The AI tried to send a form but it was malformed. Please try again."
+
+If form submission fails (HTTP 4xx/5xx or chunk contains error text):
+  → Keep the form visible with the entered values (don't lose user data)
+  → Re-enable Submit button
+  → Display the error message above the form buttons
+
+═══════════════════════════════════════════════
+TESTING WHEN BACKEND IS READY
+═══════════════════════════════════════════════
+
+I'll let you know when the backend forms are deployed. Initial test forms:
+
+  - HRMS: Apply for Leave (any user with HRMS access can trigger)
+  - RMS:  Log Hours (any user with RMS Filler access can trigger)
+
+To trigger them naturally:
+  - Open HRMS chat, type: "I want to apply for leave"
+  - Open RMS chat, type: "I need to log hours"
+
+The form should appear in the chat as the AI's response.
+
+Let me know if anything is unclear or if you want to discuss the design.
 
 
 C:\ml_env_311\Scripts\python.exe -c "from app.forms.registry import register_form, get_form_handler, FORM_REGISTRY; from app.forms.spec import validate_form_data; from app.forms.emit import build_form_emit, extract_form_spec, FORM_EMIT_PREFIX, FORM_EMIT_SUFFIX; print('Form foundation imports OK')"
