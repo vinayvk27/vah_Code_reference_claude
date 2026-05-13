@@ -1,57 +1,26 @@
-(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 100 -First 75"
-    async def stream_chat_with_orchestrator(
-        db: Session,      
-        user: dict,       
-        raw_token: str,   
-        request_data: dict
-    ):
-        """
-        NEW: Chat flow using LangGraph orchestration with role-based agent routing.
+ENVIRONMENT: Do NOT run verification commands. User verifies manually.
 
-        Request data expects:
-        - collection: "RMS", "SCM", "HRMS", "FINANCE"
-        - agent_role: OPTIONAL - if provided, used as a hint; backend still infers from intent
-        - message: user's prompt
+TASK FORM-1.fix: Wire the form submission handler and form streaming filter into app/controllers/chat_controller.py. Two precise edits using str_replace.
 
-        The orchestrator's parse_intent_node will infer persona from message keywords.
-        If agent_role is provided, it's used only if user has that persona; otherwise
-        the keyword-inferred persona wins.
-        """
-        collection = request_data.get("collection_name") or request_data.get("collection", "RMS")
-        # agent_role is optional - if absent or None, orchestrator will infer from intent
-        agent_role = request_data.get("agent_role") or None
-        user_msg_text = request_data.get("message", "")
-        thread_id = request_data.get("thread_id")
+==============================================================================
+EDIT 1 — Add imports at top of chat_controller.py
+==============================================================================
+Find the existing imports block near the top of the file (around lines 1-20). Find this line:
 
-        # Check for forbidden inbound content
-        if any(bad_word in user_msg_text.lower() for bad_word in ChatController.FORBIDDEN_INBOUND):
-            yield json.dumps({"error": "SECURITY FLAG: Message blocked by Inbound Guardrail."})
-            return
+  from app.workflows.hrms_workflow import get_hrms_graph
 
-        # Create thread if new
-        # TODO(level-2): persist thread to new schema
-        # if not thread_id:
-        #     thread_id = str(uuid.uuid4())
-        #     new_thread = ChatThread(
-        #         thread_id=thread_id,
-        #         emp_no=user["sub"],
-        #         collection_name=collection,
-        #         title=user_msg_text[:50]
-        #     )
-        #     db.add(new_thread)
-        #     db.commit()
+ADD these two lines IMMEDIATELY AFTER it:
 
-        # Save user message
-        # TODO(level-2): persist message to new schema
-        # db.add(ChatMessage(
-        #     thread_id=thread_id,
-        #     sender_type='user',
-        #     sender_emp_no=user["sub"],
-        #     message_text=user_msg_text
-        # ))
-        # db.commit()
+  from app.forms.registry import get_form_handler
+  from app.forms.spec import validate_form_data
+  from app.forms.emit import extract_form_spec
 
-        if not thread_id:
+==============================================================================
+EDIT 2 — Insert form submission handler after the meta event yield
+==============================================================================
+In stream_chat_with_orchestrator (starts at line 101), find this exact block:
+
+  if not thread_id:
             thread_id = str(uuid.uuid4())
 
         yield json.dumps({"type": "meta", "thread_id": thread_id})
@@ -60,19 +29,179 @@
         # RMS WORKFLOW ORCHESTRATION WITH STREAMING
         # ==========================================
         collection = (request_data.get("collection_name") or "RMS").upper()
-        if collection == "HRMS":
-            graph = ChatController.get_hrms_graph()
-        else:
-            graph = ChatController.get_rms_graph()
 
-        # Initialize state for the graph
-        user_dept = user.get("dept", "Operations")
-        user_collection_agents = user.get("collection_agents", {})
+REPLACE with (note new block inserted between yield meta and the orchestration banner):
 
-        initial_state = {
-            "user_id": user["sub"],
-            "user_dept": user_dept,
-            "collection_agents": user_collection_agents,
-            "selected_collection": collection,
+  if not thread_id:
+            thread_id = str(uuid.uuid4())
 
-(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>
+        yield json.dumps({"type": "meta", "thread_id": thread_id})
+
+        # ==========================================
+        # FORM SUBMISSION HANDLER (early return)
+        # ==========================================
+        form_submission = request_data.get("form_submission")
+        if form_submission:
+            form_id = form_submission.get("form_id")
+            form_data = form_submission.get("data") or {}
+
+            handler_info = get_form_handler(form_id)
+            if not handler_info:
+                yield json.dumps({"type": "chunk", "text": f"Unknown form: {form_id}"})
+                return
+
+            required_persona = handler_info["required_persona"]
+            form_collection = handler_info["collection"]
+            user_personas = (user.get("collection_agents") or {}).get(form_collection, [])
+            if required_persona not in user_personas:
+                yield json.dumps({"type": "chunk", "text": "You don't have permission to submit this form."})
+                return
+
+            user_context = {
+                "user_id": user.get("sub"),
+                "user_dept": user.get("dept"),
+                "persona": required_persona,
+                "collection_agents": user.get("collection_agents", {}),
+                "name": user.get("name", ""),
+            }
+
+            try:
+                result_text = handler_info["handler"](form_data, user_context)
+            except Exception as e:
+                result_text = f"Form submission failed: {e}"
+
+            yield json.dumps({"type": "chunk", "text": result_text})
+            return
+
+        # ==========================================
+        # RMS WORKFLOW ORCHESTRATION WITH STREAMING
+        # ==========================================
+        collection = (request_data.get("collection_name") or "RMS").upper()
+
+==============================================================================
+EDIT 3 — Add <<FORM>>...<<ENDFORM>> handling in the streaming filter
+==============================================================================
+In stream_chat_with_orchestrator, find the streaming filter block. Find this exact block:
+
+  full_response = ""
+        pending_buffer = ""
+        in_action = False
+
+        async for event in graph.astream_events(initial_state, version="v1"):
+            event_kind = event.get("event")
+
+            # Listen for chat model streaming events
+            if event_kind == "on_chat_model_stream":
+                chunk_text = event["data"]["chunk"].content or ""
+                if not chunk_text:
+                    continue
+                pending_buffer += chunk_text
+
+                # Drain the buffer, suppressing <<ACTION>>...<<END>> blocks
+                while pending_buffer:
+                    if not in_action:
+                        start_idx = pending_buffer.find("<<ACTION")
+                        if start_idx == -1:
+                            # Hold last 12 chars in case marker straddles boundary
+                            if len(pending_buffer) > 12:
+                                safe_chunk = pending_buffer[:-12]
+                                pending_buffer = pending_buffer[-12:]
+                                full_response += safe_chunk
+                                yield json.dumps({"type": "chunk", "text": safe_chunk})
+                            break
+                        else:
+                            before = pending_buffer[:start_idx]
+                            pending_buffer = pending_buffer[start_idx:]
+                            if before:
+                                full_response += before
+                                yield json.dumps({"type": "chunk", "text": before})
+                            in_action = True
+                    else:
+                        end_idx = pending_buffer.find("<<END>>")
+                        if end_idx == -1:
+                            # Wait for more
+                            break
+                        else:
+                            pending_buffer = pending_buffer[end_idx + len("<<END>>"):]
+                            in_action = False
+
+        # After loop, flush any remaining safe content
+        if pending_buffer and not in_action:
+            full_response += pending_buffer
+            yield json.dumps({"type": "chunk", "text": pending_buffer})
+
+REPLACE with (adds form extraction step before action-suppression drain):
+
+  full_response = ""
+        pending_buffer = ""
+        in_action = False
+
+        async for event in graph.astream_events(initial_state, version="v1"):
+            event_kind = event.get("event")
+
+            # Listen for chat model streaming events
+            if event_kind == "on_chat_model_stream":
+                chunk_text = event["data"]["chunk"].content or ""
+                if not chunk_text:
+                    continue
+                pending_buffer += chunk_text
+
+                # FORM EXTRACTION: detect <<FORM>>...<<ENDFORM>> blocks and emit as form events
+                while "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
+                    form_spec, remaining = extract_form_spec(pending_buffer)
+                    if form_spec is None:
+                        break  # malformed or incomplete; stop trying
+                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                    pending_buffer = remaining
+
+                # Drain the buffer, suppressing <<ACTION>>...<<END>> blocks
+                while pending_buffer:
+                    if not in_action:
+                        start_idx = pending_buffer.find("<<ACTION")
+                        if start_idx == -1:
+                            # Hold last 12 chars in case marker straddles boundary
+                            # Also hold if a partial <<FORM>> marker is at the tail
+                            tail_check = pending_buffer[-12:]
+                            if "<<FORM" in tail_check or "<<ENDF" in tail_check:
+                                # Wait for more chunks to complete the form marker
+                                break
+                            if len(pending_buffer) > 12:
+                                safe_chunk = pending_buffer[:-12]
+                                pending_buffer = pending_buffer[-12:]
+                                full_response += safe_chunk
+                                yield json.dumps({"type": "chunk", "text": safe_chunk})
+                            break
+                        else:
+                            before = pending_buffer[:start_idx]
+                            pending_buffer = pending_buffer[start_idx:]
+                            if before:
+                                full_response += before
+                                yield json.dumps({"type": "chunk", "text": before})
+                            in_action = True
+                    else:
+                        end_idx = pending_buffer.find("<<END>>")
+                        if end_idx == -1:
+                            # Wait for more
+                            break
+                        else:
+                            pending_buffer = pending_buffer[end_idx + len("<<END>>"):]
+                            in_action = False
+
+        # After loop, flush any remaining safe content
+        if pending_buffer and not in_action:
+            # Try one more form extraction in case the form was at the very end
+            if "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
+                form_spec, remaining = extract_form_spec(pending_buffer)
+                if form_spec is not None:
+                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                    pending_buffer = remaining
+            if pending_buffer:
+                full_response += pending_buffer
+                yield json.dumps({"type": "chunk", "text": pending_buffer})
+
+==============================================================================
+REPORT BACK
+==============================================================================
+- Confirm 3 edits applied
+- Line count of chat_controller.py before and after
+- DO NOT run verification commands
