@@ -1,1 +1,138 @@
-C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.nodes import creator_agent_node; print('Creator agent node loads OK')"
+ENVIRONMENT: Do NOT run verification commands. User verifies manually.
+
+TASK H2.4c.2: Replace the approver_agent_node placeholder in app/workflows/hrms_workflow/nodes.py with the full implementation. Mirror the creator/reviewer node pattern already in place.
+
+The Approver handles 3 HRMS tools: tool_list_pending_leaves, tool_decide_leave, tool_view_any_payslip.
+
+REPLACE the existing approver_agent_node STUB with this full version:
+
+  def approver_agent_node(state: HRMSState) -> HRMSState:
+      """
+      HRMS Approver persona agent.
+      Approves/rejects leave requests; views any employee's payslip.
+      """
+      user_emp_id = state.get("user_id")
+      user_dept = state.get("user_dept", "")
+      user_context = _get_user_context(state)
+      
+      user_name = ""
+      user_grade = None
+      db_snap = SessionLocal()
+      try:
+          resource = db_snap.query(Resource).filter(Resource.Emp_no == str(user_emp_id)).first()
+          if resource:
+              user_name = resource.Name or ""
+              user_grade = resource.Grade
+              user_context["name"] = user_name
+              user_context["grade"] = user_grade
+      finally:
+          db_snap.close()
+      
+      # Snapshot: pending leave requests + leave types
+      db_snap = SessionLocal()
+      try:
+          pending = hrms_store.list_leave_requests(db_snap, is_approved="PENDING")
+          leave_types = hrms_store.list_leave_types(db_snap)
+      except Exception:
+          pending = []
+          leave_types = []
+      finally:
+          db_snap.close()
+      
+      snapshot_lines = []
+      if pending:
+          snapshot_lines.append(f"Pending leave requests ({len(pending)}):")
+          for r in pending[:20]:
+              snapshot_lines.append(
+                  f"  - #{r['request_id']} resource={r['resource_id']} {r['leave_type_name']} "
+                  f"{r['from_date']} to {r['to_date']} ({r['num_days']}d) reason='{r['reason']}'"
+              )
+      if leave_types:
+          snapshot_lines.append("Leave types available:")
+          for lt in leave_types:
+              snapshot_lines.append(f"  - id={lt['leave_type_id']} {lt['name']} ({lt['max_days']} max days)")
+      snapshot_block = "\n".join(snapshot_lines) if snapshot_lines else "(no pending requests)"
+      
+      base_prompt = _get_agent_prompt("HRMS_APPROVER")
+      
+      system_prompt = (
+          f"{base_prompt}\n\n"
+          f"=== CURRENT USER CONTEXT ===\n"
+          f"Employee ID: {user_emp_id}\n"
+          f"Employee Name: {user_name}\n"
+          f"Department: {user_dept}\n"
+          f"Grade: {user_grade or 'N/A'}\n"
+          f"Persona: APPROVER\n\n"
+          f"=== CONVERSATION HISTORY IS AUTHORITATIVE ===\n"
+          f"Recent messages between you and the user are included. The DATA SNAPSHOT is fetched at request start — it does NOT include actions you took earlier in THIS conversation.\n"
+          f"When the user asks 'what did I just approve', reference the conversation history.\n\n"
+          f"=== HOW TO PERFORM ACTIONS (CRITICAL) ===\n"
+          f"Format: <<ACTION>>{{\"tool\": \"<name>\", \"args\": {{...}}}}<<END>>\n\n"
+          f"Available tools for HRMS APPROVER (you):\n"
+          f"- tool_list_pending_leaves — list all pending leave requests (no args)\n"
+          f"- tool_decide_leave — approve or reject a leave request\n"
+          f"  args: {{\"request_id\": <int>, \"decision\": \"APPROVED\" or \"REJECTED\", \"remarks\": \"<string>\"}}\n"
+          f"- tool_view_any_payslip — view any employee's payslip\n"
+          f"  args: {{\"resource_id\": <int>, \"pay_month\": \"YYYY-MM\"}}\n\n"
+          f"RULES:\n"
+          f"1. When deciding on a leave, IMMEDIATELY emit the <<ACTION>> block. Do not ask 'shall I proceed?'.\n"
+          f"2. If asked to create a leave type or submit your own request, refuse politely:\n"
+          f"   'I only review and approve leaves. To define leave types use the Creator; to submit your own request use the Filler.'\n"
+          f"3. After action block, write a brief confirmation (1-2 sentences).\n\n"
+          f"=== CURRENT DATA SNAPSHOT ===\n{snapshot_block}\n"
+      )
+      
+      @tool
+      def list_pending_leaves() -> str:
+          """List all pending leave requests."""
+          return hrms_tools.tool_list_pending_leaves(user_context)
+      
+      @tool
+      def decide_leave(request_id: int, decision: str, remarks: str = "") -> str:
+          """Approve or reject a leave request."""
+          return hrms_tools.tool_decide_leave(request_id, decision, remarks, user_context)
+      
+      @tool
+      def view_any_payslip(resource_id: int, pay_month: str) -> str:
+          """View any employee's payslip for a month."""
+          return hrms_tools.tool_view_any_payslip(resource_id, pay_month, user_context)
+      
+      llm = get_llm()
+      llm_with_tools = llm.bind_tools([list_pending_leaves, decide_leave, view_any_payslip])
+      
+      messages = list(state.get("messages") or [])
+      message_list = [SystemMessage(content=system_prompt)] + messages
+      
+      response = llm_with_tools.invoke(message_list)
+      
+      actions = extract_actions(response.content or "")
+      if actions:
+          for action in actions:
+              tool_name = action.get("tool")
+              tool_args = action.get("args") or {}
+              try:
+                  if tool_name == "tool_list_pending_leaves":
+                      list_pending_leaves.invoke(tool_args)
+                  elif tool_name == "tool_decide_leave":
+                      decide_leave.invoke(tool_args)
+                  elif tool_name == "tool_view_any_payslip":
+                      view_any_payslip.invoke(tool_args)
+              except PermissionError:
+                  pass
+              except Exception:
+                  pass
+          clean_content = strip_actions(response.content)
+          full_text = clean_content.strip()
+      else:
+          full_text = (response.content or "").strip()
+      
+      msgs = list(state.get("messages") or [])
+      msgs.append(AIMessage(content=full_text))
+      state["messages"] = msgs
+      return state
+
+DO NOT touch creator_agent_node or reviewer_agent_node.
+
+REPORT BACK: Confirm approver_agent_node updated, file line count.
+
+C:\ml_env_311\Scripts\python.exe -c "from app.workflows.hrms_workflow.nodes import creator_agent_node, reviewer_agent_node, approver_agent_node; print('All 3 HRMS agent nodes load OK')"
