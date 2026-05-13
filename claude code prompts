@@ -1,3 +1,77 @@
-powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 100 -First75"
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 100 -First75"
+Select-Object : A parameter cannot be found that matches parameter name 'First75'.
+At line:1 char:74
++ ... app\controllers\chat_controller.py | Select-Object -Skip 100 -First75
++                                                                  ~~~~~~~~
+    + CategoryInfo          : InvalidArgument: (:) [Select-Object], ParameterBindingException
+    + FullyQualifiedErrorId : NamedParameterNotFound,Microsoft.PowerShell.Commands.SelectObjectCommand
+ 
 
-powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 199 -First 65"
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>powershell "Get-Content app\controllers\chat_controller.py | Select-Object -Skip 199 -First 65"
+        initial_state["messages"].append(HumanMessage(content=user_msg_text))
+
+        # Stream events from LangGraph
+        full_response = ""
+        pending_buffer = ""
+        in_action = False
+
+        async for event in graph.astream_events(initial_state, version="v1"):
+            event_kind = event.get("event")
+
+            # Listen for chat model streaming events
+            if event_kind == "on_chat_model_stream":
+                chunk_text = event["data"]["chunk"].content or ""
+                if not chunk_text:
+                    continue
+                pending_buffer += chunk_text
+
+                # Drain the buffer, suppressing <<ACTION>>...<<END>> blocks
+                while pending_buffer:
+                    if not in_action:
+                        start_idx = pending_buffer.find("<<ACTION")
+                        if start_idx == -1:
+                            # Hold last 12 chars in case marker straddles boundary
+                            if len(pending_buffer) > 12:
+                                safe_chunk = pending_buffer[:-12]
+                                pending_buffer = pending_buffer[-12:]
+                                full_response += safe_chunk
+                                yield json.dumps({"type": "chunk", "text": safe_chunk})
+                            break
+                        else:
+                            before = pending_buffer[:start_idx]
+                            pending_buffer = pending_buffer[start_idx:]
+                            if before:
+                                full_response += before
+                                yield json.dumps({"type": "chunk", "text": before})
+                            in_action = True
+                    else:
+                        end_idx = pending_buffer.find("<<END>>")
+                        if end_idx == -1:
+                            # Wait for more
+                            break
+                        else:
+                            pending_buffer = pending_buffer[end_idx + len("<<END>>"):]
+                            in_action = False
+
+        # After loop, flush any remaining safe content
+        if pending_buffer and not in_action:
+            full_response += pending_buffer
+            yield json.dumps({"type": "chunk", "text": pending_buffer})
+
+        # Additional outbound guardrail check
+        if any(bad_word in full_response.lower() for bad_word in ChatController.FORBIDDEN_OUTBOUND):
+            full_response = "[REDACTED BY DPAH GUARDRAIL: Confidential Information Detected]"
+
+        # Save agent response to DB
+        # TODO(level-2): persist message to new schema
+        # if full_response:
+        #     db.add(ChatMessage(
+        #         thread_id=thread_id,
+        #         sender_type='agent',
+        #         message_text=full_response
+        #     ))
+        #     db.commit()
+
+        # Signal end of stream - done by route wrapper
+
+(ml_env_311) D:\Sakthi\Gen AI\dpah_backend>
