@@ -1,15 +1,1 @@
-All 3 edits applied.
-
-Edit 1 — Added 3 imports after get_hrms_graph line:
-
-from app.forms.registry import get_form_handler
-from app.forms.spec import validate_form_data
-from app.forms.emit import extract_form_spec
-Edit 2 — Inserted form submission handler between yield json.dumps({"type": "meta", "thread_id": thread_id}) and the # RMS WORKFLOW ORCHESTRATION WITH STREAMING banner.
-
-Edit 3 — Added <<FORM>>/<<ENDFORM>> extraction in the streaming filter block (form drain loop before action suppression, tail check for partial markers, and flush fallback after loop).
-
-Line counts:
-
-Before: 580 lines
-After: 606 lines (+26 lines net)
+C:\ml_env_311\Scripts\python.exe -c "from app.controllers.chat_controller import ChatController; from app.forms.registry import get_form_handler; print('Controller + form imports OK')"
