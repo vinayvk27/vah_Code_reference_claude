@@ -1,1 +1,31 @@
-powershell "Get-Content 'D:\Sakthi\Gen AI\dpah_backend\DP AH_APPLICATION_DOCUMENTATION.md' | Select-Object -First 30"
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>powershell "Get-Content 'D:\Sakthi\Gen AI\dpah_backend\DP AH_APPLICATION_DOCUMENTATION.md' | Select-Object -First 30"
+# DPAH (Data Patterns Agents Hub) - Complete Application Documentation
+
+## Executive Summary
+
+DPAH is an **enterprise AI agent orchestration platform** built with FastAPI that provides role-based access control (RBAC) for AI agents across multiple business collections (RMS, SCM, HRMS, FINANCE). The application implements a sophisticated **LangGraph-based workflow** that routes user requests through permission-gated agent nodes (Creator, Reviewer, Approver).
+
+---
+
+## 1. Folder Structure
+
+```
+dpah_backend/
+â”œâ”€â”€ main.py                          # FastAPI application entry point
+â”œâ”€â”€ init_db.py                       # Database initialization script
+â”œâ”€â”€ seed_db.py                       # Seed test data into database
+â”œâ”€â”€ check_ldap.py                    # LDAP connectivity test utility
+â”œâ”€â”€ test_*.py                        # Test files
+â”œâ”€â”€ update_*.py                      # Utility scripts for prompt updates
+â”œâ”€â”€ requirements.txt                 # Python dependencies
+â”‚
+â”œâ”€â”€ app/
+â”‚   â”œâ”€â”€ __init__.py
+â”‚   â”‚
+â”‚   â”œâ”€â”€ agents/                      # LangGraph Agent Orchestration
+â”‚   â”‚   â”œâ”€â”€ orchestrator.py          # Main LangGraph state machine
+â”‚   â”‚   â”œâ”€â”€ rms_tools.py             # RMS-specific tool definitions
+â”‚   â”‚   â”œâ”€â”€ action_parser.py         # Parse <<ACTION>> blocks from LLM
+â”‚   â”‚   â””â”€â”€ tools.py                 # General tool library
+â”‚   â”‚
+â”‚   â”œâ”€â”€ controllers/                 # Business Logic Layer
