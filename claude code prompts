@@ -1,1 +1,913 @@
-Continue with the task. You have completed the audit. Now execute STEP 2 — write the full DPAH_APPLICATION_DOCUMENTATION.md file based on everything you just read. All 15 sections as specified. Then execute STEP 3 — delete the old files. Do not stop until the documentation file is written and old files are deleted. Report the line count when done.
+# DPAH (Data Patterns Agents Hub) — Complete Application Documentation
+
+## 1. Executive Summary
+
+DPAH is an **enterprise AI agent orchestration platform** built with FastAPI that provides role-based access control (RBAC) agent permissions across multiple business collections (RMS, SCM, HRMS, FINANCE, MRR). The application implements a sophisticated **LangGraph-based workflow** that routes user requests through permission-gated agent nodes (Creator, Reviewer, Approver) with SSE streaming, form widgets, RAG context, file upload processing, and generative UI capabilities.
+
+---
+
+## 2. Folder Structure
+
+```
+dpah_backend_v1/
+├── main.py                          # FastAPI application entry point
+├── requirements.txt                 # Python dependencies
+├── DPAH_APPLICATION_DOCUMENTATION.md
+│
+├── app/
+│   ├── __init__.py
+│   │
+│   ├── controllers/                 # Business Logic Layer
+│   │   ├── auth_controller.py       # LDAP + MySQL + Dev-mode auth, RBAC building
+│   │   ├── chat_controller.py       # Chat streaming, orchestrator dispatch, guardrails
+│   │   └── rag_controller.py        # RAG (Retrieval Augmented Generation)
+│   │
+│   ├── core/                        # Core Configuration
+│   │   ├── config.py                # Settings (JWT, DB, LDAP, AI API, AUTH_MODE)
+│   │   └── security.py              # JWT token creation & validation
+│   │
+│   ├── dao/                         # Data Access Layer
+│   │   └── database.py              # SQLAlchemy engine & session (MySQL + Oracle)
+│   │
+│   ├── forms/                       # Form Widget System
+│   │   ├── registry.py              # Form handler registration & lookup
+│   │   ├── spec.py                  # Form spec extraction from text
+│   │   └── emit.py                  # Form spec emission utilities
+│   │
+│   ├── models/                      # Data Models
+│   │   ├── db_schema.py             # SQLAlchemy ORM models (16+ tables)
+│   │   └── dto_schemas.py           # Pydantic request/response schemas
+│   │
+│   ├── routes/                      # API Routes (FastAPI Routers)
+│   │   ├── auth_route.py            # /api/v1/auth/* endpoints (login, debug)
+│   │   ├── chat_route.py            # /api/v1/chat/* endpoints (stream, upload, tools)
+│   │   ├── agent_route.py           # /api/v1/me/* endpoints (capabilities, timesheet)
+│   │   └── __init__.py
+│   │
+│   ├── services/                    # Business Services
+│   │   ├── timesheet_store.py       # RMS timesheet data access (tasks, worklogs)
+│   │   └── hrms_store.py            # HRMS data access (leaves, payslips)
+│   │
+│   ├── utils/                       # Shared Utilities
+│   │   └── action_parser.py         # <<ACTION>>...<<END>> block extraction
+│   │
+│   └── workflows/                   # LangGraph Workflow Graphs
+│       ├── __init__.py
+│       │
+│       ├── rms_workflow/            # RMS timesheet workflow
+│       │   ├── graph.py             # StateGraph: parse_intent -> permission_check -> agents
+│       │   ├── state.py             # RMSState TypedDict
+│       │   ├── nodes.py             # All 6 node functions (intent, permission, 3 agents)
+│       │   ├── config.py            # LLM configuration
+│       │   ├── agents.py            # Agent registry
+│       │   ├── prompts.py           # Keyword maps & persona actions
+│       │   ├── tools.py             # General RMS tools
+│       │   ├── rms_tools.py         # RMS-specific tool definitions
+│       │   └── tools.py             # Additional tools
+│       │
+│       ├── hrms_workflow/           # HRMS workflow
+│       │   ├── graph.py             # StateGraph: parse_intent -> permission_check -> agents
+│       │   ├── state.py             # HRMSState TypedDict
+│       │   ├── nodes.py             # All 6 node functions (intent, permission, 3 agents)
+│       │   ├── config.py            # LLM configuration
+│       │   ├── agents.py            # Agent registry
+│       │   ├── prompts.py           # Keyword maps & persona actions
+│       │   ├── tools.py             # General HRMS tools
+│       │   ├── hrms_tools.py        # HRMS-specific tools (leave, payslip)
+│       │   └── tools.py             # Additional tools
+│       │
+│       └── material_workflow/       # MRR (Material Requisition) workflow
+│           ├── graph.py             # StateGraph with form state machine
+│           ├── state.py             # MaterialRequisitionState TypedDict
+│           ├── nodes.py             # Intent, RBAC, form nodes, approver/issuer
+│           ├── config.py            # LLM configuration
+│           ├── agents.py            # Agent registry (intent classifier, header/item extractors)
+│           ├── prompts.py           # Widget payloads
+│           ├── tools.py             # General MRR tools
+│           ├── mrr_tools.py         # MRR-specific tool definitions
+│           └── agents.py            # Intent classifier, item/agent helpers
+│
+├── frontend/                        # Frontend Static Files
+│   ├── views/
+│   │   ├── login.html               # Login page
+│   │   └── index.html               # Dashboard page
+│   ├── css/
+│   │   └── style.css                # Styles
+│   └── js/
+│       └── script.js                # Frontend JavaScript
+│
+└── tests/                           # Test files
+```
+
+---
+
+## 3. Technology Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Framework** | FastAPI | REST API framework |
+| **Async Runtime** | Uvicorn | ASGI server |
+| **State Machine** | LangGraph (LangChain) | Agent workflow orchestration |
+| **Database (ORM)** | SQLAlchemy | Database abstraction |
+| **Database (Primary)** | MySQL/MariaDB | Persistent storage (`dpintranet`) |
+| **Database (Oracle)** | Oracle DB | ERP inventory & pricing (commented/optional) |
+| **Authentication** | LDAP + JWT | User authentication & session |
+| **AI Model** | Claude Sonnet 4 (via internal API) | LLM for agent responses |
+| **AI API** | `https://llmapi.datapatterns.co.in/v1` | Internal LLM API endpoint |
+| **Vector DB** | ChromaDB | RAG knowledge base |
+| **Validation** | Pydantic | Request/response validation |
+| **HTML Parsing** | BeautifulSoup | HTML to Markdown conversion |
+| **LDAP Client** | ldap3 | Directory service communication |
+
+---
+
+## 4. Database Schema
+
+### 4.1 Core Employee Table
+
+#### `resources` — Master employee table from dpintranet
+| Column | Type | Description |
+|--------|------|-------------|
+| Emp_no | VARCHAR(50) PK | Employee ID (Primary Key) |
+| Name | VARCHAR(255) | Full name |
+| Email | VARCHAR(255) | Email address |
+| Department | VARCHAR(100) | Department name |
+| Designation | VARCHAR(100) | Job title |
+| Grade | VARCHAR(20) | Grade (A/B/C) |
+| GradeID | INT | Grade hierarchy level |
+| IsActive | SMALLINT | Account status (1=active) |
+| ReportingToID | VARCHAR(50) | Manager's Emp_no |
+| tslevel | VARCHAR(50) | Technical stack level |
+| level01/02/03 | VARCHAR(50) | Hierarchy positions |
+
+### 4.2 RBAC Tables (6-Table Schema)
+
+#### 1. `roles` — Role definitions
+| Column | Type | Description |
+|--------|------|-------------|
+| role_id | INT PK (auto) | Primary key |
+| role_name | VARCHAR(100) UNIQUE | Role name |
+| description | VARCHAR(500) | Role description |
+| is_active | SMALLINT | Status (1=active) |
+| created_at | TIMESTAMP | Creation timestamp |
+| updated_at | TIMESTAMP | Last update timestamp |
+
+#### 2. `user_roles` — User-to-role assignments
+| Column | Type | Description |
+|--------|------|-------------|
+| user_role_id | BIGINT PK (auto) | Primary key |
+| emp_id | VARCHAR(50) FK | Foreign key to resources.Emp_no |
+| role_id | INT FK | Foreign key to roles.role_id |
+| assigned_by | VARCHAR(50) | Who assigned the role |
+| assigned_at | TIMESTAMP | Assignment timestamp |
+| valid_until | TIMESTAMP | Optional expiry date |
+| is_active | SMALLINT | Status (1=active) |
+
+**Unique Constraint:** `(emp_id, role_id)` — prevents duplicate assignments
+
+#### 3. `collections` — Collection definitions (RMS, SCM, HRMS, FINANCE, MRR)
+| Column | Type | Description |
+|--------|------|-------------|
+| collection_id | INT PK (auto) | Primary key |
+| collection_name | VARCHAR(100) UNIQUE | Collection name |
+| department | VARCHAR(50) | Owning department |
+| description | VARCHAR(500) | Collection description |
+| data_source | VARCHAR(200) | Data source location |
+| is_sensitive | SMALLINT | Sensitivity flag |
+| is_active | SMALLINT | Status (1=active) |
+
+#### 4. `agents` — Agent definitions (collection+persona combos)
+| Column | Type | Description |
+|--------|------|-------------|
+| agent_id | INT PK (auto) | Primary key |
+| agent_name | VARCHAR(100) UNIQUE | Agent name |
+| department | VARCHAR(50) | Owning department |
+| description | VARCHAR(1000) | Agent description |
+| system_prompt | TEXT | System prompt for LLM |
+| allowed_tools | JSON | List of allowed tools |
+| model_name | VARCHAR(100) | LLM model to use |
+| is_active | SMALLINT | Status (1=active) |
+
+**Naming Convention:** `{COLLECTION}_{PERSONA}` e.g., `RMS_CREATOR`, `RMS_REVIEWER`, `RMS_APPROVER`, `HRMS_CREATOR`, `HRMS_REVIEWER`, `HRMS_APPROVER`
+
+#### 5. `role_collection_access` — Role-to-collection permissions
+| Column | Type | Description |
+|--------|------|-------------|
+| role_id | INT PK FK | Composite primary key |
+| collection_id | INT PK FK | Composite primary key |
+| access_level | ENUM("READ","WRITE","ADMIN") | Access level |
+| granted_by | VARCHAR(50) | Who granted access |
+| granted_at | TIMESTAMP | Grant timestamp |
+
+#### 6. `role_agent_access` — Role-to-agent permissions
+| Column | Type | Description |
+|--------|------|-------------|
+| role_id | INT PK FK | Composite primary key |
+| agent_id | INT PK FK | Composite primary key |
+| granted_by | VARCHAR(50) | Who granted access |
+| granted_at | TIMESTAMP | Grant timestamp |
+
+### 4.3 RMS Demo Tables
+
+#### `pp_project_task_assigment_demo` — Task assignments
+| Column | Type | Description |
+|--------|------|-------------|
+| WorkLogIdx | INT PK (auto) | Primary key |
+| Resource | INT | Employee ID |
+| PlanIdx | INT | Plan identifier |
+| ProjectIdx | INT | Project identifier |
+| ProductIdx | INT | Product identifier |
+| TaskIdx | INT | Task identifier |
+| ActivityIdx | INT | Activity identifier |
+| StartDate | DATE | Task start date |
+| EndDate | DATE | Task end date |
+| PlanHrs | FLOAT | Planned hours |
+| IsCompleted | SMALLINT | Completion status |
+
+#### `pp_worklogs_demo` — Worklog entries
+| Column | Type | Description |
+|--------|------|-------------|
+| Idx | INT PK (auto) | Primary key |
+| WorkLogIdx | INT FK | Foreign key to task assignment |
+| TaskDate | DATE | Date work was performed |
+| TimeSpentInSec | INT | Time spent in seconds |
+| DateOfEntry | DATE | Entry date |
+| IsApproved | INT | NULL=pending, 1=approved, 0=rejected |
+| ApprovedBy | INT | Approver employee ID |
+| ApprovedDate | DATE | Approval date |
+| UserRemarks | TEXT | User comments |
+| ApproverRemarks | TEXT | Approver comments |
+| Resource | INT | Employee ID |
+
+### 4.4 HRMS Demo Tables
+
+#### `hr_leave_types_demo` — Leave type master
+| Column | Type | Description |
+|--------|------|-------------|
+| LeaveTypeIdx | INT PK (auto) | Primary key |
+| Name | VARCHAR(50) | Leave type name |
+| MaxDays | INT | Maximum days allowed |
+| CreatedBy | VARCHAR(10) | Creator employee ID |
+| CreatedDate | DATE | Creation date |
+
+#### `hr_leave_requests_demo` — Leave requests
+| Column | Type | Description |
+|--------|------|-------------|
+| RequestIdx | INT PK (auto) | Primary key |
+| Resource | INT | Employee ID |
+| LeaveTypeIdx | INT FK | Leave type reference |
+| FromDate | DATE | Start date |
+| ToDate | DATE | End date |
+| NumDays | INT | Number of days |
+| Reason | VARCHAR(500) | Reason for leave |
+| IsApproved | INT | NULL=pending, 1=approved, 0=rejected |
+| ApprovedBy | INT | Approver employee ID |
+| ApprovedDate | DATE | Approval date |
+| ApproverRemarks | VARCHAR(500) | Approver comments |
+| CreatedDate | DATE | Request date |
+
+#### `hr_payslips_demo` — Payslips
+| Column | Type | Description |
+|--------|------|-------------|
+| PayslipIdx | INT PK (auto) | Primary key |
+| Resource | INT | Employee ID |
+| PayMonth | VARCHAR(7) | Pay month (YYYY-MM) |
+| Basic | FLOAT | Basic salary |
+| Allowances | FLOAT | Allowances |
+| Deductions | FLOAT | Deductions |
+| NetPay | FLOAT | Net pay (calculated) |
+| CreatedBy | VARCHAR(10) | Creator employee ID |
+| CreatedDate | DATE | Creation date |
+
+### 4.5 MRR (Material Requisition) Tables
+
+#### `matrequisitionheader` — MRR header
+| Column | Type | Description |
+|--------|------|-------------|
+| MATREQUISITIONID | INT PK | Primary key |
+| MATREQUISITIONNO | VARCHAR(40) | Requisition number |
+| WAREHOUSEID | INT | Warehouse ID |
+| REQUISITIONTYPE | VARCHAR(50) | Type of requisition |
+| REQUESTORID | INT | Requestor employee ID |
+| REQUISITIONDATE | DATE | Request date |
+| DEPARTMENTID | INT | Department ID |
+| NEEDBYDATE | DATE | Required by date |
+| PROJECTID | INT | Project ID |
+| PROJECTPHASEID | INT | Project phase ID |
+| STATUS | VARCHAR(50) | Status (PENDING_MANAGER, PENDING_ERP, etc.) |
+| DESCRIPTION | VARCHAR(250) | Description |
+
+#### `matrequisitionlines` — MRR line items
+| Column | Type | Description |
+|--------|------|-------------|
+| MATREQUISITIONLINEID | INT PK | Primary key |
+| MATREQUISITIONID | INT FK | Foreign key to header |
+| ITEMID | INT | Item ID |
+| REQUISITIONQTY | FLOAT | Requested quantity |
+| ENTITY1-10 | VARCHAR | Custom entity fields |
+| STATUS | VARCHAR(25) | Line status |
+| ITEMCOST | FLOAT | Item cost |
+
+#### `posproject` — Project master
+| Column | Type | Description |
+|--------|------|-------------|
+| PROJECTID | INT PK | Primary key |
+| WAREHOUSEID | INT | Warehouse ID |
+| PROJECTNUMBER | VARCHAR(20) | Project number |
+| DESCRIPTION | VARCHAR(250) | Project description |
+
+#### `posprojectphases` — Project phases
+| Column | Type | Description |
+|--------|------|-------------|
+| PROJECTPHASEID | INT PK | Primary key |
+| PROJECTID | INT FK | Foreign key to project |
+| PHASENAME | VARCHAR(40) | Phase name |
+
+---
+
+## 5. Authentication Flow (Login to JWT Issuance)
+
+### Step 1: User Login Request
+**Endpoint:** `POST /api/v1/auth/login`
+
+**Request Body:**
+```json
+{
+  "username": "rahul.sharma",
+  "password": "rahul123"
+}
+```
+
+**Request Body (Dev Mode):**
+```json
+{
+  "username": "3428",      // emp_no
+  "password": "EAG"        // dept
+}
+```
+
+### Step 2: LDAP Authentication (Production Mode)
+**Location:** [`auth_controller.py:authenticate_ldap()`](app/controllers/auth_controller.py#L21-L82)
+
+1. Connect to LDAP server: `teqpdc.datapatterns.co.in:389`
+2. Anonymous bind to search for user DN using `(uid=username)`
+3. Extract attributes: `mail`, `department`, `employeeID`
+4. Attempt user bind with found DN + provided password
+5. Returns `user_info` dict on success, `False` on failure
+
+### Step 3: Dev Mode Authentication
+**Location:** [`auth_controller.py:authenticate_dev_mode()`](app/controllers/auth_controller.py#L237-L260)
+
+Bypasses LDAP — looks up `emp_no` + `dept` in `resources` table. No password check.
+
+### Step 4: MySQL Profile Lookup
+**Location:** [`auth_controller.py:generate_user_context()`](app/controllers/auth_controller.py#L84-L114)
+
+Bridges LDAP to MySQL by matching any attribute:
+```sql
+SELECT * FROM resources
+WHERE (Emp_no = ldap_emp_id OR Emp_no = uid OR Email = ldap_mail
+       OR Email = CONCAT(uid, '@datapatterns.co.in'))
+AND IsActive = 1
+```
+
+### Step 5: RBAC Permission Aggregation
+**Location:** [`auth_controller.py:build_user_context_by_empno()`](app/controllers/auth_controller.py#L116-L234)
+
+**Query Flow (6-table join):**
+
+1. **Fetch User Roles:** `SELECT ur.role_id, r.role_name FROM user_roles ur JOIN roles r ON ur.role_id = r.role_id WHERE ur.emp_id = '4001' AND ur.is_active = 1`
+
+2. **Fetch Collections:** Join `collections` → `role_collection_access` → `user_roles` for access levels
+
+3. **Fetch Agents:** Join `agents` → `role_agent_access` → `user_roles` for persona access
+
+4. **Build `collection_agents` dict:** Parse agent names like `"RMS_CREATOR"` → `{"RMS": ["creator", "approver"]}`
+
+### Step 6: JWT Token Generation
+**Location:** [`security.py:create_access_token()`](app/core/security.py#L11-L27)
+
+**JWT Payload Structure:**
+```json
+{
+  "sub": "4001",
+  "user_id": "4001",
+  "role": "Approver",
+  "type": "access",
+  "name": "Rahul Sharma",
+  "email": "rahul.sharma@datapatterns.co.in",
+  "dept": "Operations",
+  "roles": ["Approver"],
+  "hierarchy": {
+    "grade": "A",
+    "grade_id": 1,
+    "reporting_to": "3001",
+    "l1": "Approver",
+    "l2": "Director",
+    "l3": "VP",
+    "tslevel": "L1"
+  },
+  "allowed_agents": ["RMS_CREATOR", "RMS_APPROVER"],
+  "collections": [
+    {"name": "RMS", "access_level": "ADMIN"},
+    {"name": "SCM", "access_level": "READ"}
+  ],
+  "collection_agents": {
+    "RMS": ["creator", "approver"],
+    "SCM": ["reviewer"]
+  },
+  "exp": 1735689600,
+  "iat": 1735660800
+}
+```
+
+**Token Lifetime:** 480 minutes (8 hours)
+
+---
+
+## 6. Frontend Flow (Dashboard to Chat)
+
+### Step 1: Login Page
+**Location:** `frontend/views/login.html`
+
+- User enters username/password
+- JavaScript sends POST to `/api/v1/auth/login`
+- On success, stores `access_token` and `user_profile` in `localStorage`
+- Redirects to dashboard
+
+### Step 2: Dashboard Rendering
+**Location:** `frontend/js/script.js:renderDashboard()`
+
+- Reads `user_profile` from `localStorage`
+- Iterates over `collection_agents` to build collection cards
+- Each card represents a collection the user has access to
+
+### Step 3: Open Chat
+**Location:** `frontend/js/script.js:openChat()`
+
+- Sends collection name (e.g., "RMS") to backend
+- Shows chat overlay with welcome message
+
+### Step 4: Send Message
+**Location:** `frontend/js/script.js:sendMessageToLangGraph()`
+
+- Sends POST to `/api/v1/chat/stream` with Bearer token
+- Collection name, user message, last 10 chat history messages
+- Reads SSE stream and yields tokens to the UI
+
+---
+
+## 7. LangGraph Orchestration Flow
+
+### 7.1 RMS Workflow Graph
+
+**Location:** [`workflows/rms_workflow/graph.py`](app/workflows/rms_workflow/graph.py)
+
+```
+User Request
+    │
+    ▼
+┌─────────────────┐
+│ parse_intent    │ → Infer persona from keywords
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ permission_check│ → Validate user has this persona
+└────────┬────────┘
+         │
+    ┌────┴────┐
+    │         │
+    ▼         ▼
+┌─────────┐  ┌──────────────┐
+│ Route to│  │ permission   │
+│ Agent   │  │ blocked      │
+│ Node    │  │ (Error)      │
+└────┬────┘  └──────────────┘
+     │
+┌────┴────┬──────────┬──────────┐
+▼         ▼          ▼          ▼
+Creator  Reviewer  Approver   END
+Agent    Agent     Agent
+```
+
+**Graph Nodes:**
+| Node | File | Description |
+|------|------|-------------|
+| `parse_intent` | `nodes.py:207` | Infer persona from keyword matching |
+| `permission_check` | `nodes.py:147` | Check user has the inferred persona |
+| `permission_router` | `nodes.py:310` | Route based on permission result |
+| `permission_blocked` | `nodes.py:117` | Emit denial message |
+| `creator_agent` | `nodes.py:336` | Creator persona with RAG + tools |
+| `reviewer_agent` | `nodes.py:590` | Filler persona with RAG + tools |
+| `approver_agent` | `nodes.py:843` | Approver persona with RAG + tools |
+
+### 7.2 HRMS Workflow Graph
+
+**Location:** [`workflows/hrms_workflow/graph.py`](app/workflows/hrms_workflow/graph.py)
+
+Same structure as RMS with HRMS-specific nodes and tools:
+- `parse_intent_node` — Keyword-based persona inference
+- `permission_check_node` — RBAC validation
+- `creator_agent_node` — Define leave types, generate payslips
+- `reviewer_agent_node` — Check leave balance, submit leave requests, view own payslip
+- `approver_agent_node` — Approve/reject leave requests, view any payslip
+
+### 7.3 MRR Workflow Graph
+
+**Location:** [`workflows/material_workflow/graph.py`](app/workflows/material_workflow/graph.py)
+
+More complex graph with a **form state machine**:
+
+```
+Session Entry Router
+    │
+    ├── (new session) ──► parse_intent_node → permission_check_node
+    │                                              │
+    │                                        ┌─────┴─────┐
+    │                                        ▼           ▼
+    │                                   RBAC Route    Blocked
+    │                                        │
+    │                    ┌───────────────────┼──────────────┐
+    │                    ▼                   ▼              ▼
+    │              parse_user_input    welcome_node    Approver/Issuer
+    │                    │
+    │              ┌─────┴─────┐
+    │              ▼           ▼
+    │         handle_header  END (form)
+    │              │
+    │         handle_items
+    │              │
+    │     evaluate_and_route
+    │              │
+    │             END
+    │
+    └── (mid-form) ──► parse_user_input (skip RBAC)
+```
+
+**Graph Nodes:**
+| Node | Description |
+|------|-------------|
+| `parse_intent_node` | LLM-based intent classification (CREATE/APPROVE/ISSUE) |
+| `permission_check_node` | RBAC validation for MRR roles |
+| `welcome_node` | Greet user based on their roles |
+| `parse_user_input` | Parse widget submissions, update state |
+| `handle_header` | Extract project details, show header form |
+| `handle_items` | Add items via text, Excel upload, or item lookup |
+| `evaluate_and_route` | Save to DB, determine routing (Manager vs ERP) |
+| `approver_agent_node` | Show pending approvals for approver role |
+| `issuer_agent_node` | Store issuer UI (stub) |
+
+### 7.4 State Schema
+
+All workflows share a common state pattern:
+
+| Field | RMSState | HRMSState | MaterialRequisitionState |
+|-------|----------|-----------|------------------------|
+| user_id | str | str | str |
+| user_dept | str | str | str |
+| collection_agents | dict | dict | Dict[str, List[str]] |
+| selected_collection | str | str | str |
+| selected_agent_role | str | str | str |
+| parsed_intent | str | str | str |
+| has_permission | bool | bool | bool |
+| messages | list | list | list |
+| execution_log | list[str] | list[str] | List[str] |
+| uploaded_files | list | list | list |
+| denial_message | Optional[str] | Optional[str] | Optional[str] |
+| user_info | — | — | Dict[str, Any] |
+| current_step | — | — | str |
+| latest_submission | — | — | Optional[Dict] |
+| form_state | — | — | Dict |
+| items | — | — | List[Dict] |
+| total_cost | — | — | float |
+| routing_decision | — | — | Optional[str] |
+
+---
+
+## 8. Chat Streaming Flow
+
+### Endpoint: `POST /api/v1/chat/stream`
+
+**Location:** [`chat_route.py:48-71`](app/routes/chat_route.py#L48-L71)
+
+**Request:**
+```json
+{
+  "collection_name": "RMS",
+  "agent_role": "creator",
+  "message": "Log 4 hours on task 1",
+  "chat_history": [
+    {"role": "user", "content": "Hello"},
+    {"role": "assistant", "content": "Hi! How can I help?"}
+  ],
+  "form_submission": {
+    "form_id": "hrms_apply_leave",
+    "data": {"leave_type_id": 1, "from_date": "2026-06-15"}
+  }
+}
+```
+
+**Endpoint: `POST /api/v1/chat/stream-with-file`**
+
+Supports multipart form upload with CSV/Excel files for bulk processing.
+
+**Flow:**
+
+1. **JWT Validation** ([`security.py:get_current_user()`](app/core/security.py#L29-L57))
+   - Extracts Bearer token, decodes JWT, validates signature & expiration
+
+2. **Permission Guard** ([`chat_route.py:62-66`](app/routes/chat_route.py#L62-L66))
+   - Returns 403 if user has no `collection_agents`
+
+3. **Form Submission Path** ([`chat_controller.py:126-156`](app/controllers/chat_controller.py#L126-L156))
+   - If `form_submission` present, routes to form handler via registry
+   - Validates persona permission against form requirement
+   - Executes form handler and returns result
+
+4. **Collection Routing** ([`chat_controller.py:158-164`](app/controllers/chat_controller.py#L158-L164))
+   - `HRMS` → HRMS graph
+   - `SCM`/`MRR` → MRR graph
+   - Everything else → RMS graph
+
+5. **LangGraph Execution** ([`chat_controller.py:204`](app/controllers/chat_controller.py#L204))
+   - Builds initial state with user context
+   - Injects last 10 chat history messages
+   - Streams events from `graph.astream_events(initial_state, version="v1")`
+   - Extracts `<<FORM>>...<<ENDFORM>>` blocks as form specs
+   - Extracts `<<ACTION>>...<<END>>` blocks for tool execution
+   - Yields clean text chunks to frontend
+
+6. **MRR Static Widget Extraction** ([`chat_controller.py:248-284`](app/controllers/chat_controller.py#L248-L284))
+   - For MRR graph, listens for `on_chain_end` events from static nodes
+   - Extracts form widgets embedded in agent messages
+   - Yields form specs and text chunks separately
+
+7. **Guardrails** ([`chat_controller.py:296-297`](app/controllers/chat_controller.py#L296-L297))
+   - **Inbound:** Blocks messages containing `drop table`, `select * from users`, `bypass authentication`
+   - **Outbound:** Redacts responses containing `confidential_salary`, `sk-`
+
+**SSE Response Format:**
+```
+data: {"type": "meta", "thread_id": "uuid"}
+data: {"type": "chunk", "text": "I"}
+data: {"type": "chunk", "text": " can"}
+data: {"type": "chunk", "text": " help"}
+data: {"type": "form", "form_spec": {...}}
+data: [DONE]
+```
+
+### Form Widget System
+
+**Location:** `app/forms/` directory
+
+- **Registry** (`registry.py`): Forms register with `register_form(form_id, handler, collection, required_persona)`
+- **Spec Extraction** (`spec.py`): Extracts JSON form specs from `<<FORM>>...<<ENDFORM>>` markers
+- **Emit** (`emit.py`): Utilities for emitting form specs in agent output
+
+Registered forms:
+| Form ID | Collection | Persona | Description |
+|---------|-----------|---------|-------------|
+| `hrms_apply_leave` | HRMS | reviewer | Leave application form |
+| `rms_log_hours` | RMS | reviewer | Log hours form |
+
+---
+
+## 9. Agent Personas & Tools by Collection
+
+### RMS (Resource Management System)
+
+| Persona | Description | Tools |
+|---------|-------------|-------|
+| **Creator** | Create tasks, list all tasks | `tool_list_tasks`, `tool_create_task` |
+| **Reviewer (Filler)** | Log hours against own tasks, list own tasks | `tool_list_my_tasks`, `tool_log_hours`, `tool_show_log_hours_form` |
+| **Approver** | List pending approvals, approve/reject worklogs | `tool_list_pending_approvals`, `tool_approve_worklog` |
+
+### HRMS (Human Resource Management System)
+
+| Persona | Description | Tools |
+|---------|-------------|-------|
+| **Creator** | Define leave types, generate payslips | `tool_create_leave_type`, `tool_create_payslip` |
+| **Reviewer (Filler)** | Check leave balance, submit leave requests, view own payslip | `tool_list_my_leave_balance`, `tool_request_leave`, `tool_my_payslip`, `tool_list_my_leave_requests`, `tool_show_leave_request_form` |
+| **Approver** | List pending leaves, approve/reject leaves, view any payslip | `tool_list_pending_leaves`, `tool_decide_leave`, `tool_view_any_payslip` |
+
+### MRR (Material Requisition)
+
+| Persona | Description |
+|---------|-------------|
+| **Creator** | Create material requisitions via form flow (header + items), process Excel uploads |
+| **Approver** | View and approve pending requisitions (Manager tier, >Rs2000) |
+| **ERP Approver** | Approve standard ERP requisitions (<=Rs2000 threshold) |
+| **Issuer** | Issue warehouse stock (stub) |
+
+---
+
+## 10. Intent Inference (Keyword-Based)
+
+### RMS Keywords
+
+| Persona | Keywords |
+|---------|----------|
+| **Approver** | 'approve', 'reject', 'pending approvals', 'approval queue', 'sign off' |
+| **Creator** | 'create task', 'new task', 'assign', 'plan task', 'add task' |
+| **Reviewer** | 'log hours', 'log time', 'fill timesheet', 'my tasks', 'my entries', 'my timesheet', 'work hours', 'i worked' |
+| **Query (routed by privilege)** | 'show', 'list', 'details', 'what tasks', 'what is', 'who is', 'how many hours', 'tell me', 'give me details', 'view', 'display', 'fetch' |
+
+### HRMS Keywords
+
+| Persona | Keywords |
+|---------|----------|
+| **Approver** | 'approve', 'reject', 'pending leaves', 'leave approvals', 'approve leave', 'approve request' |
+| **Creator** | 'create leave type', 'new leave type', 'add leave type', 'define leave', 'generate payslip', 'create payslip' |
+| **Reviewer** | 'log hours', 'log time', 'fill timesheet', 'my tasks', 'work hours', 'i worked' |
+
+**Detection Priority:** APPROVER > CREATOR > REVIEWER > QUERY (routed by privilege) > DEFAULT (reviewer)
+
+### MRR Intent Classification
+
+Uses an LLM-based intent classifier agent instead of keyword matching:
+| Intent | Required Role |
+|--------|--------------|
+| CREATE | mrr_creator |
+| APPROVE | mrr_approver / erp_approver |
+| ISSUE | str_issuer |
+| UNKNOWN/GREETING | none |
+
+---
+
+## 11. Security Layers
+
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| **Authentication** | LDAP (prod) / DB lookup (dev) + JWT | Verify user identity |
+| **Authorization** | RBAC (6-table schema) + persona checks | Control agent access |
+| **Inbound Guardrails** | Keyword filtering (`FORBIDDEN_INBOUND`) | Block SQL injection, bypass attempts |
+| **Outbound Guardrails** | Keyword redaction (`FORBIDDEN_OUTBOUND`) | Block confidential data leakage |
+| **Department Isolation** | RAG filtering | Ensure dept-specific data access |
+| **CORS** | Configurable origins | Control cross-origin requests |
+| **Form Permission** | Persona-locked form handlers | Prevent unauthorized form submissions |
+| **JWT Expiration** | 8-hour token lifetime | Limit session window |
+
+---
+
+## 12. API Endpoints Summary
+
+| Method | Endpoint | Description | Auth | Tags |
+|--------|----------|-------------|------|------|
+| **Authentication** | | | | |
+| POST | `/api/v1/auth/login` | Authenticate user, issue JWT | No | Authentication |
+| GET | `/api/v1/auth/debug/{emp_no}` | Debug RBAC permissions by emp_no | No | Authentication |
+| **Chat** | | | | |
+| POST | `/api/v1/chat/stream` | Stream chat response (SSE) | Yes | Chat Hub |
+| POST | `/api/v1/chat/stream-with-file` | Stream chat with file upload (CSV/Excel) | Yes | Chat Hub |
+| GET | `/api/v1/chat/history` | Get user's chat threads (mock) | Yes | Chat Hub |
+| GET | `/api/v1/chat/history/{thread_id}` | Get messages in a thread (mock) | Yes | Chat Hub |
+| GET | `/api/v1/chat/tools/{tool_name}` | Execute UI tools (search_projects, get_project_phases) | Yes | Chat Hub |
+| **Capabilities** | | | | |
+| GET | `/api/v1/me/capabilities` | Get current user's RBAC capabilities | Yes | Capabilities |
+| GET | `/api/v1/me/timesheet` | Get current timesheet data (RMS) | Yes | Capabilities |
+| POST | `/api/v1/me/timesheet/worklog/{id}/decision` | Approve/reject a worklog | Yes | Capabilities |
+| GET | `/api/v1/me/chat/welcome` | Get dynamic welcome message for chat | Yes | Capabilities |
+| **Health** | | | | |
+| GET | `/health` | Health check | No | — |
+| GET | `/` | Login page (frontend) | No | — |
+| GET | `/dashboard` | Dashboard page (frontend) | No | — |
+
+---
+
+## 13. Configuration Variables
+
+**Location:** [`config.py`](app/core/config.py)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| PROJECT_NAME | "Data Patterns Agents Hub (DPAH)" | App display name |
+| API_V1_STR | "/api/v1" | API prefix |
+| SECRET_KEY | "dpah_jwt_super_secret_key_112233" | JWT signing key |
+| ALGORITHM | "HS256" | JWT algorithm |
+| ACCESS_TOKEN_EXPIRE_MINUTES | 480 | Token lifetime (8 hours) |
+| DB_HOST | "10.5.1.51" | MySQL server |
+| DB_PORT | 3306 | MySQL port |
+| DB_USER | "root" | MySQL user |
+| DB_PASS | "dplocaldb" | MySQL password |
+| DB_NAME | "dpintranet" | Database name |
+| LDAP_HOST | "teqpdc.datapatterns.co.in" | LDAP server |
+| LDAP_PORT | 389 | LDAP port |
+| LDAP_BASE_DN | "dc=datapatterns,dc=co,dc=in" | LDAP base DN |
+| LDAP_SEARCH_DN | "ou=Users,dc=datapatterns,dc=co,dc=in" | LDAP search DN |
+| AI_API_KEY | (configured) | Internal AI API key |
+| AI_API_URL | "https://llmapi.datapatterns.co.in/v1" | AI API endpoint |
+| AI_MODEL | "claude-sonnet-4-6" | LLM model |
+| ENABLE_TEST_USERS | False | Allow hardcoded test users |
+| AUTH_MODE | "dev" | Auth mode: "prod" (LDAP) or "dev" (DB lookup) |
+
+**Database URLs:**
+- MySQL: `mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}`
+- Oracle: `oracle+oracledb://...` (optional, for ERP data)
+
+---
+
+## 14. Data Flow Diagram
+
+```
+┌─────────────┐
+│   Browser   │
+│ (Frontend)  │
+└──────┬──────┘
+       │ HTTP (Bearer Token)
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│                    FastAPI Backend                       │
+│                                                          │
+│  ┌─────────────┐    ┌─────────────┐   ┌─────────────┐  │
+│  │ auth_route  │    │ chat_route  │   │ agent_route │  │
+│  │ /login      │    │ /stream     │   │ /me/*       │  │
+│  │ /debug      │    │ /upload     │   │             │  │
+│  └──────┬──────┘    └──────┬──────┘   └─────────────┘  │
+│         │                  │                            │
+│         ▼                  ▼                            │
+│  ┌─────────────┐    ┌─────────────┐                     │
+│  │ auth_ctrl   │    │ chat_ctrl   │                     │
+│  │ LDAP/DB Auth│    │ Orchestrator│                     │
+│  │ JWT Create  │    │ RAG + Guard │                     │
+│  └──────┬──────┘    └──────┬──────┘                     │
+│         │                  │                            │
+│         ▼                  ▼                            │
+│  ┌─────────────┐    ┌─────────────┐                     │
+│  │  Security   │    │  LangGraph  │                     │
+│  │  JWT Decode │    │  State Mech │                     │
+│  └─────────────┘    └──────┬──────┘                     │
+│                            │                            │
+│                   ┌────────┴────────┐                   │
+│                   ▼                 ▼                   │
+│            ┌──────────┐      ┌──────────┐              │
+│            │ Creator  │      │ Approver │              │
+│            │  Agent   │      │  Agent   │              │
+│            └──────────┘      └──────────┘              │
+│                            │                            │
+│                   ┌────────┴────────┐                   │
+│                   ▼                 ▼                   │
+│            ┌──────────┐      ┌──────────┐              │
+│            │ RAG      │      │ Store    │              │
+│            │ ChromaDB │      │ (MySQL)  │              │
+│            └──────────┘      └──────────┘              │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+                    ▼
+           ┌───────────────┐
+           │   MySQL DB    │
+           │ (dpintranet)  │
+           │ - resources   │
+           │ - roles       │
+           │ - user_roles  │
+           │ - collections │
+           │ - agents      │
+           │ - role_...    │
+           │ - rms tables  │
+           │ - hrms tables │
+           │ - mrr tables  │
+           └───────────────┘
+                    │
+                    ▼
+           ┌───────────────┐
+           │    LDAP       │
+           │  (teqpdc)     │
+           └───────────────┘
+```
+
+---
+
+## 15. File-to-Concept Mapping
+
+| File | Concept | Key Functions |
+|------|---------|---------------|
+| [`main.py`](main.py) | Application bootstrap | `FastAPI()` app init, router mounting, CORS, static files, `/health` |
+| [`config.py`](app/core/config.py) | Configuration | `Settings` Pydantic model, all env-based settings |
+| [`security.py`](app/core/security.py) | JWT | `create_access_token()`, `get_current_user()` |
+| [`auth_controller.py`](app/controllers/auth_controller.py) | Authentication | `authenticate_ldap()`, `authenticate_dev_mode()`, `generate_user_context()`, `build_user_context_by_empno()` |
+| [`auth_route.py`](app/routes/auth_route.py) | Auth API | `POST /login`, `GET /debug/{emp_no}` |
+| [`chat_controller.py`](app/controllers/chat_controller.py) | Chat orchestration | `stream_chat_with_orchestrator()`, `stream_chat_with_file()`, HtmlNormalizer, guardrails, form handling, collection routing |
+| [`chat_route.py`](app/routes/chat_route.py) | Chat API | `POST /stream`, `POST /stream-with-file`, `GET /history`, `GET /tools/{tool_name}` |
+| [`agent_route.py`](app/routes/agent_route.py) | Capabilities API | `GET /capabilities`, `GET /timesheet`, `POST /timesheet/worklog/{id}/decision`, `GET /chat/welcome` |
+| [`rag_controller.py`](app/controllers/rag_controller.py) | RAG | `retrieve_context()` |
+| [`database.py`](app/dao/database.py) | DB Connection | `engine`, `SessionLocal`, `get_db()`, Oracle engine |
+| [`db_schema.py`](app/models/db_schema.py) | DB Models | All 16+ SQLAlchemy ORM models |
+| [`dto_schemas.py`](app/models/dto_schemas.py) | API Schemas | Pydantic models for all endpoints |
+| [`timesheet_store.py`](app/services/timesheet_store.py) | RMS Store | `list_all_tasks()`, `list_tasks_for_resource()`, `add_worklog()`, `approve_worklog()` |
+| [`hrms_store.py`](app/services/hrms_store.py) | HRMS Store | `compute_leave_balance()`, `create_leave_request()`, `approve_leave_request()`, `create_payslip()` |
+| [`action_parser.py`](app/utils/action_parser.py) | Action parsing | `extract_actions()`, `strip_actions()` |
+| `workflows/rms_workflow/graph.py` | RMS Graph | `build_rms_graph()`, `get_rms_graph()` |
+| `workflows/rms_workflow/nodes.py` | RMS Nodes | 7 node functions (intent, permission, blocked, creator, reviewer, approver) |
+| `workflows/hrms_workflow/graph.py` | HRMS Graph | `build_hrms_graph()`, `get_hrms_graph()` |
+| `workflows/hrms_workflow/nodes.py` | HRMS Nodes | 6 node functions (intent, permission, blocked, creator, reviewer, approver) |
+| `workflows/material_workflow/graph.py` | MRR Graph | `build_mrr_graph()`, `mrr_graph` singleton |
+| `workflows/material_workflow/nodes.py` | MRR Nodes | Intent, RBAC, form state machine, approver/issuer |
+| `workflows/*/config.py` | LLM Config | `get_llm()` factory |
+| `workflows/*/prompts.py` | Prompt Config | Keyword maps, persona actions, agent names |
+| `workflows/*/tools.py` | General Tools | Collection-generic tool definitions |
+| `workflows/rms_workflow/rms_tools.py` | RMS Tools | Timesheet-specific tools |
+| `workflows/hrms_workflow/hrms_tools.py` | HRMS Tools | Leave/payslip tools with form registration |
+| `workflows/material_workflow/mrr_tools.py` | MRR Tools | Material requisition tools |
+| `forms/registry.py` | Form Registry | `register_form()`, `get_form_handler()` |
+| `forms/spec.py` | Form Spec | `extract_form_spec()` |
+| `forms/emit.py` | Form Emit | Form spec emission utilities |
