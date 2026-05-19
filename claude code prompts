@@ -1,3 +1,1 @@
-(ml_env_311) D:\vinay\Agile_project>dir /b "D:\Sakthi\Gen AI\dpah_backend\*.md" 2>nul
-API_DOCUMENTATION.md
-DP AH_APPLICATION_DOCUMENTATION.md
+powershell "Get-Content 'D:\Sakthi\Gen AI\dpah_backend\DP AH_APPLICATION_DOCUMENTATION.md' | Select-Object -First 30"
