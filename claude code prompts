@@ -1,31 +1,438 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>powershell "Get-Content 'D:\Sakthi\Gen AI\dpah_backend\DP AH_APPLICATION_DOCUMENTATION.md' | Select-Object -First 30"
-# DPAH (Data Patterns Agents Hub) - Complete Application Documentation
+ENVIRONMENT: Use C:\ml_env_311\Scripts\python.exe for any Python commands.
 
-## Executive Summary
+TASK DOC-1: Generate a comprehensive, accurate project documentation file 
+that reflects the CURRENT state of the codebase. Update the existing file 
+at "D:\Sakthi\Gen AI\dpah_backend\DP AH_APPLICATION_DOCUMENTATION.md" and 
+rename it to "D:\Sakthi\Gen AI\dpah_backend\DPAH_APPLICATION_DOCUMENTATION.md" 
+(remove the space). Delete the useless API_DOCUMENTATION.md file.
 
-DPAH is an **enterprise AI agent orchestration platform** built with FastAPI that provides role-based access control (RBAC) for AI agents across multiple business collections (RMS, SCM, HRMS, FINANCE). The application implements a sophisticated **LangGraph-based workflow** that routes user requests through permission-gated agent nodes (Creator, Reviewer, Approver).
+IMPORTANT: Base everything on what actually EXISTS in the codebase. Read 
+files before writing about them. Do not document things that don't exist. 
+Do not copy from the old doc without verifying it's still accurate.
+
+==============================================================================
+STEP 1 — AUDIT THE CODEBASE FIRST (read-only, no changes yet)
+==============================================================================
+
+Before writing anything, read and understand:
+
+A. Full folder tree:
+   powershell "Get-ChildItem -Path . -Recurse -Name | Where-Object {$_ -notmatch 'node_modules|__pycache__|\.git|\.pyc'}"
+
+B. Key files — read each:
+   - main.py (entry point, router registration)
+   - app/models/db_schema.py (ALL models — RBAC + RMS + HRMS)
+   - app/controllers/auth_controller.py (auth flow, JWT building)
+   - app/routes/auth_route.py (login endpoint — check AUTH_MODE logic)
+   - app/routes/agent_route.py (capabilities, timesheet, welcome, decision endpoints)
+   - app/routes/chat_route.py (chat stream endpoint)
+   - app/controllers/chat_controller.py (form submission handler, streaming filter)
+   - app/workflows/rms_workflow/graph.py (RMS graph wiring)
+   - app/workflows/rms_workflow/nodes.py (first 50 lines — parse_intent, permission check)
+   - app/workflows/rms_workflow/prompts.py (keyword lists)
+   - app/workflows/rms_workflow/rms_tools.py (all tool function names)
+   - app/workflows/hrms_workflow/graph.py (HRMS graph)
+   - app/workflows/hrms_workflow/hrms_tools.py (all tool function names)
+   - app/forms/registry.py (registered forms)
+   - app/forms/emit.py (<<FORM>> protocol)
+   - app/services/timesheet_store.py (RMS service function names)
+   - app/services/hrms_store.py (HRMS service function names)
+   - seed_db.py (user/role/collection/agent seeding — the truth about test data)
+
+C. Check which scripts exist at project root:
+   dir /b *.py
+
+==============================================================================
+STEP 2 — WRITE THE DOCUMENTATION
+==============================================================================
+
+Write the complete documentation to DPAH_APPLICATION_DOCUMENTATION.md.
+Structure it exactly as follows. Use clean markdown. No emojis.
 
 ---
 
-## 1. Folder Structure
+# DPAH — Data Patterns Agents Hub
+# Application Documentation
 
-```
-dpah_backend/
-â”œâ”€â”€ main.py                          # FastAPI application entry point
-â”œâ”€â”€ init_db.py                       # Database initialization script
-â”œâ”€â”€ seed_db.py                       # Seed test data into database
-â”œâ”€â”€ check_ldap.py                    # LDAP connectivity test utility
-â”œâ”€â”€ test_*.py                        # Test files
-â”œâ”€â”€ update_*.py                      # Utility scripts for prompt updates
-â”œâ”€â”€ requirements.txt                 # Python dependencies
-â”‚
-â”œâ”€â”€ app/
-â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”‚
-â”‚   â”œâ”€â”€ agents/                      # LangGraph Agent Orchestration
-â”‚   â”‚   â”œâ”€â”€ orchestrator.py          # Main LangGraph state machine
-â”‚   â”‚   â”œâ”€â”€ rms_tools.py             # RMS-specific tool definitions
-â”‚   â”‚   â”œâ”€â”€ action_parser.py         # Parse <<ACTION>> blocks from LLM
-â”‚   â”‚   â””â”€â”€ tools.py                 # General tool library
-â”‚   â”‚
-â”‚   â”œâ”€â”€ controllers/                 # Business Logic Layer
+## 1. Executive Summary
+- What DPAH is (1 paragraph)
+- Tech stack: FastAPI, LangGraph, MariaDB, SQLAlchemy, LangChain, 
+  ChromaDB (stub), SSE streaming
+- Two collections implemented with full workflows: RMS, HRMS
+- Internal LLM gateway (air-gapped, not internet-facing)
+- Authentication: LDAP (production), emp_no+dept lookup (dev mode)
+
+## 2. Folder Structure
+Accurate tree of the CURRENT project. Include every folder and key file.
+Mark which are app code vs scripts vs config vs docs.
+Based on actual audit from STEP 1A.
+
+## 3. Architecture Overview
+
+### 3.1 Three-Layer Architecture
+Describe: Identity layer (auth) → Permission layer (RBAC) → Agent layer (LLM)
+
+### 3.2 Request Flow (Step by Step)
+Walk through what happens when a user types a message in chat:
+1. Browser POST /api/v1/chat/stream
+2. FastAPI auth middleware decodes JWT
+3. chat_controller checks for form_submission (early return if form)
+4. chat_controller selects graph (RMS or HRMS based on collection_name)
+5. Graph: parse_intent_node → permission_check_node → permission_router
+6. Routes to creator/reviewer/approver agent node
+7. Agent builds system prompt + snapshot + conversation history
+8. LLM invoked with full message_list
+9. Response streams via SSE
+10. Streaming filter strips <<ACTION>>...<<END>> and <<FORM>>...<<ENDFORM>>
+11. Tools execute, DB mutated
+12. User sees clean confirmation
+
+### 3.3 Action-Marker Protocol
+Explain why we use <<ACTION>>{json}<<END>> instead of structured tool calls.
+Reason: Internal LLM gateway strips tool_call fields from responses.
+The action-marker protocol is a workaround for this gateway limitation.
+
+### 3.4 Form Protocol
+Explain <<FORM>>{json}<<ENDFORM>> markers.
+How tools emit forms, how streaming filter detects and converts to 
+{"type": "form", "form_spec": {...}} SSE events.
+How frontend receives form event and renders it inline in chat.
+How form submission bypasses LLM entirely — routes directly to handler.
+
+## 4. RBAC Model
+
+### 4.1 The Six Tables
+Document ALL 6 RBAC tables exactly as they exist in db_schema.py:
+- resources (employee master)
+- roles (JUNIOR/MID/SENIOR)
+- user_roles (emp_id → role_id mapping — NOTE: collection_id column is PENDING addition)
+- collections (RMS/SCM/HRMS/FINANCE)
+- agents (12 agents, one per collection×persona)
+- role_collection_access (role → collection with access_level)
+- role_agent_access (role → agent)
+
+For each table: column names, types, purpose.
+
+### 4.2 Known Limitation (PENDING FIX)
+Document the current RBAC limitation clearly:
+"The user_roles table currently has no collection_id column. This means 
+a SENIOR user gets access to ALL collections where SENIOR has been 
+granted access in role_collection_access, regardless of their actual 
+department. The fix is to add a collection_id column to user_roles so 
+role grants are scoped per-collection. This is PENDING implementation."
+
+### 4.3 How Permission Resolution Works Today
+Step-by-step query flow in auth_controller.py:
+1. Look up emp_id in user_roles → get role_ids
+2. For each role_id, query role_collection_access → get collection access
+3. For each role_id, query role_agent_access → get agent access
+4. Filter agents to those matching the collections found
+5. Build collection_agents dict: {collection_name: [persona, ...]}
+6. Pack into JWT
+
+### 4.4 Test Users (Current Seed Data)
+List every test user from seed_db.py:
+| emp_id | Name | Role | Collections | Personas |
+For each: show what they can access and what they cannot.
+Confirm the 3 original RMS users + 4 HRMS users.
+
+## 5. Authentication
+
+### 5.1 Dev Mode (AUTH_MODE=dev)
+- Set via environment variable AUTH_MODE=dev
+- Login: emp_no as username, dept as password
+- No LDAP call — direct resources table lookup
+- Same JWT output as prod mode
+- Never use in production
+
+### 5.2 Production Mode (AUTH_MODE=prod or unset)
+- Standard LDAP authentication against teqpdc.datapatterns.co.in
+- LDAP → emp_no → build permissions → JWT
+- Exactly the same JWT shape as dev mode
+
+### 5.3 JWT Payload Shape
+Document every field in the JWT:
+- sub: emp_no (string)
+- name: display name
+- email: email
+- dept: department code
+- roles: list of role names
+- collection_agents: {collection_name: [persona, ...]}
+- exp: expiry timestamp
+
+### 5.4 Pre-Production Security Checklist
+(Copy the full checklist from the earlier discussion — items like:
+set AUTH_MODE=prod, rotate JWT secret, shorten expiry, switch to 
+real pp_* tables, disable /docs endpoint, remove debug prints, etc.)
+
+## 6. Collections and Workflows
+
+### 6.1 RMS (Resource Management System)
+
+#### Personas and Tools
+CREATOR:
+- tool_list_tasks — list all task assignments
+- tool_create_task — create new task in pp_project_task_assigment_demo
+- tool_show_log_hours_form — emit the log hours form
+
+FILLER (internally: reviewer):
+- tool_list_my_tasks — list own assigned tasks
+- tool_log_hours — log hours to pp_worklogs_demo
+- tool_show_log_hours_form — emit log hours form
+
+APPROVER:
+- tool_list_pending_approvals — list worklogs with IsApproved=NULL
+- tool_approve_worklog — set IsApproved=1 or 0
+
+#### Database Tables (demo versions)
+- pp_project_task_assigment_demo — task definitions
+- pp_worklogs_demo — time entries
+
+Document every column of each table.
+
+#### Intent Keywords
+List all CREATOR_KEYWORDS, FILLER_KEYWORDS, APPROVER_KEYWORDS, 
+QUERY_KEYWORDS from rms_workflow/prompts.py (read the file for exact 
+current lists).
+
+### 6.2 HRMS (Human Resource Management System)
+
+#### Personas and Tools
+CREATOR:
+- tool_create_leave_type
+- tool_create_payslip
+
+FILLER (internally: reviewer):
+- tool_list_my_leave_balance
+- tool_request_leave
+- tool_my_payslip
+- tool_list_my_leave_requests
+- tool_show_leave_request_form — emit leave request form
+
+APPROVER:
+- tool_list_pending_leaves
+- tool_decide_leave
+- tool_view_any_payslip
+
+#### Database Tables (demo versions)
+- hr_leave_types_demo
+- hr_leave_requests_demo
+- hr_payslips_demo
+
+Document every column of each table (read db_schema.py for exact columns).
+
+#### Intent Keywords
+Read hrms_workflow/prompts.py for exact keyword lists.
+
+## 7. Forms Architecture
+
+### 7.1 Overview
+Two implemented forms:
+- hrms_apply_leave (HRMS, reviewer persona)
+- rms_log_hours (RMS, reviewer persona)
+
+### 7.2 Form Spec JSON Shape
+Document the complete form_spec schema from app/forms/spec.py.
+All field types. All field attributes. Example form_spec JSON.
+
+### 7.3 Backend Flow
+1. Agent calls tool_show_*_form
+2. Tool returns <<FORM>>{json}<<ENDFORM>> string
+3. Streaming filter detects markers, yields {"type":"form","form_spec":{...}}
+4. User fills form, clicks Submit
+5. Frontend sends form_submission in request body (no message field)
+6. chat_controller intercepts BEFORE graph runs
+7. Looks up form_id in FORM_REGISTRY
+8. Validates permissions (required_persona check)
+9. Calls registered handler function with form_data + user_context
+10. Handler calls underlying tool function
+11. Streams result back as regular chunk
+
+### 7.4 Registered Forms
+List all entries in FORM_REGISTRY (read app/forms/registry.py — or 
+read hrms_tools.py and rms_tools.py for register_form calls).
+For each: form_id, handler function, collection, required_persona.
+
+## 8. API Reference
+
+### 8.1 Authentication
+POST /api/v1/auth/login
+Request: {username, password}
+Response: {access_token, token_type, user_profile}
+Dev mode: username=emp_no, password=dept
+Prod mode: username=ldap_username, password=ldap_password
+
+### 8.2 User Info
+GET /api/v1/me/capabilities
+Returns: {user_id, name, roles, collections, collection_agents}
+Requires: Bearer token
+
+GET /api/v1/me/chat/welcome?collection=RMS
+Returns: {collection, personas, header_label, welcome_message}
+Requires: Bearer token
+
+### 8.3 Timesheet
+GET /api/v1/me/timesheet
+Returns: {tasks: [...], worklogs: [...]}
+Filtered by user's personas (approver sees all, filler sees own)
+Requires: Bearer token
+
+POST /api/v1/me/timesheet/worklog/{worklog_id}/decision
+Body: {decision: "APPROVED"|"REJECTED"}
+Requires: Bearer token with approver persona
+
+### 8.4 Chat
+POST /api/v1/chat/stream
+Body: 
+  Normal message: {collection_name, message, chat_history (optional)}
+  Form submission: {collection_name, form_submission: {form_id, data}}
+Response: SSE stream of:
+  {"type": "meta", "thread_id": "..."}
+  {"type": "chunk", "text": "..."}     (text response)
+  {"type": "form", "form_spec": {...}}  (form to render)
+  "data: [DONE]"
+Requires: Bearer token
+
+## 9. Intent Routing
+
+How parse_intent_node works:
+1. Read most recent HumanMessage from state["messages"]
+2. Lowercase the content
+3. Check keywords in priority order: APPROVER > CREATOR > FILLER > QUERY
+4. QUERY intent routes to user's highest persona (approver > creator > reviewer)
+5. Default (no keywords matched): reviewer (filler)
+6. If explicit agent_role provided AND user has it: prefer that
+7. Result set in state["selected_agent_role"]
+
+Document the full keyword priority table.
+
+## 10. Conversation Memory
+
+How it works:
+- Frontend keeps conversationHistory[] array in JS (session-scoped)
+- On each message send: slice last 10 items, include in request as chat_history
+- Backend prepends to state["messages"] as HumanMessage/AIMessage before LLM call
+- Agent nodes send [SystemMessage] + list(messages) to LLM (not just last message)
+- Memory reset: on chat close (Back button), on agent switch, on logout
+- Memory does NOT persist across page reloads (no DB persistence yet)
+
+Note: Chat history persistence to DB is PENDING (chat_sessions, 
+chat_messages tables not yet implemented).
+
+## 11. Pending Work
+
+List everything that is known to be incomplete or pending:
+
+HIGH PRIORITY:
+- RBAC fix: add collection_id to user_roles table (prevents cross-department 
+  data leakage for SENIOR users)
+- Chat history persistence (chat_sessions, chat_messages tables, sidebar)
+- Conversation memory persistence across sessions
+
+MEDIUM PRIORITY:
+- Forms FORM-2a (HRMS apply-leave) and FORM-2b (RMS log-hours): 
+  implemented backend, pending end-to-end browser testing
+- Auto-refresh timesheet table after chat action (implemented, 
+  needs verification)
+- Approve/Reject buttons in timesheet table (implemented, needs 
+  verification across all users)
+
+PLANNED (not started):
+- HRMS workflow for new collections (RMRR built by separate developer)
+- SCM and FINANCE collections (agents exist in DB but tools/workflows 
+  not implemented)
+- Unified agent architecture (single agent + tool registry replacing 
+  per-collection workflows)
+- Architecture documentation: DECISIONS.md, RUNBOOK.md
+- Scripts cleanup: move all *.py scripts from root into scripts/ folder
+- Prompts as source files (prompts_source/*.md per workflow, 
+  sync_prompts.py to update DB)
+- Production deployment (switch from demo tables to real pp_* tables, 
+  enable LDAP, rotate JWT secret)
+
+## 12. Known Issues
+
+Document each known bug or limitation:
+
+1. Duplicate output in chat responses
+   Status: Partially fixed (execution_results concatenation removed)
+   Remaining: Occasionally still seen; under investigation
+   Root cause: LLM sometimes called twice in streaming path
+
+2. LLM gateway is slow (~10-30 tokens/sec)
+   Status: Environment constraint, not a code issue
+   The internal LLM gateway is air-gapped and runs on company hardware
+
+3. LLM gateway strips structured tool_calls
+   Status: Worked around with <<ACTION>> marker protocol
+   If gateway is upgraded to pass tool_calls, the protocol can be removed
+
+4. Embedding API returns 401
+   Status: Known, worked around with mock embeddings
+   RAG context is empty (falls back to mock) until embeddings are fixed
+
+5. user_roles has no collection_id (RBAC limitation)
+   Status: PENDING FIX — documented in section 4.2
+
+6. Claude Code environment has bash path issues
+   Status: Verification commands must be run manually using 
+   C:\ml_env_311\Scripts\python.exe in cmd.exe (not bash/PowerShell)
+
+## 13. Scripts Reference
+
+List every .py file at project root that is a utility/setup script
+(read them to understand their purpose). For each:
+- Filename
+- Purpose (one sentence)
+- When to run
+- Safe to re-run? (idempotent?)
+
+## 14. Environment Configuration
+
+Document all environment variables the application reads:
+- AUTH_MODE: 'dev' or 'prod' (default: 'prod')
+- DB connection: whatever is in app/dao/database.py
+- LLM gateway URL: whatever is in app/core/llm.py
+- JWT_SECRET: wherever it's configured
+
+Document the startup command:
+uvicorn main:app --host 0.0.0.0 --port 5969
+
+## 15. Technology Stack
+
+List all major dependencies with versions from requirements.txt:
+- FastAPI
+- LangGraph
+- LangChain
+- SQLAlchemy
+- MariaDB connector
+- Uvicorn
+- PyJWT
+- python-ldap (or ldap3)
+- Any other significant deps
+
+---
+
+==============================================================================
+STEP 3 — FINAL CLEANUP
+==============================================================================
+
+A. Save the new documentation to:
+   D:\Sakthi\Gen AI\dpah_backend\DPAH_APPLICATION_DOCUMENTATION.md
+
+B. Delete the old file with the space in name:
+   D:\Sakthi\Gen AI\dpah_backend\DP AH_APPLICATION_DOCUMENTATION.md
+
+C. Delete the useless file:
+   D:\Sakthi\Gen AI\dpah_backend\API_DOCUMENTATION.md
+
+D. Print confirmation: "Documentation written: X lines"
+
+==============================================================================
+REPORT BACK
+==============================================================================
+- Confirm old files deleted
+- Confirm new file created with line count
+- List any sections you could NOT complete due to missing code 
+  (e.g., if a file didn't exist or was empty)
+- DO NOT run Python verification commands
