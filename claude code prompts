@@ -1,157 +1,29 @@
-INFO:     10.5.1.58:62235 - "GET /api/v1/me/capabilities HTTP/1.1" 500 Internal Server Error
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 416, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\applications.py", line 112, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 187, in __call__
-    raise exc
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 714, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 734, in app
-    await route.handle(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 214, in run_endpoint_function
-    return await run_in_threadpool(dependant.call, **values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\starlette\concurrency.py", line 37, in run_in_threadpool
-    return await anyio.to_thread.run_sync(func)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\anyio\to_thread.py", line 56, in run_sync
-    return await get_async_backend().run_sync_in_worker_thread(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 2461, in run_sync_in_worker_thread
-    return await future
-           ^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 962, in run
-    result = context.run(func, *args)
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "d:\dev\agentic_ai\dpah_backend_v1\app\routes\agent_route.py", line 30, in get_user_capabilities
-    emp_no = current_user.get("sub") or current_user.get("user_id")
-             ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\pydantic\main.py", line 891, in __getattr__
-    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
-AttributeError: 'CurrentUser' object has no attribute 'get'
-INFO:     10.5.1.58:62240 - "GET /api/v1/me/capabilities HTTP/1.1" 500 Internal Server Error
-ERROR:    Exception in ASGI application
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 416, in run_asgi
-    result = await app(  # type: ignore[func-returns-value]
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
-    return await self.app(scope, receive, send)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
-    await super().__call__(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\applications.py", line 112, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 187, in __call__
-    raise exc
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 165, in __call__
-    await self.app(scope, receive, _send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 93, in __call__
-    await self.simple_response(scope, receive, send, request_headers=headers)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 144, in simple_response
-    await self.app(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\exceptions.py", line 62, in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 714, in __call__
-    await self.middleware_stack(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 734, in app
-    await route.handle(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 288, in handle
-    await self.app(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 76, in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
-    raise exc
-  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
-    await app(scope, receive, sender)
-  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 73, in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 301, in app
-    raw_response = await run_endpoint_function(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 214, in run_endpoint_function
-    return await run_in_threadpool(dependant.call, **values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\starlette\concurrency.py", line 37, in run_in_threadpool
-    return await anyio.to_thread.run_sync(func)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\anyio\to_thread.py", line 56, in run_sync
-    return await get_async_backend().run_sync_in_worker_thread(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 2461, in run_sync_in_worker_thread
-    return await future
-           ^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 962, in run
-    result = context.run(func, *args)
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "d:\dev\agentic_ai\dpah_backend_v1\app\routes\agent_route.py", line 30, in get_user_capabilities
-    emp_no = current_user.get("sub") or current_user.get("user_id")
-             ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\pydantic\main.py", line 891, in __getattr__
-    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
-AttributeError: 'CurrentUser' object has no attribute 'get'
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from app.core.security import decode_access_token
+from app.models.dto_schemas import CurrentUser
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
-
--------------------------------------------------
-
-
-All files compile OK. Here's a summary of the changes made to fix the AttributeError: 'CurrentUser' object has no attribute 'get' error:
-
-Root cause: get_current_user was returning a CurrentUser Pydantic model, but all route handlers were using .get() dict-style access on it.
-
-Fixes across 5 files:
-
-app/models/dto_schemas.py — Added user_id: Optional[str] and collection_agents: Optional[Dict[str, List[str]]] fields to CurrentUser model.
-
-app/core/dependencies.py — Changed return type to dict, calls user.model_dump() so all downstream code gets a plain dict with .get() access working.
-
-app/controllers/auth_controller.py — Added derive_collection_agents() static method to extract the {"RMS": ["creator", ...], ...} map from the access_tree structure.
-
-app/routes/auth_route.py — Added collection_agents to the JWT payload during login (derived from access_tree). Removed unused CurrentUser import.
-
-app/routes/agent_route.py — Rebuilt the endpoints to build collections from the access_tree via AuthController.derive_collection_agents() instead of expecting collection_agents in the old JWT payload.
-
-app/routes/chat_route.py — Changed current_user.collection_agents to current_user.get("collection_agents") (dict-style access).
-
-app/controllers/chat_controller.py — No changes needed; already uses .get() dict access.
+def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
+    """
+    FastAPI dependency that extracts, decodes, and validates the Bearer token.
+    Returns a CurrentUser Pydantic model for type-safe access in route handlers.
+    """
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    return CurrentUser(
+        emp_no=payload["sub"],
+        group_idx=payload["group_idx"],
+        role_ids=payload["role_ids"],
+        role_names=payload["role_names"],
+        name=payload["name"],
+        email=payload["email"],
+        dept=payload["dept"],
+        hierarchy=payload["hierarchy"],
+    )
