@@ -1,5 +1,7 @@
 # Database Schema Documentation
-## Table: `roles`
+
+## Table: `dpah_roles`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | role_id | int | NO | PK | None | auto_increment |
@@ -8,12 +10,16 @@
 | is_active | tinyint | NO | IDX | 1 |  |
 | created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
 | updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+
 **Indexes:**
 - `PRIMARY` on `role_id` (Unique: No)
-- `role_name` on `role_name` (Unique: No)
+- `uk_role_name` on `role_name` (Unique: No)
 - `idx_roles_active` on `is_active` (Unique: Yes)
+
 ---
-## Table: `user_roles`
+
+## Table: `dpah_user_roles`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | user_role_id | bigint | NO | PK | None | auto_increment |
@@ -23,15 +29,20 @@
 | assigned_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
 | valid_until | timestamp | YES |  | None |  |
 | is_active | tinyint | NO |  | 1 |  |
+
 **Indexes:**
 - `PRIMARY` on `user_role_id` (Unique: No)
-- `uk_user_role` on `emp_id` (Unique: No)
-- `uk_user_role` on `role_id` (Unique: No)
+- `uk_user_role_active` on `emp_id` (Unique: No)
+- `uk_user_role_active` on `role_id` (Unique: No)
+- `uk_user_role_active` on `is_active` (Unique: No)
 - `idx_user_roles_emp` on `emp_id` (Unique: Yes)
 - `idx_user_roles_emp` on `is_active` (Unique: Yes)
 - `idx_user_roles_role` on `role_id` (Unique: Yes)
+
 ---
-## Table: `collections`
+
+## Table: `dpah_collections`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | collection_id | int | NO | PK | None | auto_increment |
@@ -43,13 +54,17 @@
 | is_active | tinyint | NO | IDX | 1 |  |
 | created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
 | updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+
 **Indexes:**
 - `PRIMARY` on `collection_id` (Unique: No)
-- `collection_name` on `collection_name` (Unique: No)
-- `idx_collections_dept` on `is_active` (Unique: Yes)
-- `fk_collection_moduleid_idx` on `module_id` (Unique: Yes)
+- `uk_collection_name` on `collection_name` (Unique: No)
+- `idx_collections_active` on `is_active` (Unique: Yes)
+- `idx_module_id` on `module_id` (Unique: Yes)
+
 ---
+
 ## Table: `dpah_modules`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | module_id | int | NO | PK | None | auto_increment |
@@ -59,10 +74,14 @@
 | created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
 | updated_by | varchar | NO |  | None |  |
 | updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+
 **Indexes:**
 - `PRIMARY` on `module_id` (Unique: No)
+
 ---
-## Table: `module_usergroups`
+
+## Table: `dpah_module_usergroups`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | module_group_id | int | NO | PK | None | auto_increment |
@@ -71,32 +90,40 @@
 | is_active | tinyint | NO |  | 1 |  |
 | assigned_by | varchar | NO |  | None |  |
 | assigned_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+
 **Indexes:**
 - `PRIMARY` on `module_group_id` (Unique: No)
-- `fk_group_moduleid_idx` on `module_id` (Unique: Yes)
+- `fk_mug_moduleid` on `module_id` (Unique: Yes)
+
 ---
-## Table: `agents`
+
+## Table: `dpah_agents`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | agent_id | int | NO | PK | None | auto_increment |
 | agent_name | varchar | NO | UNQ | None |  |
 | collection_id | int | NO | IDX | None |  |
 | department | varchar | NO | IDX | None |  |
-| description | varchar | YES |  | None |  |
+| description | text | YES |  | None |  |
 | system_prompt | text | YES |  | None |  |
 | allowed_tools | longtext | YES |  | None |  |
 | model_name | varchar | YES |  | None |  |
 | is_active | tinyint | NO |  | 1 |  |
 | created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
 | updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+
 **Indexes:**
 - `PRIMARY` on `agent_id` (Unique: No)
-- `agent_name` on `agent_name` (Unique: No)
+- `uk_agent_name` on `agent_name` (Unique: No)
 - `idx_agents_dept` on `department` (Unique: Yes)
 - `idx_agents_dept` on `is_active` (Unique: Yes)
-- `fk_agent_collectionid_idx` on `collection_id` (Unique: Yes)
+- `fk_agent_collectionid_new` on `collection_id` (Unique: Yes)
+
 ---
-## Table: `role_agent_access`
+
+## Table: `dpah_role_agent_access`
+
 | Column Name | Data Type | Nullable | Key | Default | Extra |
 |-------------|-----------|----------|-----|---------|-------|
 | role_id | int | NO | PK | None |  |
@@ -104,27 +131,12 @@
 | agent_id | int | NO | PK | None |  |
 | granted_by | varchar | YES |  | None |  |
 | granted_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+
 **Indexes:**
 - `PRIMARY` on `role_id` (Unique: No)
 - `PRIMARY` on `group_id` (Unique: No)
 - `PRIMARY` on `agent_id` (Unique: No)
 - `idx_raa_agent` on `agent_id` (Unique: Yes)
+
 ---
-----------------------------------------------------------------------
-** this is the new table structure and new tables that i have added, this is the finalized db design suggested by my management. some foriegn keys and indexing is pending but these are the
-finalized things.
-** so now i will explain you the flow change.
-1.so initially when a person logs in we will take his group id from the resources table.
-2.we have created a new table called dpah_modules. the reason being intoducing this table is till now we are using collections to display in the frontend like RMS.
-3.but actually it is wrong because RMS or SCM or HRMS they are modules inside that we have collections like rms_timesheet, rms_projectplan, scm_potracker, scm_electronics,hrms_leave_data, hrms_salarydata
-4.so for that only we have introduced modules
-5.now that module we have mapped to the collections so that we will have a track how many collections are there for respective modules.
-6.similarly we have mapped module to groupid so that when the person from a group logs in with this we can show tiles in the frontend.
-7.then we mapped agents to the colelctionid becasue for specific collections only we have created agents right
-8.then by taking that particular agent id we are using agents table to take the agents . here if you see we have introduced group id in this table becasue in a group there wil be junior senior and mid level
-but we need to restrict the agents based on their role right.
-** so like this we have changed the flow . i need you to make a complete understanding regarding this flow and get back to me what you understood and i will answer your question so that we can start making changes.
-** Note: till now how i have worked in my company server they have given us cladue code in vscode. i have my seperate paid claude and till this entire work done by taking a task prompt from my paid claude
-and given to my company vscode claude code.This is my new claude account thats why i have given overall md file for you.like that only we need to work
-  
-|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
