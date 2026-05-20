@@ -1,18 +1,16 @@
-1. **`get_current_user` dependency placed in `app/core/dependencies.py` (not security.py):** The spec asked for this in security.py, but it was placed in a dedicated `app/core/dependencies.py` module to keep security.py focused on token creation/decoding and keep FastAPI dependencies isolated. The `dependencies.py` file exports `get_current_user` which returns a `CurrentUser` Pydantic model, and is used by the `/me/access` endpoint in auth_route.py.
+-- 1. Is the user actually in resources, and what's their GroupIDx?
+SELECT Emp_no, Name, Email, Department, GroupIDx, IsActive
+FROM resources
+WHERE Emp_no = '2052';
 
-CapabilitiesResponse, UserSummary, and CollectionCapability are actively used in agent_route.py (imported and referenced in the /me/capabilities endpoint). They're not dead code — they power a real API endpoint. So I should keep them and remove them from the "removed models" list in the report.
+-- 2. Does this user have any role assigned in the NEW table?
+SELECT ur.user_role_id, ur.emp_id, ur.role_id, r.role_name, ur.is_active
+FROM dpah_user_roles ur
+LEFT JOIN dpah_roles r ON r.role_id = ur.role_id
+WHERE ur.emp_id = '2052';
 
-i have tried the post apis but current 401 is coming 
-{
-    "detail": "Authentication System Error: 401: User not found in DPAH Database."
-}
-
-10.5.1.24:5970/api/v1/auth/login
-
-{
-  "username": "2052",
-  "password": "sdg"
-}
-
-the user is available i have checked , i think this is not a blocker we can ask claude to do this testing and let us clear our doubts
-
+-- 3. Does the user's group have any module access?
+SELECT mug.group_idx, mug.module_id, m.module_name
+FROM dpah_module_usergroups mug
+JOIN dpah_modules m ON m.module_id = mug.module_id
+WHERE mug.group_idx = (SELECT GroupIDx FROM resources WHERE Emp_no = '2052');
