@@ -21,7 +21,281 @@ from app.models.db_schema import (
 )
 
 
-@staticmethod
+class AuthController:
+
+    @staticmethod
+    def authenticate_ldap(uid: str, password: str) -> dict | bool:
+        """Authenticate via LDAP. Unchanged from previous implementation."""
+        print(f"\n--- [LOG] STARTING AUTH FOR: {uid} ---")
+
+        try:
+            server = Server(settings.LDAP_HOST, port=settings.LDAP_PORT)
+            print(f"1. Server object created for {settings.LDAP_HOST}:{settings.LDAP_PORT}")
+
+            search_conn = Connection(server, user='', password='', auto_bind=True)
+            print("2. Anonymous connection successful.")
+
+            search_filter = f"(uid={uid})"
+            print(f"3. Searching in '{settings.LDAP_SEARCH_DN}' with filter '{search_filter}'...")
+
+            search_conn.search(
+                search_base=settings.LDAP_SEARCH_DN,
+                search_filter=search_filter,
+                search_scope=SUBTREE,
+                attributes=['*']
+            )
+
+            if not search_conn.entries:
+                print(f"4. SEARCH FAILED: No entries found for {uid}.")
+                search_conn.unbind()
+                return False
+
+            user_entry = search_conn.entries[0]
+            user_dn = user_entry.entry_dn
+            print(f"4. SEARCH SUCCESS! Found User DN: {user_dn}")
+
+            print("5. Attempting final password bind...")
+            auth_conn = Connection(server, user=user_dn, password=password)
+
+            if auth_conn.bind():
+                print("6. AUTHENTICATION SUCCESSFUL!")
+                raw_attrs = user_entry.entry_attributes_as_dict
+
+                user_info = {
+                    "uid": uid,
+                    "dn": user_dn,
+                    "mail": raw_attrs.get('mail', [None])[0],
+                    "department": raw_attrs.get('department', [None])[0],
+                    "employeeID": raw_attrs.get('employeeID', [uid])[0],
+                }
+
+                auth_conn.unbind()
+                search_conn.unbind()
+                return user_info
+            else:
+                print("6. BIND FAILED: Incorrect Password or Account Locked.")
+                search_conn.unbind()
+                return False
+
+        except Exception as e:
+            print(f"CRITICAL LDAP EXCEPTION: {e}")
+            return False
+
+    @staticmethod
+    def generate_user_context(db: Session, uid: str, password: str) -> dict:
+        """Master function: validates LDAP, then delegates to build_user_context_by_empno."""
+        auth_result = AuthController.authenticate_ldap(uid, password)
+        if not auth_result:
+            return {"success": False, "error": "Invalid LDAP credentials"}
+
+        ldap_emp_id = auth_result.get("employeeID")
+        ldap_mail = auth_result.get("mail")
+
+        db_user = db.query(Resource).filter(
+            or_(
+                Resource.Emp_no == ldap_emp_id,
+                Resource.Emp_no == uid,
+                Resource.Email == ldap_mail,
+                Resource.Email == f"{uid}@datapatterns.co.in",
+            ),
+            Resource.IsActive == 1,
+        ).first()
+
+        if not db_user:
+            return {"success": False, "error": "LDAP Login successful, but profile not found in DPAH Database."}
+
+        return AuthController.build_user_context_by_empno(db, db_user.Emp_no)
+
+    @staticmethod
+    def build_user_context_by_empno(db: Session, emp_no: str) -> dict:
+        """
+        Build user context from emp_no using the new RBAC schema.
+        Implements strict intersection: a module appears in access_tree
+        only if BOTH (user's group has it) AND (user has agents in it).
+        """
+        db_user = db.query(Resource).filter(
+            Resource.Emp_no == emp_no,
+            Resource.IsActive == 1,
+        ).first()
+
+        if not db_user:
+            return {"success": False, "error": "User not found in DPAH Database."}
+
+        print(f"User context built for: {emp_no} ({db_user.Name})")
+
+        # 1. Fetch active roles
+        user_role_records = db.query(UserRole).filter(
+            UserRole.emp_id == emp_no,
+            UserRole.is_active == 1,
+        ).all()
+
+        role_ids = [ur.role_id for ur in user_role_records]
+
+        role_names_list = []
+        if role_ids:
+            role_records = db.query(Role).filter(Role.role_id.in_(role_ids)).all()
+            role_names_list = [r.role_name for r in role_records]
+
+        # 2. STEP A — modules visible to user's group (from dpah_module_usergroups)
+        group_idx = getattr(db_user, 'GroupIDx', None)
+        if group_idx is None:
+            group_idx = 0
+
+        group_modules = db.query(ModuleUserGroup).filter(
+            ModuleUserGroup.group_idx == group_idx,
+            ModuleUserGroup.is_active == 1,
+        ).all()
+
+        visible_module_ids = {mug.module_id for mug in group_modules}
+
+        # 3. STEP B — agents accessible via role_agent_access
+        if role_ids:
+            accessible_agent_rows = db.query(RoleAgentAccess).filter(
+                RoleAgentAccess.group_id == group_idx,
+                RoleAgentAccess.role_id.in_(role_ids),
+            ).all()
+        else:
+            accessible_agent_rows = []
+
+        # 4. STEP C — enrich agents with collection + module info
+        agent_ids = {ra.agent_id for ra in accessible_agent_rows}
+        agents_dict = {}
+        if agent_ids:
+            agents = db.query(Agent).filter(Agent.agent_id.in_(agent_ids)).all()
+            for a in agents:
+                agents_dict[a.agent_id] = a
+
+        # Build module -> collection -> agents map from accessible agents
+        module_collections_agents: dict = {}
+        for ra in accessible_agent_rows:
+            agent = agents_dict.get(ra.agent_id)
+            if agent is None:
+                continue
+
+            collection = db.query(Collection).filter(
+                Collection.collection_id == agent.collection_id
+            ).first()
+            if collection is None:
+                continue
+
+            module = db.query(Module).filter(
+                Module.module_id == collection.module_id
+            ).first()
+            if module is None:
+                continue
+
+            # Parse persona from agent_name: split on "_", take last segment, uppercase
+            parts = agent.agent_name.rsplit("_", 1)
+            persona = parts[-1].upper() if len(parts) >= 2 else "UNKNOWN"
+
+            mid = module.module_id
+            if mid not in module_collections_agents:
+                module_collections_agents[mid] = {
+                    "module_id": mid,
+                    "module_name": module.module_name,
+                    "description": module.module_description,
+                    "collections": {},
+                }
+
+            cid = collection.collection_id
+            if cid not in module_collections_agents[mid]["collections"]:
+                module_collections_agents[mid]["collections"][cid] = {
+                    "collection_id": cid,
+                    "collection_name": collection.collection_name,
+                    "agents": [],
+                }
+
+            module_collections_agents[mid]["collections"][cid]["agents"].append({
+                "agent_id": agent.agent_id,
+                "agent_name": agent.agent_name,
+                "persona": persona,
+            })
+
+        # 5. STEP E — strict intersection: only modules in BOTH visible_module_ids AND agent map
+        intersection_module_ids = visible_module_ids & set(module_collections_agents.keys())
+
+        modules_list = []
+        for mid in sorted(intersection_module_ids):
+            md = module_collections_agents[mid]
+            collections_list = []
+            for cid in sorted(md["collections"]):
+                coll_data = md["collections"][cid]
+                # Sort agents by persona then name
+                agents = sorted(coll_data["agents"], key=lambda a: (a["persona"], a["agent_name"]))
+                collections_list.append({
+                    "collection_id": cid,
+                    "collection_name": coll_data["collection_name"],
+                    "agents": agents,
+                })
+            modules_list.append({
+                "module_id": md["module_id"],
+                "module_name": md["module_name"],
+                "description": md["description"],
+                "collections": collections_list,
+            })
+
+        user_profile = {
+            "user_profile": {
+                "emp_no": emp_no,
+                "name": db_user.Name,
+                "email": db_user.Email,
+                "dept": db_user.Department,
+                "group_idx": group_idx,
+                "roles": [{"role_id": rid, "role_name": rname}
+                          for rid, rname in zip(role_ids, role_names_list)],
+                "hierarchy": {
+                    "grade": db_user.Grade,
+                    "grade_id": db_user.GradeID,
+                    "reporting_to": db_user.ReportingToID,
+                    "l1": db_user.level01,
+                    "l2": db_user.level02,
+                    "l3": db_user.level03,
+                    "tslevel": db_user.tslevel,
+                },
+            },
+            "access_tree": {
+                "modules": modules_list,
+            },
+        }
+
+        # DEBUG
+        print(f"\n=== DEBUG: Resolved context for emp_no {emp_no} ===")
+        print(f"  group_idx = {group_idx}")
+        print(f"  role_ids = {role_ids}")
+        print(f"  visible_module_ids = {visible_module_ids}")
+        print(f"  intersection_module_ids = {intersection_module_ids}")
+        print(f"  modules in access_tree = {len(modules_list)}")
+        for mod in modules_list:
+            print(f"    - {mod['module_name']}: {len(mod['collections'])} collections")
+            for col in mod["collections"]:
+                print(f"        - {col['collection_name']}: {len(col['agents'])} agents")
+        print(f"=== END DEBUG ===")
+
+        return {"success": True, "user_profile": user_profile, "access_tree": user_profile["access_tree"]}
+
+    @staticmethod
+    def authenticate_dev_mode(emp_no: str, dept: str, db: Session) -> dict:
+        """
+        Dev-mode authentication: looks up emp_no + dept in the resources table.
+        No password check. Returns the new user context shape.
+        """
+        emp_no_clean = (emp_no or "").strip()
+        dept_clean = (dept or "").strip().upper()
+
+        if not emp_no_clean or not dept_clean:
+            raise ValueError("emp_no and dept are both required for dev login")
+
+        resource = db.query(Resource).filter(Resource.Emp_no == emp_no_clean).first()
+        if not resource:
+            raise ValueError(f"No employee found with emp_no={emp_no_clean}")
+
+        resource_dept = (resource.Department or "").strip().upper()
+        if resource_dept != dept_clean:
+            raise ValueError(f"Dept mismatch — resource {emp_no_clean} is in {resource_dept}, not {dept_clean}")
+
+        return AuthController.build_user_context_by_empno(db, emp_no_clean)
+
+    @staticmethod
     def check_module_access(
         emp_no: str,
         group_idx: int,
@@ -59,8 +333,7 @@ from app.models.db_schema import (
         cache_set(cache_key, result, ttl_seconds=300)
         return result
 
-
-@staticmethod
+    @staticmethod
     def check_agent_access(
         emp_no: str, group_idx: int, role_ids: List[int], agent_id: int, db: Session
     ) -> Optional[Agent]:
@@ -111,7 +384,7 @@ from app.models.db_schema import (
 
         return result
 
-@staticmethod
+    @staticmethod
     def get_module_id_by_name(module_name: str, db: Session) -> Optional[int]:
         """
         Look up a module's ID by name (case-insensitive).
@@ -122,7 +395,7 @@ from app.models.db_schema import (
         ).first()
         return row[0] if row else None
 
-@staticmethod
+    @staticmethod
     def get_access_tree_for_empno(db: Session, emp_no: str) -> dict:
         """
         Build a fresh access_tree from DB for a given emp_no.
@@ -134,345 +407,4 @@ from app.models.db_schema import (
             return result["access_tree"]
         return {"modules": []}
 
-
-
-
-# app/routes/chat_route.py
-"""
-Chat endpoints for streaming conversations, history, and thread management.
-"""
-import json
-from fastapi import APIRouter, Depends, HTTPException, status, File, Form, UploadFile, Query
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from typing import AsyncGenerator, Optional
-from datetime import datetime
-from typing_extensions import Annotated
-
-from app.dao.database import get_db
-from app.core.dependencies import get_current_user, oauth2_scheme
-from app.controllers.auth_controller import AuthController
-from app.controllers.chat_controller import ChatController
-from app.models.dto_schemas import (
-    ChatStreamRequest,
-    ChatHistoryResponse,
-    ThreadMessagesResponse,
-    ThreadInfo,
-    ChatMessage,
-    CurrentUser,
-)
-
-# New imports for UI Tools
-from app.workflows.material_workflow.tools import search_projects, get_project_phases
-
-router = APIRouter()
-
-
-async def sse_generator_with_orchestrator(
-    db: Session,
-    current_user: dict,
-    raw_token: str,
-    request_data: dict
-) -> AsyncGenerator[str, None]:
-    try:
-        async for chunk in ChatController.stream_chat_with_orchestrator(
-            db, current_user, raw_token, request_data
-        ):
-            yield f"data: {chunk}\n\n"
-        yield "data: [DONE]\n\n"
-    except PermissionError as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        yield "data: [DONE]\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'error': f'Server error: {str(e)}'})}\n\n"
-        yield "data: [DONE]\n\n"
-
-
-@router.post(
-    "/stream",
-    summary="Stream chat messages from the agent"
-)
-async def stream_chat_message(
-    request: ChatStreamRequest,
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
-    raw_token: str = Depends(oauth2_scheme),
-):
-    request_data = request.model_dump()
-
-    # Reject old-shape requests containing "collection_name"
-    if "collection_name" in request_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Field 'collection_name' is deprecated. Use 'module_name' instead. The chat request shape changed in Task 3 — see the Frontend Migration Spec for details."
-        )
-
-    # Gate 1: module-level permission check
-    module_name = request.module_name
-    module_id = AuthController.get_module_id_by_name(module_name, db)
-    if module_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown module: {module_name}"
-        )
-    if not AuthController.check_module_access(
-        current_user.emp_no,
-        current_user.group_idx,
-        current_user.role_ids,
-        module_id,
-        db
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"You do not have access to module '{module_name}'."
-        )
-
-    return StreamingResponse(
-        sse_generator_with_orchestrator(db, current_user.model_dump(), raw_token, request_data),
-        media_type="text/event-stream",
-    )
-
-
-async def sse_generator_with_file(
-    db: Session,
-    current_user: dict,
-    raw_token: str,
-    request_data: dict,
-    uploaded_files: list
-) -> AsyncGenerator[str, None]:
-    try:
-        request_data["uploaded_files"] = uploaded_files
-        async for chunk in ChatController.stream_chat_with_file(
-            db, current_user, raw_token, request_data
-        ):
-            yield f"data: {chunk}\n\n"
-        yield "data: [DONE]\n\n"
-    except PermissionError as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        yield "data: [DONE]\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'error': f'Server error: {str(e)}'})}\n\n"
-        yield "data: [DONE]\n\n"
-
-
-@router.post(
-    "/stream-with-file",
-    summary="Stream chat with file upload"
-)
-async def stream_chat_with_file_upload(
-    collection_name: Annotated[str, Form(...)],
-    message: Annotated[str, Form(...)],
-    files: Annotated[list[UploadFile], File(...)],
-    chat_history: Annotated[Optional[str], Form()] = None,
-    thread_id: Annotated[Optional[str], Form()] = None,
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
-    raw_token: str = Depends(oauth2_scheme)
-):
-    if not files or len(files) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one file must be uploaded."
-        )
-
-    request_data = {
-        "collection_name": collection_name,
-        "message": message,
-        "chat_history": json.loads(chat_history) if chat_history else [],
-        "thread_id": thread_id,
-    }
-
-    # Gate 1: module-level permission check
-    module_name = request_data.get("collection_name", "").upper()
-    module_id = AuthController.get_module_id_by_name(module_name, db)
-    if module_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown module: {module_name}"
-        )
-    if not AuthController.check_module_access(
-        current_user.emp_no,
-        current_user.group_idx,
-        current_user.role_ids,
-        module_id,
-        db
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"You do not have access to module '{module_name}'."
-        )
-
-    uploaded_files = []
-    for file in files:
-        try:
-            content = await file.read()
-            file_data = await ChatController.parse_uploaded_file(file.filename, content)
-            uploaded_files.append(file_data)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Error processing file '{file.filename}': {str(e)}"
-            )
-
-    return StreamingResponse(
-        sse_generator_with_file(db, current_user.model_dump(), raw_token, request_data, uploaded_files),
-        media_type="text/event-stream",
-    )
-
-
-@router.get(
-    "/history",
-    response_model=ChatHistoryResponse,
-    summary="Get user's chat history"
-)
-def get_history(
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user)
-) -> ChatHistoryResponse:
-    return ChatHistoryResponse(
-        threads=[
-            ThreadInfo(
-                thread_id="thread_mock_001",
-                collection_name="technical_docs",
-                agent_role="Technical Documentation Assistant",
-                created_at=datetime(2026, 4, 27, 10, 0, 0),
-                last_message_at=datetime(2026, 4, 27, 10, 30, 0),
-                message_count=5,
-            ),
-            ThreadInfo(
-                thread_id="thread_mock_002",
-                collection_name="hr_policies",
-                agent_role="HR Policy Assistant",
-                created_at=datetime(2026, 4, 26, 14, 0, 0),
-                last_message_at=datetime(2026, 4, 26, 14, 45, 0),
-                message_count=3,
-            ),
-        ],
-    )
-
-
-@router.get(
-    "/history/{thread_id}",
-    response_model=ThreadMessagesResponse,
-    summary="Get messages in a specific thread"
-)
-def get_thread(
-    thread_id: str,
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user)
-) -> ThreadMessagesResponse:
-    mock_response = ThreadMessagesResponse(
-        thread_id=thread_id,
-        collection_name="technical_docs",
-        agent_role="Technical Documentation Assistant",
-        messages=[
-            ChatMessage(
-                message_id="msg_001",
-                thread_id=thread_id,
-                content="Hello! How can I help you with the technical documentation today?",
-                sender_type="agent",
-                timestamp=datetime(2026, 4, 27, 10, 0, 0),
-            ),
-            ChatMessage(
-                message_id="msg_002",
-                thread_id=thread_id,
-                content="How do I configure the API endpoints?",
-                sender_type="user",
-                timestamp=datetime(2026, 4, 27, 10, 1, 0),
-            ),
-            ChatMessage(
-                message_id="msg_003",
-                thread_id=thread_id,
-                content="To configure API endpoints, you'll need to modify the main.py file...",
-                sender_type="agent",
-                timestamp=datetime(2026, 4, 27, 10, 1, 30),
-            ),
-        ],
-    )
-    return mock_response
-
-
-# ==============================================================================
-# NEW ENDPOINT: Generative UI Tool Lookups
-# ==============================================================================
-
-@router.get(
-    "/tools/{tool_name}",
-    summary="Execute UI tools for Generative UI widgets",
-    description="Lightweight endpoint to fetch typeahead search results and dependent dropdown options without triggering a full LangGraph cycle."
-)
-async def execute_ui_tool(
-    tool_name: str,
-    q: Optional[str] = Query(None, description="Search keyword for autocomplete"),
-    parent_id: Optional[int] = Query(None, description="Parent ID for dependent dropdowns"),
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user)
-):
-    try:
-        if tool_name == "search_projects":
-            if not q:
-                return []
-            result = search_projects.invoke({"keyword": q})
-            return result
-
-        elif tool_name == "get_project_phases":
-            if not parent_id:
-                return []
-            result = get_project_phases.invoke({"project_id": parent_id})
-            return result
-
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Tool '{tool_name}' not found or not permitted for UI execution."
-            )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error executing UI tool '{tool_name}': {str(e)}"
-        )
-
-
-"""
-Process-local permission cache. 5-minute TTL. Cache entries
-expire naturally; there is no manual invalidation endpoint
-in this task. Admin workstream (post Task 4) will add a
-proper invalidation API.
-
-Uses a plain Python dict + threading.Lock. If the app runs multiple
-worker processes, each has its own cache — acceptable for current
-scale (single-worker via uvicorn).
-"""
-import time
-import threading
-from typing import Any, Optional, Tuple
-
-_cache: dict[str, Tuple[Any, float]] = {}
-_lock = threading.Lock()
-
-
-def cache_get(key: str) -> Optional[Any]:
-    """Return cached value if present and not expired, else None."""
-    with _lock:
-        entry = _cache.get(key)
-        if entry is None:
-            return None
-        value, expiry = entry
-        if time.time() > expiry:
-            del _cache[key]
-            return None
-        return value
-
-
-def cache_set(key: str, value: Any, ttl_seconds: int = 300) -> None:
-    """Store value with expiry timestamp."""
-    expiry = time.time() + ttl_seconds
-    with _lock:
-        _cache[key] = (value, expiry)
-
-
-def cache_clear() -> None:
-    """Empties the cache."""
-    with _lock:
-        _cache.clear()
+** take the entire file and give back me the updated file similiarly if you have to do chnages in chat route mens do the same with that also
