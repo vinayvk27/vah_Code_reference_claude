@@ -11,7 +11,6 @@ from datetime import datetime
 from typing_extensions import Annotated
 
 from app.dao.database import get_db
-# from app.core.security import oauth2_scheme
 from app.core.dependencies import get_current_user, oauth2_scheme
 from app.controllers.chat_controller import ChatController
 from app.models.dto_schemas import (
@@ -19,7 +18,8 @@ from app.models.dto_schemas import (
     ChatHistoryResponse,
     ThreadMessagesResponse,
     ThreadInfo,
-    ChatMessage
+    ChatMessage,
+    CurrentUser,
 )
 
 # New imports for UI Tools
@@ -55,19 +55,18 @@ async def sse_generator_with_orchestrator(
 async def stream_chat_message(
     request: ChatStreamRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     raw_token: str = Depends(oauth2_scheme)
 ):
     request_data = request.model_dump()
 
-    if not current_user.get("collection_agents"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No agent permissions associated with this user. Contact your administrator."
-        )
+    # NOTE: Per-agent permission check happens inside the workflow once
+    # the intent classifier resolves the requested agent. The old
+    # "any-permission" gate based on collection_agents has been removed
+    # in favor of fine-grained checks via check_agent_access().
 
     return StreamingResponse(
-        sse_generator_with_orchestrator(db, current_user, raw_token, request_data),
+        sse_generator_with_orchestrator(db, current_user.model_dump(), raw_token, request_data),
         media_type="text/event-stream",
     )
 
@@ -105,7 +104,7 @@ async def stream_chat_with_file_upload(
     chat_history: Annotated[Optional[str], Form()] = None,
     thread_id: Annotated[Optional[str], Form()] = None,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     raw_token: str = Depends(oauth2_scheme)
 ):
     if not files or len(files) == 0:
@@ -121,11 +120,7 @@ async def stream_chat_with_file_upload(
         "thread_id": thread_id,
     }
 
-    if not current_user.get("collection_agents"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No agent permissions associated with this user."
-        )
+    # NOTE: Per-agent permission check happens inside the workflow.
 
     uploaded_files = []
     for file in files:
@@ -140,7 +135,7 @@ async def stream_chat_with_file_upload(
             )
 
     return StreamingResponse(
-        sse_generator_with_file(db, current_user, raw_token, request_data, uploaded_files),
+        sse_generator_with_file(db, current_user.model_dump(), raw_token, request_data, uploaded_files),
         media_type="text/event-stream",
     )
 
@@ -152,7 +147,7 @@ async def stream_chat_with_file_upload(
 )
 def get_history(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ) -> ChatHistoryResponse:
     return ChatHistoryResponse(
         threads=[
@@ -184,7 +179,7 @@ def get_history(
 def get_thread(
     thread_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ) -> ThreadMessagesResponse:
     mock_response = ThreadMessagesResponse(
         thread_id=thread_id,
@@ -231,7 +226,7 @@ async def execute_ui_tool(
     q: Optional[str] = Query(None, description="Search keyword for autocomplete"),
     parent_id: Optional[int] = Query(None, description="Parent ID for dependent dropdowns"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user)
 ):
     try:
         if tool_name == "search_projects":
