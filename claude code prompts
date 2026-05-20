@@ -1,105 +1,236 @@
-## Decision 13: Two-gate permission model
+═══════════════════════════════════════════════════════════════════
+TASK 3.5: Legacy code cleanup (deletion-only task)
+═══════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT — READ FIRST
+───────────────────────────────────────────────────────────────────
+This task is DELETION ONLY. Every action below is either "delete
+this exact thing" or "verify this exact thing." You must NOT:
+  - Add any new code.
+  - Refactor any existing code.
+  - "Fix" any code that looks suspicious.
+  - Modify any file not explicitly listed below.
+  - Add comments, docstrings, or annotations to code you didn't
+    delete.
+
+If you encounter unexpected file content (e.g., a file that doesn't
+exist when this spec says it should, or contains different content
+than expected), STOP and report it. Do NOT make decisions about
+what to delete based on judgment.
+
+The only "creative" work in this task is writing Decision 15 in
+ARCHITECTURE_DECISIONS.md, and even that is templated below.
+
+───────────────────────────────────────────────────────────────────
+MANDATORY FOOTPRINT DECLARATION
+───────────────────────────────────────────────────────────────────
+Before making any changes, output "INTENDED FOOTPRINT" listing:
+  - Files I will DELETE
+  - Files I will MODIFY
+  - Files I will CREATE (only ARCHITECTURE_DECISIONS.md edits + TASK_3_5_REPORT.md)
+
+At the END, output `git diff --stat HEAD` (or if no git, list every
+file actually touched). Confirm actual matches intended.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Task 3 left some legacy references in the codebase that point to
+the OLD fat-JWT architecture (collection_agents, allowed_agents,
+RoleCollectionAccess). These references are dead code — the routes
+that use them are commented out, the fields no longer exist in the
+JWT, and the table no longer exists in the ORM.
+
+Why this matters: when Claude Code reads the codebase for any future
+task, these dead references mislead it into trying to "restore
+consistency" by re-adding the old patterns. This has happened twice
+already in this project. Removing them eliminates the temptation.
+
+This task does ONLY deletion. No new logic. No refactoring.
+
+───────────────────────────────────────────────────────────────────
+ACTION 1 — Delete app/routes/agent_route.py
+───────────────────────────────────────────────────────────────────
+Action: Delete the file entirely.
+Path: app/routes/agent_route.py
+Verification before deletion:
+  - Confirm the file currently contains a router with endpoints
+    referencing collection_agents or capabilities. If it does NOT,
+    STOP and report — the file may have been changed.
+After deletion:
+  - The file should no longer exist on disk.
+
+───────────────────────────────────────────────────────────────────
+ACTION 2 — Remove agent_route references from main.py
+───────────────────────────────────────────────────────────────────
+File: main.py (project root)
+
+Search for lines containing the string "agent_route" (case-sensitive).
+There should be one or two lines, likely commented out, that import
+or include agent_route's router.
+
+Examples of what to look for (the exact lines may differ):
+  # from app.routes import agent_route
+  # app.include_router(agent_route.router, prefix=settings.API_V1_STR)
+
+Action: Delete those lines entirely (do not leave them as
+commented-out lines — remove them).
+
+Verification: After deletion, the string "agent_route" must not
+appear anywhere in main.py. Run a grep to confirm.
+
+───────────────────────────────────────────────────────────────────
+ACTION 3 — Grep for legacy patterns across app/
+───────────────────────────────────────────────────────────────────
+Run these searches and report findings in TASK_3_5_REPORT.md:
+
+  grep -rn "collection_agents" app/ --include="*.py"
+  grep -rn "allowed_agents" app/ --include="*.py"
+  grep -rn "RoleCollectionAccess" app/ --include="*.py"
+  grep -rn "role_collection_access" app/ --include="*.py"
+
+For EACH match found:
+  - Report file path + line number + the matching line.
+  - Categorize the match as one of:
+      (A) "Safe to delete" — pure dead reference, no behavior depends on it.
+      (B) "Needs decision" — actively used in code, deletion would change behavior.
+      (C) "False positive" — appears in a comment, string literal, or docstring
+          referring to historical context.
+
+Then take action based on category:
+  - Category (A): delete the line or block.
+  - Category (B): DO NOT modify. Report it and stop. Human will decide.
+  - Category (C): leave it. Just note it in the report.
+
+This action is the only one where judgment is required, and the
+judgment is constrained to three predefined categories.
+
+───────────────────────────────────────────────────────────────────
+ACTION 4 — Scan app/controllers/chat_controller.py for legacy access patterns
+───────────────────────────────────────────────────────────────────
+File: app/controllers/chat_controller.py
+
+DO NOT MODIFY THIS FILE. This action is a READ-ONLY scan for
+reporting purposes.
+
+Search the file for these patterns:
+  - .get("collection_agents")
+  - .get("allowed_agents")
+  - current_user.collection_agents
+  - current_user.allowed_agents
+
+For each match, record in TASK_3_5_REPORT.md:
+  - Function name containing the match
+  - The full line
+  - Whether the surrounding code would crash if called with a real
+    CurrentUser-shaped dict (which has no collection_agents field)
+
+Do NOT fix any of these. Just report. Task 4 will handle them.
+
+───────────────────────────────────────────────────────────────────
+ACTION 5 — Append Decision 15 to ARCHITECTURE_DECISIONS.md
+───────────────────────────────────────────────────────────────────
+File: ARCHITECTURE_DECISIONS.md
+
+Action: Append the following entry verbatim at the end of the file:
+
+## Decision 15: Aggressive removal of legacy code
 **Date:** 2026-05-20
-**Context:** Permissions need to be checked at two different points in the request lifecycle — at the route boundary (before any expensive work) and inside the workflow (after intent classification picks a specific agent). A single check at either point alone has gaps.
-**Old approach:** Single permission gate based on the fat-JWT `collection_agents` field, checked at the route boundary only. Once past this gate, any agent could be invoked without further verification.
-**New approach:** Two independent gates.
-  - Gate 1 at the route boundary: `check_module_access()` confirms the user has at least one agent in the requested module. Coarse, fast, blocks unauthorized module requests before any LLM call.
-  - Gate 2 inside the workflow: `check_agent_access()` confirms the user has the specific agent that the intent classifier resolved. Fine-grained, runs after intent classification (implementation deferred to Task 4).
-**Why this is better:** Defense in depth. Gate 1 short-circuits unauthorized requests before any LLM compute is spent. Gate 2 prevents intent classification from picking an agent the user doesn't actually have. Either gate failing closes the request safely.
-**Trade-offs:** Two DB queries per authorized request instead of one. Mitigated by the permission cache (Decision 14). For unauthorized requests, Gate 1 fires immediately — no waste.
-**Industry pattern reference:** Defense in depth / layered authorization. Common in payment systems where a coarse "merchant active" check precedes a fine-grained "transaction allowed" check.
+**Context:** During Tasks 2 and 3, references to the old fat-JWT architecture (`collection_agents`, `allowed_agents`, `RoleCollectionAccess`) survived in dead code — disabled routes, unused functions, commented-out imports. These references repeatedly misled Claude Code during subsequent tasks: it would interpret them as "the rest of the system expects this pattern" and attempt to restore the old architecture in newly-written code.
+**Old approach:** Leave dead code in place under the "minimal disturbance" principle, planning to clean it up later.
+**New approach:** As soon as a piece of code becomes dead (its caller is removed or rewritten), delete it. No commented-out lines. No "we'll clean it up later." If a file is no longer registered in `main.py`, delete the file.
+**Why this is better:** Removes gravity wells that pull AI-assisted code generation toward outdated patterns. Reduces cognitive load for human readers. Forces explicit decisions: either the code is needed (so it stays live), or it isn't (so it's deleted). No middle state.
+**Trade-offs:** If a deleted piece needs to come back, it must be rewritten — there's no commented-out version to uncomment. For this project's stage, this is acceptable: nothing being deleted is non-trivial enough that rewriting it would be hard.
+**Industry pattern reference:** "Make the change easy, then make the easy change" (Kent Beck) — the change here is removing temptation, which makes the next task easier. Also closely related to "Boy Scout Rule" — leave the codebase cleaner than you found it.
 **Alternatives considered:**
-  - Single gate at agent level only: rejected because it wastes LLM compute on requests that will be denied.
-  - Single gate at module level only: rejected because intent classification could pick agents the user doesn't have within an otherwise allowed module.
-  - Three gates (module + collection + agent): rejected as over-engineered. Collection-level granularity adds complexity without a clear security benefit since agents already belong to exactly one collection.
-**Where it lives in code:** `app/controllers/auth_controller.py` (`check_module_access`, `check_agent_access`); `app/routes/chat_route.py` (Gate 1 wiring). Gate 2 to be wired in Task 4.
+  - Comment out instead of delete: rejected because commented code is still readable by AI tools and humans, creating the same gravity-well problem.
+  - Feature flag legacy code paths: rejected as over-engineered for code that has zero callers.
+  - Keep in a `_legacy/` subfolder: considered but rejected because subfolder contents are still grep-able and would still mislead AI tools.
+**Where it lives in code:** Operational principle. Enforced by deletion in Task 3.5; future tasks must continue to honor it.
 
-## Decision 14: Process-local permission cache with TTL
-**Date:** 2026-05-20
-**Context:** Wiring Gate 1 into every chat request adds a DB query per request. Without caching, a user sending 50 messages in a session would trigger 50 identical permission lookups.
-**Old approach:** No cache. Permissions were embedded in the fat JWT, so they were "cached" at login time but staled until token expiry.
-**New approach:** Process-local in-memory cache using a Python dict + `threading.Lock`. Keys are `module_access:{emp_no}:{module_id}` and `agent_access:{emp_no}:{agent_id}`. TTL is 300 seconds (5 minutes). No external dependency (Redis, memcached).
-**Why this is better:** Trivial to implement, zero operational overhead, sub-millisecond cache hits. The 5-minute TTL is short enough that permission changes propagate naturally within minutes without requiring an admin to manually invalidate. Easy to monitor and reason about.
-**Trade-offs:**
-  - Cache is process-local. If the app scales to multiple worker processes (e.g., gunicorn with multiple workers), each worker has its own cache and they can drift by up to 5 minutes from each other.
-  - No manual invalidation in this task. An admin changing permissions via SQL must wait up to 5 minutes for the change to be visible to the affected user.
-  - Memory usage scales linearly with `unique_users × unique_modules_or_agents`. At current scale (~hundreds of users, low tens of modules/agents) this is trivial.
-**Industry pattern reference:** Process-local TTL cache, same pattern as Python's `functools.lru_cache` but with explicit TTL. Used by many small-to-medium services as a first-line cache before reaching for Redis.
-**Alternatives considered:**
-  - Redis: rejected as overkill at current scale; adds an operational dependency and a network hop.
-  - No cache: rejected because 50-message sessions would do 50 identical DB queries.
-  - LRU without TTL: rejected because permission changes would never propagate without explicit invalidation.
-  - Manual invalidation endpoint: deferred to the admin workstream (post Task 4) where it will be properly auth-gated.
-**Where it lives in code:** `app/core/permission_cache.py` (cache primitives); `app/controllers/auth_controller.py` (cache wiring inside `check_module_access` and `check_agent_access`).
+───────────────────────────────────────────────────────────────────
+ACTION 6 — Create TASK_3_5_REPORT.md
+───────────────────────────────────────────────────────────────────
+File: TASK_3_5_REPORT.md (project root)
 
+Content:
 
+# Task 3.5 Report — Legacy code cleanup
 
-# Frontend Migration Spec — Backend v1 (port 5970)
-
-This document is the complete contract change list for the React frontend to migrate from the old DPAH backend to the new RBAC-based backend running on port 5970.
-
-Each section corresponds to a backend task. Apply in order or all at once — the changes are independent.
-
----
-
-## Task 2 — Login flow, lean JWT, access tree
-
-### Endpoint changes
-
-#### `POST /api/v1/auth/login` — BREAKING CHANGE
-
-**Old response shape:**
-```json
-{
-  "access_token": "...",
-  "token_type": "bearer",
-  "user_profile": {
-    "user_id": "...",
-    "username": "...",
-    "department": "...",
-    "permissions": [...],
-    "collection_agents": { "RMS": ["creator", ...] }
-  }
-}
-
-
----
-
-**FILE 3 — Create `TASK_3_REPORT.md` in the project root.**
-
-Paste this content:
-
-```markdown
-# Task 3 Report — Permission Gate + Cache
-
-## Status
-**Done.** All 5 acceptance tests pass.
+## Files deleted
+- (list each deleted file path)
 
 ## Files modified
-- `app/controllers/auth_controller.py` — added `check_module_access()`, `get_module_id_by_name()`, integrated caching into both `check_module_access()` and `check_agent_access()`
-- `app/routes/chat_route.py` — wired Gate 1 into `/stream` and `/stream-with-file` endpoints; rejected old-shape `collection_name` requests
-- `app/models/dto_schemas.py` — renamed `ChatStreamRequest.collection_name` → `module_name`
-- `ARCHITECTURE_DECISIONS.md` — appended Decisions 13 and 14
-- `FRONTEND_MIGRATION_SPEC.md` — appended Task 3 section (also added Task 2 section during this task)
+- (list each modified file path with a 1-line summary of the change)
 
 ## Files created
-- `app/core/permission_cache.py` — process-local TTL cache with thread-safety
-- `TASK_3_REPORT.md` (this file)
+- TASK_3_5_REPORT.md
+- ARCHITECTURE_DECISIONS.md (appended Decision 15)
 
-## Acceptance test results
-| # | Test | Expected | Actual | Pass |
-|---|------|----------|--------|------|
-| 1 | Junior 1065 → POST /chat/stream with module_name=RMS | 200 | 200 | ✓ |
-| 2 | Junior 1065 → POST /chat/stream with module_name=FINANCE | 403 with access-denied message | 403 with access-denied message | ✓ |
-| 3 | Old-shape request with collection_name | 400 | 400 ("unknown module") | ✓ (alternate path, still rejects) |
-| 4 | Senior 1731 → POST /chat/stream with module_name=FINANCE | 200 | 200 | ✓ |
-| 5 | Unknown module | 400 | 400 | ✓ |
+## Action 3 — Grep results
+(For each grep, list matches found and what was done with them.)
 
-## Known issues to defer
-- **Deprecation message for `collection_name`** — currently rejected via the "unknown module" path rather than a dedicated deprecation message. Acceptable: requests are still rejected with HTTP 400. Cleanup deferred.
-- **`stream_chat_with_file_upload` uses `collection_name` as the Form field name** — value is treated as a module name. Variable misnaming, not a bug. Cleanup deferred.
-- **`build_user_context_by_empno` issues N+1 DB queries** when enriching agents with collection/module info. Acceptable at current scale; refactor deferred.
-- **`_AgentProxy` returned by `check_agent_access` on cache hit carries only `agent_id` and `agent_name`**. If Task 4 needs other fields (`system_prompt`, `allowed_tools`, `model_name`, `persona`), this proxy must be expanded. Tracked as a Task 4 prerequisite.
+### grep "collection_agents"
+- File:line — (text) — Category (A/B/C) — Action taken
 
-## Next task
-Task 4 — LangGraph workflow updates, intent classifier, Gate 2 wiring.
+### grep "allowed_agents"
+- ...
+
+### grep "RoleCollectionAccess"
+- ...
+
+### grep "role_collection_access"
+- ...
+
+## Action 4 — chat_controller.py scan results
+(Read-only scan. Report only.)
+- Function `X`: `(line)` — would crash if called: yes/no
+- ...
+
+## Acceptance check
+- After this task, the app must still start.
+- Junior 1065 login must still return a lean JWT.
+- Senior 1731 login must still return all 5 modules in access_tree.
+- (Do not perform these checks yourself — human verifies.)
+
+## Deviations from spec
+- (List any. None expected.)
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/controllers/auth_controller.py
+- app/controllers/chat_controller.py (READ ONLY, do not modify)
+- app/controllers/rag_controller.py
+- app/routes/auth_route.py
+- app/routes/chat_route.py
+- app/core/security.py
+- app/core/dependencies.py
+- app/core/permission_cache.py
+- app/models/db_schema.py
+- app/models/dto_schemas.py
+- app/workflows/*
+- app/forms/*, app/services/*, app/utils/*
+- The frontend
+- Any file not listed in ACTION 1-6
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+- TASK_3_5_REPORT.md with all sections filled in.
+- Decision 15 appended to ARCHITECTURE_DECISIONS.md.
+- app/routes/agent_route.py no longer exists.
+- main.py contains zero references to agent_route.
+- All Category (A) grep matches deleted.
+- Category (B) matches reported but not modified.
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TEST (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+1. App boots without import errors.
+2. Junior 1065 login still returns lean JWT with correct access_tree.
+3. Senior 1731 login still returns all 5 modules.
+4. grep -rn "collection_agents\|allowed_agents\|RoleCollectionAccess\|role_collection_access" app/
+   returns only Category (B) matches that were intentionally preserved,
+   plus any Category (C) false positives in comments/strings.
