@@ -1,4 +1,20 @@
-SELECT Emp_no, Name, Email, Department, GroupIDx, IsActive,
-       Grade, GradeID, ReportingToID, tslevel, level01, level02, level03
-FROM resources
-WHERE Emp_no = '2052';
+# Emp_no, Name, Email, Department, GroupIDx, IsActive, Grade, GradeID, ReportingToID, tslevel, level01, level02, level03
+'2052', 'Vignesh Raja p', 'vignesh.panner@mycompany.co.in', 'SDG', '1', '0', 'E2', '50', '1065', '0', '0', '0', '1'
+
+# Emp_no, Name, Email, Department, GroupIDx, IsActive, Grade, GradeID, ReportingToID, tslevel, level01, level02, level03
+'1731', 'Imthiyas M', 'imthiyas.majith@mycompany.co.in', 'HDD', '3', '1', 'E2', '50', '801', '0', '0', '0', '1'
+
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNzMxIiwidXNlcl9pZCI6IjE3MzEiLCJyb2xlIjoiU2VuaW9yIiwidHlwZSI6ImFjY2VzcyIsIm5hbWUiOiJJbXRoaXlhcyBNIiwiZW1haWwiOiJpbXRoaXlhcy5tYWppdGhAZGF0YXBhdHRlcm5zLmNvLmluIiwiZGVwdCI6IkhERCIsInJvbGVzIjpbIlNlbmlvciJdLCJoaWVyYXJjaHkiOnsiZ3JhZGUiOiJFMiIsImdyYWRlX2lkIjo1MCwicmVwb3J0aW5nX3RvIjoiODAxIiwibDEiOjAsImwyIjowLCJsMyI6MSwidHNsZXZlbCI6MH0sImFsbG93ZWRfYWdlbnRzIjpbXSwiY29sbGVjdGlvbnMiOltdLCJjb2xsZWN0aW9uX2FnZW50cyI6e30sImV4cCI6MTc3OTI5ODcxNH0.gatJT32kSGX7_PRA1AlAz0B-htoM9A56Nexcia9b2Vc",
+    "token_type": "bearer",
+    "user_profile": {
+        "user_id": "1731",
+        "username": "1731",
+        "name": "Imthiyas M",
+        "email": "imthiyas.majith@mycompany.co.in",
+        "department": null,
+        "permissions": [],
+        "collection_agents": {}
+    }
+}
+
