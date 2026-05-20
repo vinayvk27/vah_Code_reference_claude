@@ -1,29 +1,66 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from app.core.security import decode_access_token
-from app.models.dto_schemas import CurrentUser
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
-
-
-def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
-    """
-    FastAPI dependency that extracts, decodes, and validates the Bearer token.
-    Returns a CurrentUser Pydantic model for type-safe access in route handlers.
-    """
-    payload = decode_access_token(token)
-    if not payload:
+if not current_user.get("collection_agents"):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No agent permissions associated with this user. Contact your administrator."
         )
-    return CurrentUser(
-        emp_no=payload["sub"],
-        group_idx=payload["group_idx"],
-        role_ids=payload["role_ids"],
-        role_names=payload["role_names"],
-        name=payload["name"],
-        email=payload["email"],
-        dept=payload["dept"],
-        hierarchy=payload["hierarchy"],
+
+    return StreamingResponse(
+        sse_generator_with_orchestrator(db, current_user, raw_token, request_data),
+        media_type="text/event-stream",
     )
+
+
+async def sse_generator_with_file(
+    db: Session,
+    current_user: dict,
+    raw_token: str,
+    request_data: dict,
+    uploaded_files: list
+) -> AsyncGenerator[str, None]:
+    try:
+        request_data["uploaded_files"] = uploaded_files
+        async for chunk in ChatController.stream_chat_with_file(
+            db, current_user, raw_token, request_data
+        ):
+            yield f"data: {chunk}\n\n"
+        yield "data: [DONE]\n\n"
+    except PermissionError as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': f'Server error: {str(e)}'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+@router.post(
+    "/stream-with-file",
+    summary="Stream chat with file upload"
+)
+async def stream_chat_with_file_upload(
+    collection_name: Annotated[str, Form(...)],
+    message: Annotated[str, Form(...)],
+    files: Annotated[list[UploadFile], File(...)],
+    chat_history: Annotated[Optional[str], Form()] = None,
+    thread_id: Annotated[Optional[str], Form()] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    raw_token: str = Depends(oauth2_scheme)
+):
+    if not files or len(files) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file must be uploaded."
+        )
+
+    request_data = {
+        "collection_name": collection_name,
+        "message": message,
+        "chat_history": json.loads(chat_history) if chat_history else [],
+        "thread_id": thread_id,
+    }
+
+    if not current_user.get("collection_agents"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No agent permissions associated with this user."
+        )
