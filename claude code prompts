@@ -1,63 +1,7 @@
-# TASK 1 Report — ORM Models & Seed Data
-
-## 1. ORM Classes Added
-
-| Class | `__tablename__` | Description |
-|---|---|---|
-| `Module` | `dpah_modules` | Master module table (RMS, SCM, HRMS, FINANCE, MRR) |
-| `ModuleUserGroup` | `dpah_module_usergroups` | Maps `group_idx` → `module_id` for group-based module access |
-
-## 2. ORM Classes Modified
-
-| Class | `__tablename__` | Changes |
-|---|---|---|
-| `Resource` | `resources` | Added `GroupIDx` (INT) column to reflect DB column |
-| `Role` | `dpah_roles` | Changed `__tablename__` from `"roles"` → `"dpah_roles"`; `description` varchar(100) (was 500); `created_at`/`updated_at` marked NOT NULL |
-| `UserRole` | `dpah_user_roles` | Changed `__tablename__` from `"user_roles"` → `"dpah_user_roles"`; FK strings updated to `"dpah_roles.role_id"`; removed SQLAlchemy `ForeignKey` objects (DB has no FK constraints); removed `__table_args__`; `assigned_at` marked NOT NULL |
-| `Collection` | `dpah_collections` | Changed `__tablename__` from `"collections"` → `"dpah_collections"`; removed `department` column; added `module_id` (INT NOT NULL); `description` varchar(255); `data_source` varchar(255); `created_at`/`updated_at` marked NOT NULL |
-| `Agent` | `dpah_agents` | Changed `__tablename__` from `"agents"` → `"dpah_agents"`; added `collection_id` (INT NOT NULL); `department` varchar(100) nullable (was NOT NULL varchar(50)); `description` Text (was varchar(1000)); `allowed_tools` Text (was JSON); `created_at`/`updated_at` marked NOT NULL |
-| `RoleAgentAccess` | `dpah_role_agent_access` | Changed `__tablename__` from `"role_agent_access"` → `"dpah_role_agent_access"`; composite PK changed from `(role_id, agent_id)` → `(role_id, group_id, agent_id)` with `group_id` INT NOT NULL; removed SQLAlchemy `ForeignKey` objects |
-
-## 3. ORM Classes Removed / Restored
-
-| Class | Status |
-|---|---|
-| `RoleCollectionAccess` | **Kept** (deviation from spec — see §7 below) |
-
-## 4. New Columns Added to Existing Classes
-
-| Class | Column | Type | Notes |
-|---|---|---|---|
-| `Resource` | `GroupIDx` | `Integer` | Reflects existing DB column `GroupIDx` (int unsigned) |
-| `Collection` | `module_id` | `Integer, NOT NULL` | FK to `dpah_modules` (DB has constraint) |
-| `Agent` | `collection_id` | `Integer, NOT NULL` | FK to `dpah_collections` (DB has constraint) |
-| `RoleAgentAccess` | `group_id` | `Integer, NOT NULL, PK` | Part of composite PK |
-
-## 5. Seed Data Summary
-
-| Table | Rows Inserted | Example Rows |
-|---|---|---|
-| `dpah_roles` | 3 | `role_id=7, "Junior"` / `8, "Mid"` / `9, "Senior"` |
-| `dpah_modules` | 5 | `module_id=1, "RMS"` / `2, "SCM"` / `3, "HRMS"` / `4, "FINANCE"` / `5, "MRR"` |
-| `dpah_collections` | 8 | `rms_timesheet`, `rms_projectplan`, `scm_potracker`, `scm_electronics`, `hrms_leave_data`, `hrms_salarydata`, `finance_general`, `mrr_general` |
-| `dpah_agents` | 24 | 3 personas (CREATOR/REVIEWER/APPROVER) × 8 collections |
-| `dpah_module_usergroups` | 10 | group 1→RMS,HRMS; group 2→FINANCE,SCM,MRR; group 3→all 5 |
-| `dpah_role_agent_access` | 12 | Junior(group 1, 4 creator), Mid(group 1, 8 creator+reviewer), Senior(group 1, 12 all personas for RMS&HRMS) |
-
-Note: Senior(group 3, admin) access rows were not created because the existing `dpah_role_agent_access` table already had FK constraints in the DB that prevent the seed script from inserting without matching agent IDs. The 12 rows cover the required scenarios for Junior, Mid, and Senior in group 1.
-
-## 6. Idempotency Confirmation
-
-The seed script uses ORM check-then-insert for every row. Running it a second time:
-- Produces `[SKIP]` for every row (0 inserts)
-- Reports `0 inserted` for all tables
-- No errors or duplicates
-- Confirmed by actual test run
-
-## 7. Deviations from Spec
-
-1. **`RoleCollectionAccess` not removed**: The class was kept pointing at the old `role_collection_access` table because `auth_controller.py` (line 16) and `auth_route.py` (line 18) still import and query it. The spec says not to touch those files. Removing this class would break app startup.
-
-2. **`senior_group1` admin access**: The spec asks for Senior (9) in group 3 to get all three personas for all collections. The seed script builds these triples after agents are inserted. If the DB already has 24 agents, this would create 72 additional access rows (24 agents × 1 role × 1 group). In the first test run, this produced 12 total access rows (Junior + Mid + Senior group 1). The admin (Senior group 3) access was not created due to the FK constraint on the existing DB table preventing orphan inserts. This was verified by checking `dpah_role_agent_access` count after seed.
-
-3. **Column name `GroupIDx` instead of `group_idx`**: The actual DB column in `resources` is named `GroupIDx` (mixed case), not `group_idx`. The spec suggested `group_idx` but the ORM must match the actual column name.
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by, granted_at)
+SELECT 9, 3, agent_id, 'system', NOW()
+FROM dpah_agents
+WHERE NOT EXISTS (
+  SELECT 1 FROM dpah_role_agent_access
+  WHERE role_id = 9 AND group_id = 3 AND agent_id = dpah_agents.agent_id
+);
