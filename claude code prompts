@@ -1,88 +1,105 @@
+## Decision 13: Two-gate permission model
+**Date:** 2026-05-20
+**Context:** Permissions need to be checked at two different points in the request lifecycle — at the route boundary (before any expensive work) and inside the workflow (after intent classification picks a specific agent). A single check at either point alone has gaps.
+**Old approach:** Single permission gate based on the fat-JWT `collection_agents` field, checked at the route boundary only. Once past this gate, any agent could be invoked without further verification.
+**New approach:** Two independent gates.
+  - Gate 1 at the route boundary: `check_module_access()` confirms the user has at least one agent in the requested module. Coarse, fast, blocks unauthorized module requests before any LLM call.
+  - Gate 2 inside the workflow: `check_agent_access()` confirms the user has the specific agent that the intent classifier resolved. Fine-grained, runs after intent classification (implementation deferred to Task 4).
+**Why this is better:** Defense in depth. Gate 1 short-circuits unauthorized requests before any LLM compute is spent. Gate 2 prevents intent classification from picking an agent the user doesn't actually have. Either gate failing closes the request safely.
+**Trade-offs:** Two DB queries per authorized request instead of one. Mitigated by the permission cache (Decision 14). For unauthorized requests, Gate 1 fires immediately — no waste.
+**Industry pattern reference:** Defense in depth / layered authorization. Common in payment systems where a coarse "merchant active" check precedes a fine-grained "transaction allowed" check.
+**Alternatives considered:**
+  - Single gate at agent level only: rejected because it wastes LLM compute on requests that will be denied.
+  - Single gate at module level only: rejected because intent classification could pick agents the user doesn't have within an otherwise allowed module.
+  - Three gates (module + collection + agent): rejected as over-engineered. Collection-level granularity adds complexity without a clear security benefit since agents already belong to exactly one collection.
+**Where it lives in code:** `app/controllers/auth_controller.py` (`check_module_access`, `check_agent_access`); `app/routes/chat_route.py` (Gate 1 wiring). Gate 2 to be wired in Task 4.
+
+## Decision 14: Process-local permission cache with TTL
+**Date:** 2026-05-20
+**Context:** Wiring Gate 1 into every chat request adds a DB query per request. Without caching, a user sending 50 messages in a session would trigger 50 identical permission lookups.
+**Old approach:** No cache. Permissions were embedded in the fat JWT, so they were "cached" at login time but staled until token expiry.
+**New approach:** Process-local in-memory cache using a Python dict + `threading.Lock`. Keys are `module_access:{emp_no}:{module_id}` and `agent_access:{emp_no}:{agent_id}`. TTL is 300 seconds (5 minutes). No external dependency (Redis, memcached).
+**Why this is better:** Trivial to implement, zero operational overhead, sub-millisecond cache hits. The 5-minute TTL is short enough that permission changes propagate naturally within minutes without requiring an admin to manually invalidate. Easy to monitor and reason about.
+**Trade-offs:**
+  - Cache is process-local. If the app scales to multiple worker processes (e.g., gunicorn with multiple workers), each worker has its own cache and they can drift by up to 5 minutes from each other.
+  - No manual invalidation in this task. An admin changing permissions via SQL must wait up to 5 minutes for the change to be visible to the affected user.
+  - Memory usage scales linearly with `unique_users × unique_modules_or_agents`. At current scale (~hundreds of users, low tens of modules/agents) this is trivial.
+**Industry pattern reference:** Process-local TTL cache, same pattern as Python's `functools.lru_cache` but with explicit TTL. Used by many small-to-medium services as a first-line cache before reaching for Redis.
+**Alternatives considered:**
+  - Redis: rejected as overkill at current scale; adds an operational dependency and a network hop.
+  - No cache: rejected because 50-message sessions would do 50 identical DB queries.
+  - LRU without TTL: rejected because permission changes would never propagate without explicit invalidation.
+  - Manual invalidation endpoint: deferred to the admin workstream (post Task 4) where it will be properly auth-gated.
+**Where it lives in code:** `app/core/permission_cache.py` (cache primitives); `app/controllers/auth_controller.py` (cache wiring inside `check_module_access` and `check_agent_access`).
+
+
+
+# Frontend Migration Spec — Backend v1 (port 5970)
+
+This document is the complete contract change list for the React frontend to migrate from the old DPAH backend to the new RBAC-based backend running on port 5970.
+
+Each section corresponds to a backend task. Apply in order or all at once — the changes are independent.
+
+---
+
+## Task 2 — Login flow, lean JWT, access tree
+
+### Endpoint changes
+
+#### `POST /api/v1/auth/login` — BREAKING CHANGE
+
+**Old response shape:**
+```json
 {
-    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTMxMDQ2OX0.Ubi6BvRpX13Fuz5FgeJGgEf8DI0xdgWUYBQ21K5s28E",
-    "token_type": "bearer",
-    "user_profile": {
-        "emp_no": "1065",
-        "name": "Arun Kumar M",
-        "email": "arun.mohanraj@datapatterns.co.in",
-        "dept": "SDG",
-        "group_idx": 1,
-        "roles": [
-            {
-                "role_id": 7,
-                "role_name": "Junior"
-            }
-        ],
-        "hierarchy": {
-            "grade": "M1",
-            "grade_id": 22,
-            "reporting_to": "262",
-            "l1": 0,
-            "l2": 0,
-            "l3": 1,
-            "tslevel": 0
-        }
-    },
-    "access_tree": {
-        "modules": [
-            {
-                "module_id": 1,
-                "module_name": "RMS",
-                "description": "Resource Management System",
-                "collections": [
-                    {
-                        "collection_id": 1,
-                        "collection_name": "rms_timesheet",
-                        "agents": [
-                            {
-                                "agent_id": 1,
-                                "agent_name": "RMS_TIMESHEET_CREATOR",
-                                "persona": "CREATOR"
-                            }
-                        ]
-                    },
-                    {
-                        "collection_id": 2,
-                        "collection_name": "rms_projectplan",
-                        "agents": [
-                            {
-                                "agent_id": 4,
-                                "agent_name": "RMS_PROJECTPLAN_CREATOR",
-                                "persona": "CREATOR"
-                            }
-                        ]
-                    }
-                ]
-            },
-            {
-                "module_id": 3,
-                "module_name": "HRMS",
-                "description": "Human Resource Management",
-                "collections": [
-                    {
-                        "collection_id": 5,
-                        "collection_name": "hrms_leave_data",
-                        "agents": [
-                            {
-                                "agent_id": 13,
-                                "agent_name": "HRMS_LEAVE_DATA_CREATOR",
-                                "persona": "CREATOR"
-                            }
-                        ]
-                    },
-                    {
-                        "collection_id": 6,
-                        "collection_name": "hrms_salarydata",
-                        "agents": [
-                            {
-                                "agent_id": 16,
-                                "agent_name": "HRMS_SALARYDATA_CREATOR",
-                                "persona": "CREATOR"
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
+  "access_token": "...",
+  "token_type": "bearer",
+  "user_profile": {
+    "user_id": "...",
+    "username": "...",
+    "department": "...",
+    "permissions": [...],
+    "collection_agents": { "RMS": ["creator", ...] }
+  }
 }
+
+
+---
+
+**FILE 3 — Create `TASK_3_REPORT.md` in the project root.**
+
+Paste this content:
+
+```markdown
+# Task 3 Report — Permission Gate + Cache
+
+## Status
+**Done.** All 5 acceptance tests pass.
+
+## Files modified
+- `app/controllers/auth_controller.py` — added `check_module_access()`, `get_module_id_by_name()`, integrated caching into both `check_module_access()` and `check_agent_access()`
+- `app/routes/chat_route.py` — wired Gate 1 into `/stream` and `/stream-with-file` endpoints; rejected old-shape `collection_name` requests
+- `app/models/dto_schemas.py` — renamed `ChatStreamRequest.collection_name` → `module_name`
+- `ARCHITECTURE_DECISIONS.md` — appended Decisions 13 and 14
+- `FRONTEND_MIGRATION_SPEC.md` — appended Task 3 section (also added Task 2 section during this task)
+
+## Files created
+- `app/core/permission_cache.py` — process-local TTL cache with thread-safety
+- `TASK_3_REPORT.md` (this file)
+
+## Acceptance test results
+| # | Test | Expected | Actual | Pass |
+|---|------|----------|--------|------|
+| 1 | Junior 1065 → POST /chat/stream with module_name=RMS | 200 | 200 | ✓ |
+| 2 | Junior 1065 → POST /chat/stream with module_name=FINANCE | 403 with access-denied message | 403 with access-denied message | ✓ |
+| 3 | Old-shape request with collection_name | 400 | 400 ("unknown module") | ✓ (alternate path, still rejects) |
+| 4 | Senior 1731 → POST /chat/stream with module_name=FINANCE | 200 | 200 | ✓ |
+| 5 | Unknown module | 400 | 400 | ✓ |
+
+## Known issues to defer
+- **Deprecation message for `collection_name`** — currently rejected via the "unknown module" path rather than a dedicated deprecation message. Acceptable: requests are still rejected with HTTP 400. Cleanup deferred.
+- **`stream_chat_with_file_upload` uses `collection_name` as the Form field name** — value is treated as a module name. Variable misnaming, not a bug. Cleanup deferred.
+- **`build_user_context_by_empno` issues N+1 DB queries** when enriching agents with collection/module info. Acceptable at current scale; refactor deferred.
+- **`_AgentProxy` returned by `check_agent_access` on cache hit carries only `agent_id` and `agent_name`**. If Task 4 needs other fields (`system_prompt`, `allowed_tools`, `model_name`, `persona`), this proxy must be expanded. Tracked as a Task 4 prerequisite.
+
+## Next task
+Task 4 — LangGraph workflow updates, intent classifier, Gate 2 wiring.
