@@ -1,8 +1,333 @@
-SELECT r.Emp_no, r.Name, r.Department, r.GroupIDx, r.IsActive,
-       ur.role_id, dr.role_name
-FROM resources r
-JOIN dpah_user_roles ur ON ur.emp_id = r.Emp_no AND ur.is_active = 1
-JOIN dpah_roles dr ON dr.role_id = ur.role_id
-WHERE r.IsActive = 1
-ORDER BY ur.role_id, r.Emp_no
-LIMIT 20;
+{
+  "username": "1065",
+  "password": "SDG"
+}
+
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTMwNDU0Mn0.T7nbHTc28AjsJPdTrEExAgR0lXInp_qosQD2fd11PiU",
+    "token_type": "bearer",
+    "user_profile": {
+        "emp_no": "1065",
+        "name": "Arun Kumar M",
+        "email": "arun.mohanraj@mycompany.co.in",
+        "dept": "SDG",
+        "group_idx": 1,
+        "roles": [
+            {
+                "role_id": 7,
+                "role_name": "Junior"
+            }
+        ],
+        "hierarchy": {
+            "grade": "M1",
+            "grade_id": 22,
+            "reporting_to": "262",
+            "l1": 0,
+            "l2": 0,
+            "l3": 1,
+            "tslevel": 0
+        }
+    },
+    "access_tree": {
+        "modules": [
+            {
+                "module_id": 1,
+                "module_name": "RMS",
+                "description": "Resource Management System",
+                "collections": [
+                    {
+                        "collection_id": 1,
+                        "collection_name": "rms_timesheet",
+                        "agents": [
+                            {
+                                "agent_id": 1,
+                                "agent_name": "RMS_TIMESHEET_CREATOR",
+                                "persona": "CREATOR"
+                            }
+                        ]
+                    },
+                    {
+                        "collection_id": 2,
+                        "collection_name": "rms_projectplan",
+                        "agents": [
+                            {
+                                "agent_id": 4,
+                                "agent_name": "RMS_PROJECTPLAN_CREATOR",
+                                "persona": "CREATOR"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "module_id": 3,
+                "module_name": "HRMS",
+                "description": "Human Resource Management",
+                "collections": [
+                    {
+                        "collection_id": 5,
+                        "collection_name": "hrms_leave_data",
+                        "agents": [
+                            {
+                                "agent_id": 13,
+                                "agent_name": "HRMS_LEAVE_DATA_CREATOR",
+                                "persona": "CREATOR"
+                            }
+                        ]
+                    },
+                    {
+                        "collection_id": 6,
+                        "collection_name": "hrms_salarydata",
+                        "agents": [
+                            {
+                                "agent_id": 16,
+                                "agent_name": "HRMS_SALARYDATA_CREATOR",
+                                "persona": "CREATOR"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}
+
+
+{
+  "username": "1731",
+  "password": "HDD"
+}
+
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNzMxIiwidXNlcl9pZCI6IjE3MzEiLCJuYW1lIjoiSW10aGl5YXMgTSIsImVtYWlsIjoiaW10aGl5YXMubWFqaXRoQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJIREQiLCJncm91cF9pZHgiOjMsInJvbGVfaWRzIjpbOV0sInJvbGVfbmFtZXMiOlsiU2VuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6IkUyIiwiZ3JhZGVfaWQiOjUwLCJyZXBvcnRpbmdfdG8iOiI4MDEiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTMwNDYwMn0.7RSeiZqdsXWKOmzAT3Uz4U14CjCwHf9NKz4aTTn_Ios",
+    "token_type": "bearer",
+    "user_profile": {
+        "emp_no": "1731",
+        "name": "Imthiyas M",
+        "email": "imthiyas.majith@mycompany.co.in",
+        "dept": "HDD",
+        "group_idx": 3,
+        "roles": [
+            {
+                "role_id": 9,
+                "role_name": "Senior"
+            }
+        ],
+        "hierarchy": {
+            "grade": "E2",
+            "grade_id": 50,
+            "reporting_to": "801",
+            "l1": 0,
+            "l2": 0,
+            "l3": 1,
+            "tslevel": 0
+        }
+    },
+    "access_tree": {
+        "modules": [
+            {
+                "module_id": 1,
+                "module_name": "RMS",
+                "description": "Resource Management System",
+                "collections": [
+                    {
+                        "collection_id": 1,
+                        "collection_name": "rms_timesheet",
+                        "agents": [
+                            {
+                                "agent_id": 3,
+                                "agent_name": "RMS_TIMESHEET_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 1,
+                                "agent_name": "RMS_TIMESHEET_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 2,
+                                "agent_name": "RMS_TIMESHEET_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    },
+                    {
+                        "collection_id": 2,
+                        "collection_name": "rms_projectplan",
+                        "agents": [
+                            {
+                                "agent_id": 6,
+                                "agent_name": "RMS_PROJECTPLAN_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 4,
+                                "agent_name": "RMS_PROJECTPLAN_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 5,
+                                "agent_name": "RMS_PROJECTPLAN_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "module_id": 2,
+                "module_name": "SCM",
+                "description": "Supply Chain Management",
+                "collections": [
+                    {
+                        "collection_id": 3,
+                        "collection_name": "scm_potracker",
+                        "agents": [
+                            {
+                                "agent_id": 9,
+                                "agent_name": "SCM_POTRACKER_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 7,
+                                "agent_name": "SCM_POTRACKER_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 8,
+                                "agent_name": "SCM_POTRACKER_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    },
+                    {
+                        "collection_id": 4,
+                        "collection_name": "scm_electronics",
+                        "agents": [
+                            {
+                                "agent_id": 12,
+                                "agent_name": "SCM_ELECTRONICS_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 10,
+                                "agent_name": "SCM_ELECTRONICS_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 11,
+                                "agent_name": "SCM_ELECTRONICS_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "module_id": 3,
+                "module_name": "HRMS",
+                "description": "Human Resource Management",
+                "collections": [
+                    {
+                        "collection_id": 5,
+                        "collection_name": "hrms_leave_data",
+                        "agents": [
+                            {
+                                "agent_id": 15,
+                                "agent_name": "HRMS_LEAVE_DATA_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 13,
+                                "agent_name": "HRMS_LEAVE_DATA_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 14,
+                                "agent_name": "HRMS_LEAVE_DATA_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    },
+                    {
+                        "collection_id": 6,
+                        "collection_name": "hrms_salarydata",
+                        "agents": [
+                            {
+                                "agent_id": 18,
+                                "agent_name": "HRMS_SALARYDATA_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 16,
+                                "agent_name": "HRMS_SALARYDATA_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 17,
+                                "agent_name": "HRMS_SALARYDATA_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "module_id": 4,
+                "module_name": "FINANCE",
+                "description": "Finance",
+                "collections": [
+                    {
+                        "collection_id": 7,
+                        "collection_name": "finance_general",
+                        "agents": [
+                            {
+                                "agent_id": 21,
+                                "agent_name": "FINANCE_GENERAL_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 19,
+                                "agent_name": "FINANCE_GENERAL_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 20,
+                                "agent_name": "FINANCE_GENERAL_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "module_id": 5,
+                "module_name": "MRR",
+                "description": "Material Requisition",
+                "collections": [
+                    {
+                        "collection_id": 8,
+                        "collection_name": "mrr_general",
+                        "agents": [
+                            {
+                                "agent_id": 24,
+                                "agent_name": "MRR_GENERAL_APPROVER",
+                                "persona": "APPROVER"
+                            },
+                            {
+                                "agent_id": 22,
+                                "agent_name": "MRR_GENERAL_CREATOR",
+                                "persona": "CREATOR"
+                            },
+                            {
+                                "agent_id": 23,
+                                "agent_name": "MRR_GENERAL_REVIEWER",
+                                "persona": "REVIEWER"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}
