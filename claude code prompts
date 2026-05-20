@@ -1,7 +1,360 @@
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by, granted_at)
-SELECT 9, 3, agent_id, 'system', NOW()
-FROM dpah_agents
-WHERE NOT EXISTS (
-  SELECT 1 FROM dpah_role_agent_access
-  WHERE role_id = 9 AND group_id = 3 AND agent_id = dpah_agents.agent_id
-);
+═══════════════════════════════════════════════════════════════════
+TASK 2: Rewrite login flow for new RBAC schema (lean JWT + access tree)
+═══════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Task 1 updated the ORM models and seeded the new dpah_* tables.
+This task rewrites the login flow so that:
+
+  1. JWT becomes LEAN — carries identity only, no permissions.
+  2. Login response includes an `access_tree` (modules → collections
+     → agents) that the frontend caches in localStorage for UI
+     rendering.
+  3. Permissions are read live from the database on every protected
+     API call — not from the JWT.
+  4. The old fat-JWT fields (allowed_agents, collections,
+     collection_agents) are removed entirely.
+
+Authorization model recap:
+  - Identity (who you are) → JWT
+  - UI hint (what tiles to show) → localStorage access_tree
+  - Real authorization (what you can actually do) → DB lookup on
+    every protected endpoint
+
+Permission lookup path:
+  user (emp_no) → resources.GroupIDx → dpah_module_usergroups
+                                     → dpah_modules
+  user (emp_no) → dpah_user_roles    → dpah_roles
+  (role + group) → dpah_role_agent_access → dpah_agents
+                                          → dpah_collections
+                                          → dpah_modules
+
+Module-level visibility rule: STRICT INTERSECTION.
+  A module appears in the access_tree ONLY IF:
+    (a) the user's group_idx has the module in dpah_module_usergroups
+    AND
+    (b) the user has at least one agent in that module via
+        dpah_role_agent_access.
+  No "empty" modules in the tree.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. REWRITE app/controllers/auth_controller.py
+
+   1a. The function `build_user_context_by_empno(emp_no)` must be
+       rewritten to:
+       - Read the user's `GroupIDx` from `resources`.
+       - Read the user's active roles from `dpah_user_roles` joined
+         with `dpah_roles` (only is_active=1).
+       - Build the access_tree using the strict intersection rule:
+           STEP A: query dpah_module_usergroups for modules visible
+                   to user.GroupIDx (is_active=1).
+           STEP B: query dpah_role_agent_access for all agents the
+                   user can access where group_id = user.GroupIDx
+                   and role_id IN (user's role_ids).
+           STEP C: enrich each accessible agent with its
+                   collection (via collection_id) and module (via
+                   collections.module_id).
+           STEP D: build nested structure:
+                   modules[].collections[].agents[]
+           STEP E: filter so only modules appearing in BOTH STEP A
+                   AND the agent enrichment from STEP C are
+                   included.
+       - Parse persona from agent_name: split on "_", take last
+         segment, uppercase. Example: "RMS_TIMESHEET_CREATOR" →
+         "CREATOR".
+       - Return a dict shaped like:
+           {
+             "user_profile": {
+               "emp_no": str,
+               "name": str,
+               "email": str,
+               "dept": str,
+               "group_idx": int,
+               "roles": [{"role_id": int, "role_name": str}],
+               "hierarchy": {
+                 "grade": str, "grade_id": int,
+                 "reporting_to": str, "l1": str, "l2": str,
+                 "l3": str, "tslevel": str
+               }
+             },
+             "access_tree": {
+               "modules": [
+                 {
+                   "module_id": int,
+                   "module_name": str,
+                   "description": str,
+                   "collections": [
+                     {
+                       "collection_id": int,
+                       "collection_name": str,
+                       "agents": [
+                         {
+                           "agent_id": int,
+                           "agent_name": str,
+                           "persona": str   // CREATOR/REVIEWER/APPROVER
+                         }
+                       ]
+                     }
+                   ]
+                 }
+               ]
+             }
+           }
+
+   1b. REMOVE all references to `RoleCollectionAccess` from this file.
+       The class will be deleted from db_schema.py in step 5.
+
+   1c. Update `authenticate_dev_mode(emp_no, dept)` — keep its
+       existing behavior (look up emp_no + dept in `resources` with
+       no password check). It must still work; just ensure it feeds
+       into the new build_user_context_by_empno flow correctly.
+
+   1d. Update `authenticate_ldap(username, password)` — leave the
+       LDAP logic itself UNCHANGED. Only ensure that on success, it
+       returns user_info that the new build_user_context_by_empno
+       can consume.
+
+   1e. Add a new helper function:
+         check_agent_access(emp_no: str, group_idx: int,
+                            role_ids: list[int], agent_id: int,
+                            db: Session) -> Optional[Agent]
+       Returns the Agent ORM object if the user has access,
+       otherwise None. This function will be the single source of
+       truth for permission checks called from every protected
+       endpoint.
+
+       Implementation: single JOIN query:
+         SELECT a.* FROM dpah_agents a
+         JOIN dpah_role_agent_access raa
+           ON raa.agent_id = a.agent_id
+         WHERE a.agent_id = :agent_id
+           AND raa.group_id = :group_idx
+           AND raa.role_id IN :role_ids
+         LIMIT 1
+
+       Returns Agent ORM object or None. No caching yet — Task 3
+       will add caching.
+
+2. REWRITE app/core/security.py
+
+   2a. `create_access_token(data: dict)` — no signature change, but
+       the data dict passed in will now be SMALLER. The new JWT
+       payload is:
+         {
+           "sub": str (emp_no),
+           "user_id": str (emp_no — kept for backward compat),
+           "name": str,
+           "email": str,
+           "dept": str,
+           "group_idx": int,
+           "role_ids": list[int],
+           "role_names": list[str],
+           "hierarchy": {...},
+           "type": "access",
+           "exp": int,
+           "iat": int
+         }
+
+       Notably ABSENT from the JWT:
+         - allowed_agents
+         - collections
+         - collection_agents
+         - role (the old single-string role field)
+
+   2b. `decode_access_token(token)` — no logic change required.
+       Just make sure it returns the new lean payload as-is.
+
+   2c. Add a new dependency function:
+         get_current_user(token = Depends(oauth2_scheme))
+                          -> CurrentUser
+       This returns a Pydantic model `CurrentUser` (define in
+       dto_schemas.py) carrying emp_no, group_idx, role_ids, name,
+       email, dept, hierarchy. Used by every protected endpoint
+       going forward.
+
+3. UPDATE app/models/dto_schemas.py
+
+   3a. Add new Pydantic models:
+       - CurrentUser (used in dependencies):
+           emp_no: str
+           group_idx: int
+           role_ids: list[int]
+           role_names: list[str]
+           name: str
+           email: str
+           dept: str
+           hierarchy: dict
+       - AccessTreeAgent: agent_id, agent_name, persona
+       - AccessTreeCollection: collection_id, collection_name,
+                               agents: list[AccessTreeAgent]
+       - AccessTreeModule: module_id, module_name, description,
+                           collections: list[AccessTreeCollection]
+       - AccessTree: modules: list[AccessTreeModule]
+       - UserProfile: emp_no, name, email, dept, group_idx,
+                      roles (list of {role_id, role_name}),
+                      hierarchy
+       - LoginResponse: access_token, token_type, user_profile,
+                        access_tree
+
+   3b. REMOVE these old Pydantic models if they exist (search
+       first):
+       - Any model with fields named `collection_agents` or
+         `allowed_agents` representing the fat-JWT shape.
+       Document each removal in TASK_2_REPORT.md.
+
+4. UPDATE app/routes/auth_route.py
+
+   4a. `POST /api/v1/auth/login` — modify to return the new
+       LoginResponse shape (token + user_profile + access_tree).
+
+   4b. `GET /api/v1/auth/debug` (or similar debug endpoint) —
+       update to reflect the new schema. It should accept
+       Authorization header, decode the JWT, and return:
+         {
+           "jwt_payload": {decoded JWT contents},
+           "live_access_tree": {fresh access_tree from DB},
+           "permission_check_example": {result of a sample
+                                        check_agent_access call}
+         }
+       This helps debug "does my JWT match what the DB says I can
+       access right now."
+
+   4c. Add a new endpoint:
+       `GET /api/v1/auth/me/access` — returns a FRESH access_tree
+       from the DB for the currently authenticated user. The
+       frontend can call this to refresh localStorage if it
+       suspects staleness (e.g., after permissions were changed by
+       an admin). Uses get_current_user dependency.
+
+5. UPDATE app/models/db_schema.py
+
+   5a. REMOVE the `RoleCollectionAccess` ORM class. It is no longer
+       used anywhere after this task.
+
+6. CREATE / UPDATE ARCHITECTURE_DECISIONS.md (project root)
+
+   6a. Create this file (or update if Claude Code creates it
+       elsewhere — place it at project root).
+
+   6b. Seed it with 12 entries reflecting the decisions made so
+       far. Use this exact format for each entry:
+
+         ## Decision N: [Short title]
+         **Date:** 2026-05-20
+         **Context:** ...
+         **Old approach:** ...
+         **New approach:** ...
+         **Why this is better:** ...
+         **Trade-offs:** ...
+         **Industry pattern reference:** ...
+         **Where it lives in code:** ...
+
+   6c. The 12 decisions to document:
+       1.  Modules as a layer above collections
+       2.  Group vs. role: orthogonal dimensions
+       3.  Composite-key-as-access-control (no row = no access)
+       4.  Lean JWT vs. fat JWT
+       5.  localStorage access tree is cosmetic only
+       6.  DB-checked permissions with future caching
+       7.  Persona parsed from agent_name (no separate column)
+       8.  One workflow per module; collection chosen via intent
+       9.  Single LLM intent classifier returning collection +
+           persona
+       10. Same routes, different ports (no V2 versioning)
+       11. dpah_ prefix for new tables
+       12. Minimal-disturbance principle for refactoring
+
+       (Claude Code should write reasonable content for each based
+       on the surrounding task. If unsure on any, leave a TODO
+       marker and I'll fill it in during review.)
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/controllers/chat_controller.py
+- app/controllers/rag_controller.py
+- app/routes/chat_route.py
+- app/routes/agent_route.py
+- app/workflows/* (all LangGraph workflows — Task 4 onwards)
+- app/forms/*
+- app/services/*
+- app/utils/*
+- The check_agent_access function will be USED by chat_route in a
+  later task, but do NOT modify chat_route in this task.
+- Caching (Redis or in-memory) — Task 3.
+- The frontend (HTML/CSS/JS in frontend/) — but DO note all
+  frontend impacts in the report.
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/controllers/auth_controller.py  (current state)
+- app/core/security.py
+- app/models/db_schema.py              (post-Task-1 state)
+- app/models/dto_schemas.py
+- app/routes/auth_route.py
+- app/dao/database.py
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/controllers/auth_controller.py
+- app/core/security.py
+- app/models/dto_schemas.py
+- app/models/db_schema.py
+- app/routes/auth_route.py
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- ARCHITECTURE_DECISIONS.md   (project root)
+- TASK_2_REPORT.md            (project root)
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+TASK_2_REPORT.md must contain:
+  1. Summary of every function rewritten in auth_controller.py
+     (with before/after signatures where relevant).
+  2. Exact JWT payload shape (new) — listed field by field.
+  3. Exact /api/v1/auth/login response shape — example JSON.
+  4. Exact /api/v1/auth/me/access response shape — example JSON.
+  5. List of Pydantic models added.
+  6. List of Pydantic models removed (with reasons).
+  7. Confirmation that RoleCollectionAccess ORM class was removed.
+  8. The check_agent_access function signature and SQL query used.
+  9. Frontend impact section listing:
+       - Endpoint contract changes (old → new shapes).
+       - New endpoints introduced.
+       - localStorage key changes (old key removed / new key added).
+       - What the React developer must do to migrate.
+  10. Any deviations from this spec with reasons.
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TEST
+───────────────────────────────────────────────────────────────────
+After Claude Code finishes:
+  1. App starts via the VS Code run button on port 5970 with no
+     import errors.
+  2. POST /api/v1/auth/login with valid credentials returns the new
+     LoginResponse shape (token + user_profile + access_tree).
+  3. The returned access_token, when decoded, contains ONLY the
+     lean fields listed in section 2a. It must NOT contain
+     allowed_agents, collections, or collection_agents.
+  4. A seeded Junior user (group 1) sees ONLY RMS and HRMS modules
+     in their access_tree, each with only CREATOR personas.
+  5. A seeded Senior user (group 3) sees all 5 modules in their
+     access_tree, each with all 3 personas.
+  6. A user whose group has modules but no role_agent_access rows
+     for those modules sees an empty modules list (strict
+     intersection rule).
+  7. GET /api/v1/auth/me/access with a valid Bearer token returns
+     a fresh access_tree matching the DB state.
+  8. check_agent_access() returns the Agent ORM object for a
+     valid (user, agent) combo and None for an invalid one. (Quick
+     manual test or a one-off script in the report is fine.)
