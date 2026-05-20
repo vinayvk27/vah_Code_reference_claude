@@ -1,27 +1,8 @@
- @app.on_event("startup")
-INFO:     Started server process [36436]
-INFO:     Waiting for application startup.
-[Startup] RMS timesheet is now DB-backed - no pre-loading required
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
-INFO:     10.5.1.24:62721 - "OPTIONS /api/v1/auth/login HTTP/1.1" 200 OK
-INFO:     10.5.1.24:62721 - "POST /api/v1/auth/login HTTP/1.1" 500 Internal Server Error
-User context built for: 1065 (Arun Kumar M)
-
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3}
-  intersection_module_ids = {1, 3}
-  modules in access_tree = 2
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-    - HRMS: 2 collections
-        - hrms_leave_data: 1 agents
-        - hrms_salarydata: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.24:62728 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-INFO:     10.5.1.24:62728 - "OPTIONS /api/v1/me/capabilities HTTP/1.1" 200 OK
-INFO:     10.5.1.24:62728 - "GET /api/v1/me/capabilities HTTP/1.1" 404 Not Found
-INFO:     10.5.1.24:62728 - "GET /api/v1/me/capabilities HTTP/1.1" 404 Not Found
+SELECT r.Emp_no, r.Name, r.Department, r.GroupIDx, r.IsActive,
+       ur.role_id, dr.role_name
+FROM resources r
+JOIN dpah_user_roles ur ON ur.emp_id = r.Emp_no AND ur.is_active = 1
+JOIN dpah_roles dr ON dr.role_id = ur.role_id
+WHERE r.IsActive = 1
+ORDER BY ur.role_id, r.Emp_no
+LIMIT 20;
