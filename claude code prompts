@@ -1,20 +1,171 @@
-# 1. Confirm where get_current_user is actually defined
-findstr /S /N "def get_current_user" app\
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 1. Confirm where get_current_user is actually defined
+'#' is not recognized as an internal or external command,
+operable program or batch file.
 
-# 2. Confirm where oauth2_scheme is defined
-findstr /S /N "oauth2_scheme" app\
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>findstr /S /N "def get_current_user" app\
 
-# 3. Show the imports at the top of chat_route.py
-powershell "Get-Content app\routes\chat_route.py -TotalCount 25"
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 2. Confirm where oauth2_scheme is defined
+'#' is not recognized as an internal or external command,
+operable program or batch file.
 
-# 4. Show the imports at the top of auth_route.py
-powershell "Get-Content app\routes\auth_route.py -TotalCount 25"
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>findstr /S /N "oauth2_scheme" app\
 
-# 5. Show the full security.py file (it's small)
-type app\core\security.py
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 3. Show the imports at the top of chat_route.py
+'#' is not recognized as an internal or external command,
+operable program or batch file.
 
-# 6. Show the full dependencies.py file (if it exists)
-type app\core\dependencies.py
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>powershell "Get-Content app\routes\chat_route.py -TotalCount 25"
+# app/routes/chat_route.py
+"""
+Chat endpoints for streaming conversations, history, and thread management.
+"""
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, File, Form, UploadFile, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from typing import AsyncGenerator, Optional
+from datetime import datetime
+from typing_extensions import Annotated
 
-# 7. List everything in app/core
-dir app\core
+from app.dao.database import get_db
+from app.core.security import get_current_user, oauth2_scheme
+from app.controllers.chat_controller import ChatController
+from app.models.dto_schemas import (
+    ChatStreamRequest,
+    ChatHistoryResponse,
+    ThreadMessagesResponse,
+    ThreadInfo,
+    ChatMessage
+)
+
+# New imports for UI Tools
+from app.workflows.material_workflow.tools import search_projects, get_project_phases
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 4. Show the imports at the top of auth_route.py
+'#' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>powershell "Get-Content app\routes\auth_route.py -TotalCount 25"
+# app/routes/auth_route.py
+"""
+Authentication endpoints for user login and token issuance.
+
+AUTH_MODE is controlled by settings.AUTH_MODE (from environment variable):
+  'prod' (default) â€” use LDAP authentication
+  'dev'            â€” bypass LDAP, look up emp_no + dept in resources table
+"""
+from fastapi import APIRouter, HTTPException, status, Depends
+from sqlalchemy.orm import Session
+
+from app.dao.database import get_db
+from app.controllers.auth_controller import AuthController
+from app.core.config import settings
+from app.core.security import create_access_token
+from app.core.dependencies import get_current_user
+from app.core.security import decode_access_token
+from app.models.dto_schemas import CurrentUser
+from app.models.db_schema import (
+    Resource, UserRole, Role, Agent, RoleAgentAccess,
+)
+
+AUTH_MODE = settings.AUTH_MODE.lower()
+
+router = APIRouter()
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 5. Show the full security.py file (it's small)
+'#' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>type app\core\security.py
+# app/core/security.py
+import jwt
+from datetime import datetime, timedelta
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from app.core.config import settings
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+
+def create_access_token(data: dict) -> str:
+    """Create a lean JWT token (identity only, no permissions)."""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(
+        minutes=getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 120)
+    )
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict:
+    """Decode and validate a JWT token. Returns the payload dict."""
+    try:
+        return jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
+    except jwt.PyJWTError:
+        return {}
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 6. Show the full dependencies.py file (if it exists)
+'#' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>type app\core\dependencies.py
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from app.core.security import decode_access_token
+from app.models.dto_schemas import CurrentUser
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
+    """
+    FastAPI dependency that extracts, decodes, and validates the Bearer token.
+    Returns a CurrentUser Pydantic model for type-safe access in route handlers.
+    """
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    return CurrentUser(
+        emp_no=payload["sub"],
+        group_idx=payload["group_idx"],
+        role_ids=payload["role_ids"],
+        role_names=payload["role_names"],
+        name=payload["name"],
+        email=payload["email"],
+        dept=payload["dept"],
+        hierarchy=payload["hierarchy"],
+    )
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 7. List everything in app/core
+'#' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>dir app\core
+ Volume in drive D is New Volume
+ Volume Serial Number is AEC1-6055
+
+ Directory of D:\dev\agentic_ai\dpah_backend_v1\app\core
+
+05/20/2026  01:27 PM    <DIR>          .
+05/20/2026  01:27 PM    <DIR>          ..
+05/18/2026  07:12 PM             2,090 config.py
+05/20/2026  01:27 PM             1,033 dependencies.py
+04/27/2026  03:48 PM               499 llm.py
+05/20/2026  12:40 PM               983 security.py
+05/20/2026  01:29 PM    <DIR>          __pycache__
+               4 File(s)          4,605 bytes
+               3 Dir(s)   3,285,151,744 bytes free
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
