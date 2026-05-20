@@ -1,142 +1,478 @@
-D:\dev\agentic_ai\dpah_backend_v1>C:/ml_env_311/Scripts/activate.bat
+# app/controllers/auth_controller.py
+"""
+Authentication controller for DPAH.
 
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>git status
-fatal: detected dubious ownership in repository at 'D:/dev'
-'D:/dev' is owned by:
-        DATAPATTERNS/gokul.krishnan (S-1-5-21-886024257-3524979645-4143074072-11632)
-but the current user is:
-        DATAPATTERNS/vinay.neelam (S-1-5-21-886024257-3524979645-4143074072-12934)  
-To add an exception for this directory, call:
+AUTH_MODE controls authentication mode:
+  'prod' (default) — use LDAP authentication (current production behavior)
+  'dev'            — bypass LDAP, look up emp_no + dept in resources table
 
-        git config --global --add safe.directory D:/dev
+Set via environment variable: AUTH_MODE=dev
+CRITICAL: Before production deployment, verify AUTH_MODE is unset OR explicitly 'prod'.
+"""
+from ldap3 import Server, Connection, SUBTREE
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy import or_
+from typing import Optional, List
+from app.core.config import settings
+from app.models.db_schema import (
+    Resource, UserRole, Role, Agent,
+    Module, Collection, ModuleUserGroup, RoleAgentAccess,
+)
 
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>git diff --stat
-warning: Not a git repository. Use --no-index to compare two paths outside a working tree
-usage: git diff --no-index [<options>] <path> <path>
 
-Diff output format options
-    -p, --patch           generate patch
-    -s, --no-patch        suppress diff output
-    -u                    generate patch
-    -U, --unified[=<n>]   generate diffs with <n> lines context
-    -W, --[no-]function-context
-                          generate diffs with <n> lines context
-    --raw                 generate the diff in raw format
-    --patch-with-raw      synonym for '-p --raw'
-    --patch-with-stat     synonym for '-p --stat'
-    --numstat             machine friendly --stat
-    --shortstat           output only the last line of --stat
-    -X, --dirstat[=<param1>,<param2>...]
-                          output the distribution of relative amount of changes for each sub-directory
-    --cumulative          synonym for --dirstat=cumulative
-    --dirstat-by-file[=<param1>,<param2>...]
-                          synonym for --dirstat=files,<param1>,<param2>...
-    --check               warn if changes introduce conflict markers or whitespace errors
-    --summary             condensed summary such as creations, renames and mode changes
-    --name-only           show only names of changed files
-    --name-status         show only names and status of changed files
-    --stat[=<width>[,<name-width>[,<count>]]]
-                          generate diffstat
-    --stat-width <width>  generate diffstat with a given width
-    --stat-name-width <width>
-                          generate diffstat with a given name width
-    --stat-graph-width <width>
-                          generate diffstat with a given graph width
-    --stat-count <count>  generate diffstat with limited lines
-    --[no-]compact-summary
-                          generate compact summary in diffstat
-    --binary              output a binary diff that can be applied
-    --[no-]full-index     show full pre- and post-image object names on the "index" lines
-    --[no-]color[=<when>] show colored diff
-    --ws-error-highlight <kind>
-                          highlight whitespace errors in the 'context', 'old' or 'new' lines in the diff
-    -z                    do not munge pathnames and use NULs as output field terminators in --raw or --numstat
-    --[no-]abbrev[=<n>]   use <n> digits to display object names
-    --src-prefix <prefix> show the given source prefix instead of "a/"
-    --dst-prefix <prefix> show the given destination prefix instead of "b/"
-    --line-prefix <prefix>
-                          prepend an additional prefix to every line of output
-    --no-prefix           do not show any source or destination prefix
-    --default-prefix      use default prefixes a/ and b/
-    --inter-hunk-context <n>
-                          show context between diff hunks up to the specified number of lines
-    --output-indicator-new <char>
-                          specify the character to indicate a new line instead of '+'
-    --output-indicator-old <char>
-                          specify the character to indicate an old line instead of '-'
-    --output-indicator-context <char>
-                          specify the character to indicate a context instead of ' '
+@staticmethod
+    def check_module_access(
+        emp_no: str,
+        group_idx: int,
+        role_ids: List[int],
+        module_id: int,
+        db: Session,
+    ) -> bool:
+        """
+        Gate 1: Does the user have access to any agent in this module?
 
-Diff rename options
-    -B, --break-rewrites[=<n>[/<m>]]
-                          break complete rewrite changes into pairs of delete and create
-    -M, --find-renames[=<n>]
-                          detect renames
-    -D, --irreversible-delete
-                          omit the preimage for deletes
-    -C, --find-copies[=<n>]
-                          detect copies
-    --[no-]find-copies-harder
-                          use unmodified files as source to find copies
-    --no-renames          disable rename detection
-    --[no-]rename-empty   use empty blobs as rename source
-    --[no-]follow         continue listing the history of a file beyond renames
-    -l <n>                prevent rename/copy detection if the number of rename/copy targets exceeds given limit
+        Caches the result in process-local permission cache (5-min TTL).
+        """
+        from app.core.permission_cache import cache_get, cache_set
 
-Diff algorithm options
-    --minimal             produce the smallest possible diff
-    -w, --ignore-all-space
-                          ignore whitespace when comparing lines
-    -b, --ignore-space-change
-                          ignore changes in amount of whitespace
-    --ignore-space-at-eol ignore changes in whitespace at EOL
-    --ignore-cr-at-eol    ignore carrier-return at the end of line
-    --ignore-blank-lines  ignore changes whose lines are all blank
-    -I, --[no-]ignore-matching-lines <regex>
-                          ignore changes whose all lines match <regex>
-    --[no-]indent-heuristic
-                          heuristic to shift diff hunk boundaries for easy reading
-    --patience            generate diff using the "patience diff" algorithm
-    --histogram           generate diff using the "histogram diff" algorithm
-    --diff-algorithm <algorithm>
-                          choose a diff algorithm
-    --anchored <text>     generate diff using the "anchored diff" algorithm
-    --word-diff[=<mode>]  show word diff, using <mode> to delimit changed words
-    --word-diff-regex <regex>
-                          use <regex> to decide what a word is
-    --color-words[=<regex>]
-                          equivalent to --word-diff=color --word-diff-regex=<regex>
-    --[no-]color-moved[=<mode>]
-                          moved lines of code are colored differently
-    --[no-]color-moved-ws <mode>
-                          how white spaces are ignored in --color-moved
+        if not role_ids:
+            return False
 
-Other diff options
-    --[no-]relative[=<prefix>]
-                          when run from subdir, exclude changes outside and show relative paths
-    -a, --[no-]text       treat all files as text
-    -R                    swap two inputs, reverse the diff
-    --[no-]exit-code      exit with 1 if there were differences, 0 otherwise
-    --[no-]quiet          disable all output of the program
-    --[no-]ext-diff       allow an external diff helper to be executed
-    --[no-]textconv       run external text conversion filters when comparing binary files
-    --ignore-submodules[=<when>]
-                          ignore changes to submodules in the diff generation
-    --submodule[=<format>]
-                          specify how differences in submodules are shown
-    --ita-invisible-in-index
-                          hide 'git add -N' entries from the index
-    --ita-visible-in-index
-                          treat 'git add -N' entries as real in the index
-    -S <string>           look for differences that change the number of occurrences of the specified string
-    -G <regex>            look for differences that change the number of occurrences of the specified regex
-    --pickaxe-all         show all changes in the changeset with -S or -G
-    --pickaxe-regex       treat <string> in -S as extended POSIX regular expression
-    -O <file>             control the order in which files appear in the output
-    --rotate-to <path>    show the change in the specified path first
-    --skip-to <path>      skip the output to the specified path
-    --find-object <object-id>
-                          look for differences that change the number of occurrences of the specified object
-    --diff-filter [(A|C|D|M|R|T|U|X|B)...[*]]
-                          select files by diff type
-    --output <file>       output to a specific file
+        cache_key = f"module_access:{emp_no}:{module_id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return bool(cached)
+
+        result = bool(
+            db.query(RoleAgentAccess).join(
+                Agent, Agent.agent_id == RoleAgentAccess.agent_id
+            ).join(
+                Collection, Collection.collection_id == Agent.collection_id
+            ).filter(
+                RoleAgentAccess.group_id == group_idx,
+                RoleAgentAccess.role_id.in_(role_ids),
+                Collection.module_id == module_id,
+            ).count()
+            > 0
+        )
+        cache_set(cache_key, result, ttl_seconds=300)
+        return result
+
+
+@staticmethod
+    def check_agent_access(
+        emp_no: str, group_idx: int, role_ids: List[int], agent_id: int, db: Session
+    ) -> Optional[Agent]:
+        """
+        Check if a user has access to a specific agent.
+        Single JOIN query: dpah_agents JOIN dpah_role_agent_access.
+        Returns Agent ORM object or None.
+
+        Caching strategy: cache the Agent's primary fields as a plain dict.
+        On cache hit, reconstruct a minimal Agent-like object (just the fields
+        the downstream code uses: agent_id, agent_name, persona). This keeps
+        the return type stable (Agent or None) without touching the DB.
+        """
+        from app.core.permission_cache import cache_get, cache_set
+
+        if not role_ids:
+            return None
+
+        cache_key = f"agent_access:{emp_no}:{agent_id}"
+        cached = cache_get(cache_key)
+        if cached is not None:
+            # Cache hit — reconstruct an Agent-like object from cached dict
+            if cached is None:
+                return None
+            agent_dict = cached
+            # Build a minimal object with the fields downstream code expects
+            class _AgentProxy:
+                """Minimal agent shape matching what downstream code needs."""
+
+                def __init__(self, d):
+                    self.agent_id = d["agent_id"]
+                    self.agent_name = d["agent_name"]
+            return _AgentProxy(agent_dict)
+
+        result = db.query(Agent).join(
+            RoleAgentAccess, Agent.agent_id == RoleAgentAccess.agent_id
+        ).filter(
+            Agent.agent_id == agent_id,
+            RoleAgentAccess.group_id == group_idx,
+            RoleAgentAccess.role_id.in_(role_ids),
+        ).first()
+
+        if result is not None:
+            # Cache a plain dict of the fields we need (no ORM object)
+            cache_set(cache_key, {"agent_id": result.agent_id, "agent_name": result.agent_name}, ttl_seconds=300)
+        else:
+            cache_set(cache_key, None, ttl_seconds=300)
+
+        return result
+
+@staticmethod
+    def get_module_id_by_name(module_name: str, db: Session) -> Optional[int]:
+        """
+        Look up a module's ID by name (case-insensitive).
+        Returns the module_id or None if not found.
+        """
+        row = db.query(Module.module_id).filter(
+            func.lower(Module.module_name) == module_name.lower()
+        ).first()
+        return row[0] if row else None
+
+@staticmethod
+    def get_access_tree_for_empno(db: Session, emp_no: str) -> dict:
+        """
+        Build a fresh access_tree from DB for a given emp_no.
+        Used by the /me/access endpoint and the debug endpoint.
+        Calls build_user_context_by_empno and extracts access_tree.
+        """
+        result = AuthController.build_user_context_by_empno(db, emp_no)
+        if result.get("success"):
+            return result["access_tree"]
+        return {"modules": []}
+
+
+
+
+# app/routes/chat_route.py
+"""
+Chat endpoints for streaming conversations, history, and thread management.
+"""
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, File, Form, UploadFile, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from typing import AsyncGenerator, Optional
+from datetime import datetime
+from typing_extensions import Annotated
+
+from app.dao.database import get_db
+from app.core.dependencies import get_current_user, oauth2_scheme
+from app.controllers.auth_controller import AuthController
+from app.controllers.chat_controller import ChatController
+from app.models.dto_schemas import (
+    ChatStreamRequest,
+    ChatHistoryResponse,
+    ThreadMessagesResponse,
+    ThreadInfo,
+    ChatMessage,
+    CurrentUser,
+)
+
+# New imports for UI Tools
+from app.workflows.material_workflow.tools import search_projects, get_project_phases
+
+router = APIRouter()
+
+
+async def sse_generator_with_orchestrator(
+    db: Session,
+    current_user: dict,
+    raw_token: str,
+    request_data: dict
+) -> AsyncGenerator[str, None]:
+    try:
+        async for chunk in ChatController.stream_chat_with_orchestrator(
+            db, current_user, raw_token, request_data
+        ):
+            yield f"data: {chunk}\n\n"
+        yield "data: [DONE]\n\n"
+    except PermissionError as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': f'Server error: {str(e)}'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+@router.post(
+    "/stream",
+    summary="Stream chat messages from the agent"
+)
+async def stream_chat_message(
+    request: ChatStreamRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    raw_token: str = Depends(oauth2_scheme),
+):
+    request_data = request.model_dump()
+
+    # Reject old-shape requests containing "collection_name"
+    if "collection_name" in request_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'collection_name' is deprecated. Use 'module_name' instead. The chat request shape changed in Task 3 — see the Frontend Migration Spec for details."
+        )
+
+    # Gate 1: module-level permission check
+    module_name = request.module_name
+    module_id = AuthController.get_module_id_by_name(module_name, db)
+    if module_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown module: {module_name}"
+        )
+    if not AuthController.check_module_access(
+        current_user.emp_no,
+        current_user.group_idx,
+        current_user.role_ids,
+        module_id,
+        db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You do not have access to module '{module_name}'."
+        )
+
+    return StreamingResponse(
+        sse_generator_with_orchestrator(db, current_user.model_dump(), raw_token, request_data),
+        media_type="text/event-stream",
+    )
+
+
+async def sse_generator_with_file(
+    db: Session,
+    current_user: dict,
+    raw_token: str,
+    request_data: dict,
+    uploaded_files: list
+) -> AsyncGenerator[str, None]:
+    try:
+        request_data["uploaded_files"] = uploaded_files
+        async for chunk in ChatController.stream_chat_with_file(
+            db, current_user, raw_token, request_data
+        ):
+            yield f"data: {chunk}\n\n"
+        yield "data: [DONE]\n\n"
+    except PermissionError as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': f'Server error: {str(e)}'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+@router.post(
+    "/stream-with-file",
+    summary="Stream chat with file upload"
+)
+async def stream_chat_with_file_upload(
+    collection_name: Annotated[str, Form(...)],
+    message: Annotated[str, Form(...)],
+    files: Annotated[list[UploadFile], File(...)],
+    chat_history: Annotated[Optional[str], Form()] = None,
+    thread_id: Annotated[Optional[str], Form()] = None,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    raw_token: str = Depends(oauth2_scheme)
+):
+    if not files or len(files) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file must be uploaded."
+        )
+
+    request_data = {
+        "collection_name": collection_name,
+        "message": message,
+        "chat_history": json.loads(chat_history) if chat_history else [],
+        "thread_id": thread_id,
+    }
+
+    # Gate 1: module-level permission check
+    module_name = request_data.get("collection_name", "").upper()
+    module_id = AuthController.get_module_id_by_name(module_name, db)
+    if module_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown module: {module_name}"
+        )
+    if not AuthController.check_module_access(
+        current_user.emp_no,
+        current_user.group_idx,
+        current_user.role_ids,
+        module_id,
+        db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You do not have access to module '{module_name}'."
+        )
+
+    uploaded_files = []
+    for file in files:
+        try:
+            content = await file.read()
+            file_data = await ChatController.parse_uploaded_file(file.filename, content)
+            uploaded_files.append(file_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error processing file '{file.filename}': {str(e)}"
+            )
+
+    return StreamingResponse(
+        sse_generator_with_file(db, current_user.model_dump(), raw_token, request_data, uploaded_files),
+        media_type="text/event-stream",
+    )
+
+
+@router.get(
+    "/history",
+    response_model=ChatHistoryResponse,
+    summary="Get user's chat history"
+)
+def get_history(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user)
+) -> ChatHistoryResponse:
+    return ChatHistoryResponse(
+        threads=[
+            ThreadInfo(
+                thread_id="thread_mock_001",
+                collection_name="technical_docs",
+                agent_role="Technical Documentation Assistant",
+                created_at=datetime(2026, 4, 27, 10, 0, 0),
+                last_message_at=datetime(2026, 4, 27, 10, 30, 0),
+                message_count=5,
+            ),
+            ThreadInfo(
+                thread_id="thread_mock_002",
+                collection_name="hr_policies",
+                agent_role="HR Policy Assistant",
+                created_at=datetime(2026, 4, 26, 14, 0, 0),
+                last_message_at=datetime(2026, 4, 26, 14, 45, 0),
+                message_count=3,
+            ),
+        ],
+    )
+
+
+@router.get(
+    "/history/{thread_id}",
+    response_model=ThreadMessagesResponse,
+    summary="Get messages in a specific thread"
+)
+def get_thread(
+    thread_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user)
+) -> ThreadMessagesResponse:
+    mock_response = ThreadMessagesResponse(
+        thread_id=thread_id,
+        collection_name="technical_docs",
+        agent_role="Technical Documentation Assistant",
+        messages=[
+            ChatMessage(
+                message_id="msg_001",
+                thread_id=thread_id,
+                content="Hello! How can I help you with the technical documentation today?",
+                sender_type="agent",
+                timestamp=datetime(2026, 4, 27, 10, 0, 0),
+            ),
+            ChatMessage(
+                message_id="msg_002",
+                thread_id=thread_id,
+                content="How do I configure the API endpoints?",
+                sender_type="user",
+                timestamp=datetime(2026, 4, 27, 10, 1, 0),
+            ),
+            ChatMessage(
+                message_id="msg_003",
+                thread_id=thread_id,
+                content="To configure API endpoints, you'll need to modify the main.py file...",
+                sender_type="agent",
+                timestamp=datetime(2026, 4, 27, 10, 1, 30),
+            ),
+        ],
+    )
+    return mock_response
+
+
+# ==============================================================================
+# NEW ENDPOINT: Generative UI Tool Lookups
+# ==============================================================================
+
+@router.get(
+    "/tools/{tool_name}",
+    summary="Execute UI tools for Generative UI widgets",
+    description="Lightweight endpoint to fetch typeahead search results and dependent dropdown options without triggering a full LangGraph cycle."
+)
+async def execute_ui_tool(
+    tool_name: str,
+    q: Optional[str] = Query(None, description="Search keyword for autocomplete"),
+    parent_id: Optional[int] = Query(None, description="Parent ID for dependent dropdowns"),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    try:
+        if tool_name == "search_projects":
+            if not q:
+                return []
+            result = search_projects.invoke({"keyword": q})
+            return result
+
+        elif tool_name == "get_project_phases":
+            if not parent_id:
+                return []
+            result = get_project_phases.invoke({"project_id": parent_id})
+            return result
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tool '{tool_name}' not found or not permitted for UI execution."
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error executing UI tool '{tool_name}': {str(e)}"
+        )
+
+
+"""
+Process-local permission cache. 5-minute TTL. Cache entries
+expire naturally; there is no manual invalidation endpoint
+in this task. Admin workstream (post Task 4) will add a
+proper invalidation API.
+
+Uses a plain Python dict + threading.Lock. If the app runs multiple
+worker processes, each has its own cache — acceptable for current
+scale (single-worker via uvicorn).
+"""
+import time
+import threading
+from typing import Any, Optional, Tuple
+
+_cache: dict[str, Tuple[Any, float]] = {}
+_lock = threading.Lock()
+
+
+def cache_get(key: str) -> Optional[Any]:
+    """Return cached value if present and not expired, else None."""
+    with _lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        value, expiry = entry
+        if time.time() > expiry:
+            del _cache[key]
+            return None
+        return value
+
+
+def cache_set(key: str, value: Any, ttl_seconds: int = 300) -> None:
+    """Store value with expiry timestamp."""
+    expiry = time.time() + ttl_seconds
+    with _lock:
+        _cache[key] = (value, expiry)
+
+
+def cache_clear() -> None:
+    """Empties the cache."""
+    with _lock:
+        _cache.clear()
