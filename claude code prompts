@@ -1,9 +1,20 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>C:/ml_env_311/Scripts/python.exe d:/dev/agentic_ai/dpah_backend_v1/main.py
-Traceback (most recent call last):
-  File "d:\dev\agentic_ai\dpah_backend_v1\main.py", line 9, in <module>
-    from app.routes import chat_route
-  File "d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py", line 14, in <module>
-    from app.core.security import get_current_user, oauth2_scheme
-ImportError: cannot import name 'get_current_user' from 'app.core.security' (d:\dev\agentic_ai\dpah_backend_v1\app\core\security.py)
+# 1. Confirm where get_current_user is actually defined
+findstr /S /N "def get_current_user" app\
 
-** i have restarted and started server again i havent given the task also to cladue i found above error
+# 2. Confirm where oauth2_scheme is defined
+findstr /S /N "oauth2_scheme" app\
+
+# 3. Show the imports at the top of chat_route.py
+powershell "Get-Content app\routes\chat_route.py -TotalCount 25"
+
+# 4. Show the imports at the top of auth_route.py
+powershell "Get-Content app\routes\auth_route.py -TotalCount 25"
+
+# 5. Show the full security.py file (it's small)
+type app\core\security.py
+
+# 6. Show the full dependencies.py file (if it exists)
+type app\core\dependencies.py
+
+# 7. List everything in app/core
+dir app\core
