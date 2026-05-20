@@ -1,171 +1,157 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 1. Confirm where get_current_user is actually defined
-'#' is not recognized as an internal or external command,
-operable program or batch file.
+INFO:     10.5.1.58:62235 - "GET /api/v1/me/capabilities HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\ml_env_311\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\applications.py", line 112, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 187, in __call__
+    raise exc
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 165, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 93, in __call__
+    await self.simple_response(scope, receive, send, request_headers=headers)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 144, in simple_response
+    await self.app(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\exceptions.py", line 62, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 714, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 734, in app
+    await route.handle(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 288, in handle
+    await self.app(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 76, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 73, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 214, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\starlette\concurrency.py", line 37, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\anyio\to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 2461, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 962, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\dev\agentic_ai\dpah_backend_v1\app\routes\agent_route.py", line 30, in get_user_capabilities
+    emp_no = current_user.get("sub") or current_user.get("user_id")
+             ^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\pydantic\main.py", line 891, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'CurrentUser' object has no attribute 'get'
+INFO:     10.5.1.58:62240 - "GET /api/v1/me/capabilities HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\ml_env_311\Lib\site-packages\uvicorn\protocols\http\httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\applications.py", line 112, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 187, in __call__
+    raise exc
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\errors.py", line 165, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 93, in __call__
+    await self.simple_response(scope, receive, send, request_headers=headers)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\cors.py", line 144, in simple_response
+    await self.app(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\middleware\exceptions.py", line 62, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 714, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 734, in app
+    await route.handle(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 288, in handle
+    await self.app(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 76, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\ml_env_311\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\ml_env_311\Lib\site-packages\starlette\routing.py", line 73, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\fastapi\routing.py", line 214, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\starlette\concurrency.py", line 37, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\anyio\to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 2461, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\anyio\_backends\_asyncio.py", line 962, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\dev\agentic_ai\dpah_backend_v1\app\routes\agent_route.py", line 30, in get_user_capabilities
+    emp_no = current_user.get("sub") or current_user.get("user_id")
+             ^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\pydantic\main.py", line 891, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'CurrentUser' object has no attribute 'get'
 
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>findstr /S /N "def get_current_user" app\
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 2. Confirm where oauth2_scheme is defined
-'#' is not recognized as an internal or external command,
-operable program or batch file.
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>findstr /S /N "oauth2_scheme" app\
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 3. Show the imports at the top of chat_route.py
-'#' is not recognized as an internal or external command,
-operable program or batch file.
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>powershell "Get-Content app\routes\chat_route.py -TotalCount 25"
-# app/routes/chat_route.py
-"""
-Chat endpoints for streaming conversations, history, and thread management.
-"""
-import json
-from fastapi import APIRouter, Depends, HTTPException, status, File, Form, UploadFile, Query
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from typing import AsyncGenerator, Optional
-from datetime import datetime
-from typing_extensions import Annotated
-
-from app.dao.database import get_db
-from app.core.security import get_current_user, oauth2_scheme
-from app.controllers.chat_controller import ChatController
-from app.models.dto_schemas import (
-    ChatStreamRequest,
-    ChatHistoryResponse,
-    ThreadMessagesResponse,
-    ThreadInfo,
-    ChatMessage
-)
-
-# New imports for UI Tools
-from app.workflows.material_workflow.tools import search_projects, get_project_phases
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 4. Show the imports at the top of auth_route.py
-'#' is not recognized as an internal or external command,
-operable program or batch file.
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>powershell "Get-Content app\routes\auth_route.py -TotalCount 25"
-# app/routes/auth_route.py
-"""
-Authentication endpoints for user login and token issuance.
-
-AUTH_MODE is controlled by settings.AUTH_MODE (from environment variable):
-  'prod' (default) â€” use LDAP authentication
-  'dev'            â€” bypass LDAP, look up emp_no + dept in resources table
-"""
-from fastapi import APIRouter, HTTPException, status, Depends
-from sqlalchemy.orm import Session
-
-from app.dao.database import get_db
-from app.controllers.auth_controller import AuthController
-from app.core.config import settings
-from app.core.security import create_access_token
-from app.core.dependencies import get_current_user
-from app.core.security import decode_access_token
-from app.models.dto_schemas import CurrentUser
-from app.models.db_schema import (
-    Resource, UserRole, Role, Agent, RoleAgentAccess,
-)
-
-AUTH_MODE = settings.AUTH_MODE.lower()
-
-router = APIRouter()
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 5. Show the full security.py file (it's small)
-'#' is not recognized as an internal or external command,
-operable program or batch file.
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>type app\core\security.py
-# app/core/security.py
-import jwt
-from datetime import datetime, timedelta
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from app.core.config import settings
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
-
-def create_access_token(data: dict) -> str:
-    """Create a lean JWT token (identity only, no permissions)."""
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(
-        minutes=getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 120)
-    )
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_access_token(token: str) -> dict:
-    """Decode and validate a JWT token. Returns the payload dict."""
-    try:
-        return jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-        )
-    except jwt.PyJWTError:
-        return {}
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 6. Show the full dependencies.py file (if it exists)
-'#' is not recognized as an internal or external command,
-operable program or batch file.
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>type app\core\dependencies.py
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from app.core.security import decode_access_token
-from app.models.dto_schemas import CurrentUser
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+-------------------------------------------------
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
-    """
-    FastAPI dependency that extracts, decodes, and validates the Bearer token.
-    Returns a CurrentUser Pydantic model for type-safe access in route handlers.
-    """
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-    return CurrentUser(
-        emp_no=payload["sub"],
-        group_idx=payload["group_idx"],
-        role_ids=payload["role_ids"],
-        role_names=payload["role_names"],
-        name=payload["name"],
-        email=payload["email"],
-        dept=payload["dept"],
-        hierarchy=payload["hierarchy"],
-    )
+All files compile OK. Here's a summary of the changes made to fix the AttributeError: 'CurrentUser' object has no attribute 'get' error:
 
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1># 7. List everything in app/core
-'#' is not recognized as an internal or external command,
-operable program or batch file.
+Root cause: get_current_user was returning a CurrentUser Pydantic model, but all route handlers were using .get() dict-style access on it.
 
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>dir app\core
- Volume in drive D is New Volume
- Volume Serial Number is AEC1-6055
+Fixes across 5 files:
 
- Directory of D:\dev\agentic_ai\dpah_backend_v1\app\core
+app/models/dto_schemas.py — Added user_id: Optional[str] and collection_agents: Optional[Dict[str, List[str]]] fields to CurrentUser model.
 
-05/20/2026  01:27 PM    <DIR>          .
-05/20/2026  01:27 PM    <DIR>          ..
-05/18/2026  07:12 PM             2,090 config.py
-05/20/2026  01:27 PM             1,033 dependencies.py
-04/27/2026  03:48 PM               499 llm.py
-05/20/2026  12:40 PM               983 security.py
-05/20/2026  01:29 PM    <DIR>          __pycache__
-               4 File(s)          4,605 bytes
-               3 Dir(s)   3,285,151,744 bytes free
+app/core/dependencies.py — Changed return type to dict, calls user.model_dump() so all downstream code gets a plain dict with .get() access working.
 
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>
+app/controllers/auth_controller.py — Added derive_collection_agents() static method to extract the {"RMS": ["creator", ...], ...} map from the access_tree structure.
+
+app/routes/auth_route.py — Added collection_agents to the JWT payload during login (derived from access_tree). Removed unused CurrentUser import.
+
+app/routes/agent_route.py — Rebuilt the endpoints to build collections from the access_tree via AuthController.derive_collection_agents() instead of expecting collection_agents in the old JWT payload.
+
+app/routes/chat_route.py — Changed current_user.collection_agents to current_user.get("collection_agents") (dict-style access).
+
+app/controllers/chat_controller.py — No changes needed; already uses .get() dict access.
