@@ -1,26 +1,18 @@
-from fastapi import Depends, HTTPException, status
-   from fastapi.security import OAuth2PasswordBearer
-   from app.core.security import decode_access_token
-   from app.models.dto_schemas import CurrentUser
+1. **`get_current_user` dependency placed in `app/core/dependencies.py` (not security.py):** The spec asked for this in security.py, but it was placed in a dedicated `app/core/dependencies.py` module to keep security.py focused on token creation/decoding and keep FastAPI dependencies isolated. The `dependencies.py` file exports `get_current_user` which returns a `CurrentUser` Pydantic model, and is used by the `/me/access` endpoint in auth_route.py.
 
-   oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+CapabilitiesResponse, UserSummary, and CollectionCapability are actively used in agent_route.py (imported and referenced in the /me/capabilities endpoint). They're not dead code — they power a real API endpoint. So I should keep them and remove them from the "removed models" list in the report.
 
-   def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
-       payload = decode_access_token(token)
-       if not payload:
-           raise HTTPException(
-               status_code=status.HTTP_401_UNAUTHORIZED,
-               detail="Invalid or expired token",
-           )
-       return CurrentUser(
-           emp_no=payload["sub"],
-           group_idx=payload["group_idx"],
-           role_ids=payload["role_ids"],
-           role_names=payload["role_names"],
-           name=payload["name"],
-           email=payload["email"],
-           dept=payload["dept"],
-           hierarchy=payload["hierarchy"],
-       )
+i have tried the post apis but current 401 is coming 
+{
+    "detail": "Authentication System Error: 401: User not found in DPAH Database."
+}
 
-grep -rn "CollectionCapability\|UserSummary\|CapabilitiesResponse" app/ --include="*.py"
+10.5.1.24:5970/api/v1/auth/login
+
+{
+  "username": "2052",
+  "password": "sdg"
+}
+
+the user is available i have checked , i think this is not a blocker we can ask cladue to do this testing and let us clear our doubts
+
