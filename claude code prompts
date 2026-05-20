@@ -1,4 +1,66 @@
-if not current_user.get("collection_agents"):
+# app/routes/chat_route.py
+"""
+Chat endpoints for streaming conversations, history, and thread management.
+"""
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, File, Form, UploadFile, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from typing import AsyncGenerator, Optional
+from datetime import datetime
+from typing_extensions import Annotated
+
+from app.dao.database import get_db
+# from app.core.security import oauth2_scheme
+from app.core.dependencies import get_current_user, oauth2_scheme
+from app.controllers.chat_controller import ChatController
+from app.models.dto_schemas import (
+    ChatStreamRequest,
+    ChatHistoryResponse,
+    ThreadMessagesResponse,
+    ThreadInfo,
+    ChatMessage
+)
+
+# New imports for UI Tools
+from app.workflows.material_workflow.tools import search_projects, get_project_phases
+
+router = APIRouter()
+
+
+async def sse_generator_with_orchestrator(
+    db: Session,
+    current_user: dict,
+    raw_token: str,
+    request_data: dict
+) -> AsyncGenerator[str, None]:
+    try:
+        async for chunk in ChatController.stream_chat_with_orchestrator(
+            db, current_user, raw_token, request_data
+        ):
+            yield f"data: {chunk}\n\n"
+        yield "data: [DONE]\n\n"
+    except PermissionError as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': f'Server error: {str(e)}'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+@router.post(
+    "/stream",
+    summary="Stream chat messages from the agent"
+)
+async def stream_chat_message(
+    request: ChatStreamRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    raw_token: str = Depends(oauth2_scheme)
+):
+    request_data = request.model_dump()
+
+    if not current_user.get("collection_agents"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No agent permissions associated with this user. Contact your administrator."
@@ -63,4 +125,135 @@ async def stream_chat_with_file_upload(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No agent permissions associated with this user."
+        )
+
+    uploaded_files = []
+    for file in files:
+        try:
+            content = await file.read()
+            file_data = await ChatController.parse_uploaded_file(file.filename, content)
+            uploaded_files.append(file_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error processing file '{file.filename}': {str(e)}"
+            )
+
+    return StreamingResponse(
+        sse_generator_with_file(db, current_user, raw_token, request_data, uploaded_files),
+        media_type="text/event-stream",
+    )
+
+
+@router.get(
+    "/history",
+    response_model=ChatHistoryResponse,
+    summary="Get user's chat history"
+)
+def get_history(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+) -> ChatHistoryResponse:
+    return ChatHistoryResponse(
+        threads=[
+            ThreadInfo(
+                thread_id="thread_mock_001",
+                collection_name="technical_docs",
+                agent_role="Technical Documentation Assistant",
+                created_at=datetime(2026, 4, 27, 10, 0, 0),
+                last_message_at=datetime(2026, 4, 27, 10, 30, 0),
+                message_count=5,
+            ),
+            ThreadInfo(
+                thread_id="thread_mock_002",
+                collection_name="hr_policies",
+                agent_role="HR Policy Assistant",
+                created_at=datetime(2026, 4, 26, 14, 0, 0),
+                last_message_at=datetime(2026, 4, 26, 14, 45, 0),
+                message_count=3,
+            ),
+        ],
+    )
+
+
+@router.get(
+    "/history/{thread_id}",
+    response_model=ThreadMessagesResponse,
+    summary="Get messages in a specific thread"
+)
+def get_thread(
+    thread_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+) -> ThreadMessagesResponse:
+    mock_response = ThreadMessagesResponse(
+        thread_id=thread_id,
+        collection_name="technical_docs",
+        agent_role="Technical Documentation Assistant",
+        messages=[
+            ChatMessage(
+                message_id="msg_001",
+                thread_id=thread_id,
+                content="Hello! How can I help you with the technical documentation today?",
+                sender_type="agent",
+                timestamp=datetime(2026, 4, 27, 10, 0, 0),
+            ),
+            ChatMessage(
+                message_id="msg_002",
+                thread_id=thread_id,
+                content="How do I configure the API endpoints?",
+                sender_type="user",
+                timestamp=datetime(2026, 4, 27, 10, 1, 0),
+            ),
+            ChatMessage(
+                message_id="msg_003",
+                thread_id=thread_id,
+                content="To configure API endpoints, you'll need to modify the main.py file...",
+                sender_type="agent",
+                timestamp=datetime(2026, 4, 27, 10, 1, 30),
+            ),
+        ],
+    )
+    return mock_response
+
+
+# ==============================================================================
+# NEW ENDPOINT: Generative UI Tool Lookups
+# ==============================================================================
+
+@router.get(
+    "/tools/{tool_name}",
+    summary="Execute UI tools for Generative UI widgets",
+    description="Lightweight endpoint to fetch typeahead search results and dependent dropdown options without triggering a full LangGraph cycle."
+)
+async def execute_ui_tool(
+    tool_name: str,
+    q: Optional[str] = Query(None, description="Search keyword for autocomplete"),
+    parent_id: Optional[int] = Query(None, description="Parent ID for dependent dropdowns"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        if tool_name == "search_projects":
+            if not q:
+                return []
+            result = search_projects.invoke({"keyword": q})
+            return result
+
+        elif tool_name == "get_project_phases":
+            if not parent_id:
+                return []
+            result = get_project_phases.invoke({"project_id": parent_id})
+            return result
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tool '{tool_name}' not found or not permitted for UI execution."
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error executing UI tool '{tool_name}': {str(e)}"
         )
