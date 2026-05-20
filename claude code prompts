@@ -1,142 +1,175 @@
-# Database Schema Documentation
+TASK 1: Update ORM models and seed reference data for new RBAC schema
 
-## Table: `dpah_roles`
+═══════════════════════════════════════════════════════════════════
+CONTEXT
+═══════════════════════════════════════════════════════════════════
+The database has been restructured to support a new RBAC model with
+the following hierarchy:
 
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| role_id | int | NO | PK | None | auto_increment |
-| role_name | varchar | NO | UNQ | None |  |
-| description | varchar | YES |  | None |  |
-| is_active | tinyint | NO | IDX | 1 |  |
-| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
-| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+  user → resources.group_idx → dpah_module_usergroups → dpah_modules
+  user → dpah_user_roles → dpah_roles
+  user(role + group) → dpah_role_agent_access → dpah_agents → dpah_collections → dpah_modules
 
-**Indexes:**
-- `PRIMARY` on `role_id` (Unique: No)
-- `uk_role_name` on `role_name` (Unique: No)
-- `idx_roles_active` on `is_active` (Unique: Yes)
+Seven new tables exist (empty) with the `dpah_` prefix. The old tables
+(roles, user_roles, collections, agents, role_agent_access,
+role_collection_access) are NOT being used by this project anymore.
+The old project on a different port still uses them; do not worry
+about backward compatibility within this codebase.
 
----
+═══════════════════════════════════════════════════════════════════
+SCOPE
+═══════════════════════════════════════════════════════════════════
+1. Update app/models/db_schema.py:
+   - Modify existing ORM classes to point at the new dpah_* tables
+     and match the new column shapes:
+       * Role             → __tablename__ = "dpah_roles"
+       * UserRole         → __tablename__ = "dpah_user_roles"
+       * Collection       → __tablename__ = "dpah_collections"
+         (add module_id INT NOT NULL; remove `department` if present)
+       * Agent            → __tablename__ = "dpah_agents"
+         (add collection_id INT NOT NULL;
+          add persona column — values CREATOR/REVIEWER/APPROVER;
+          keep department for now)
+       * RoleAgentAccess  → __tablename__ = "dpah_role_agent_access"
+         (change composite PK from (role_id, agent_id) to
+          (role_id, group_id, agent_id); add group_id INT NOT NULL)
+   - REMOVE the RoleCollectionAccess ORM class entirely (no longer
+     used; access is now expressed via agents only).
+   - ADD two new ORM classes:
+       * Module           → __tablename__ = "dpah_modules"
+       * ModuleUserGroup  → __tablename__ = "dpah_module_usergroups"
+   - ADD `group_idx` (INT) column to the Resource ORM class. Do not
+     run any migration on the `resources` table — the column already
+     exists in the database. Just reflect it in the ORM.
 
-## Table: `dpah_user_roles`
+2. Create scripts/seed_dpah_tables.py:
+   An idempotent Python script that uses the existing SQLAlchemy
+   session from app/dao/database.py to populate seed data. Idempotent
+   means: running it twice produces the same result; do NOT use
+   raw INSERT — use ORM upserts (check-then-insert or merge).
 
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| user_role_id | bigint | NO | PK | None | auto_increment |
-| emp_id | varchar | NO | IDX | None |  |
-| role_id | int | NO | IDX | None |  |
-| assigned_by | varchar | YES |  | None |  |
-| assigned_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
-| valid_until | timestamp | YES |  | None |  |
-| is_active | tinyint | NO |  | 1 |  |
+   Seed the following (use the existing SessionLocal from
+   app/dao/database.py):
 
-**Indexes:**
-- `PRIMARY` on `user_role_id` (Unique: No)
-- `uk_user_role_active` on `emp_id` (Unique: No)
-- `uk_user_role_active` on `role_id` (Unique: No)
-- `uk_user_role_active` on `is_active` (Unique: No)
-- `idx_user_roles_emp` on `emp_id` (Unique: Yes)
-- `idx_user_roles_emp` on `is_active` (Unique: Yes)
-- `idx_user_roles_role` on `role_id` (Unique: Yes)
+   dpah_roles:
+     - id=7, name="Junior",  description="Junior level"
+     - id=8, name="Mid",     description="Mid level"
+     - id=9, name="Senior",  description="Senior level"
 
----
+   dpah_modules:
+     - id=1, name="RMS",     description="Resource Management System"
+     - id=2, name="SCM",     description="Supply Chain Management"
+     - id=3, name="HRMS",    description="Human Resource Management"
+     - id=4, name="FINANCE", description="Finance"
+     - id=5, name="MRR",     description="Material Requisition"
+     (set created_by="system", updated_by="system")
 
-## Table: `dpah_collections`
+   dpah_collections (module_id → collection_name):
+     - RMS:     rms_timesheet, rms_projectplan
+     - SCM:     scm_potracker, scm_electronics
+     - HRMS:    hrms_leave_data, hrms_salarydata
+     - FINANCE: finance_general
+     - MRR:     mrr_general
 
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| collection_id | int | NO | PK | None | auto_increment |
-| collection_name | varchar | NO | UNQ | None |  |
-| module_id | int | NO | IDX | None |  |
-| description | varchar | YES |  | None |  |
-| data_source | varchar | YES |  | None |  |
-| is_sensitive | tinyint | NO |  | 0 |  |
-| is_active | tinyint | NO | IDX | 1 |  |
-| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
-| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+   dpah_agents:
+  For EACH collection above, create 3 agent rows — one per persona.
+  Naming convention: {MODULE}_{COLLECTION_SUFFIX}_{PERSONA}
+  The persona is encoded ONLY in the agent_name suffix (last
+  underscore-separated segment). No separate persona column exists.
+  Examples:
+    - RMS_TIMESHEET_CREATOR
+    - RMS_TIMESHEET_REVIEWER
+    - RMS_TIMESHEET_APPROVER
+    - RMS_PROJECTPLAN_CREATOR
+    - ... and so on for all collections.
+  Set:
+    - department    = None (NULL)
+    - description   = "Auto-seeded agent for {collection}"
+    - system_prompt = None
+    - allowed_tools = None
+    - model_name    = "claude-sonnet-4"
+    - collection_id = id of the corresponding collection row
+    - is_active     = 1
 
-**Indexes:**
-- `PRIMARY` on `collection_id` (Unique: No)
-- `uk_collection_name` on `collection_name` (Unique: No)
-- `idx_collections_active` on `is_active` (Unique: Yes)
-- `idx_module_id` on `module_id` (Unique: Yes)
+   dpah_module_usergroups:
+     Map at least 2 distinct group_idx values to modules:
+       - group_idx=1 → RMS, HRMS         (Operations group)
+       - group_idx=2 → FINANCE, SCM, MRR (Finance/SCM group)
+       - group_idx=3 → RMS, SCM, HRMS, FINANCE, MRR (All — admin group)
+     (set is_active=1, assigned_by="system")
 
----
+   dpah_role_agent_access:
+     Insert sample (role_id, group_id, agent_id) triples covering at
+     least these scenarios:
+       - Junior (7) in group 1: gets only CREATOR persona for RMS &
+         HRMS collections.
+       - Mid (8) in group 1: gets CREATOR + REVIEWER for RMS & HRMS.
+       - Senior (9) in group 1: gets all three personas for RMS & HRMS.
+       - Senior (9) in group 3: gets all three personas for all
+         collections in all modules (admin).
+     (set granted_by="system")
 
-## Table: `dpah_modules`
+3. Create scripts/README.md with a single short paragraph explaining:
+   - What the seed script does
+   - How to run it (python -m scripts.seed_dpah_tables from project root)
+   - That it's idempotent and safe to re-run
 
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| module_id | int | NO | PK | None | auto_increment |
-| module_name | varchar | NO |  | None |  |
-| module_description | varchar | NO |  | None |  |
-| created_by | varchar | NO |  | None |  |
-| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
-| updated_by | varchar | NO |  | None |  |
-| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+═══════════════════════════════════════════════════════════════════
+OUT OF SCOPE — DO NOT TOUCH
+═══════════════════════════════════════════════════════════════════
+- app/controllers/* (auth_controller, chat_controller, rag_controller)
+- app/routes/* (auth_route, chat_route, agent_route)
+- app/workflows/* (all LangGraph workflows)
+- app/forms/*
+- app/services/*
+- app/utils/*
+- app/core/security.py (JWT logic)
+- app/models/dto_schemas.py (Pydantic models — change in a later task)
+- frontend/*
+- main.py
+- requirements.txt
 
-**Indexes:**
-- `PRIMARY` on `module_id` (Unique: No)
+═══════════════════════════════════════════════════════════════════
+FILES TO READ FIRST
+═══════════════════════════════════════════════════════════════════
+- app/models/db_schema.py  (current ORM state)
+- app/dao/database.py      (engine + SessionLocal setup)
+- app/core/config.py       (DB connection settings, for sanity only)
 
----
+═══════════════════════════════════════════════════════════════════
+FILES TO MODIFY
+═══════════════════════════════════════════════════════════════════
+- app/models/db_schema.py
 
-## Table: `dpah_module_usergroups`
+═══════════════════════════════════════════════════════════════════
+FILES TO CREATE
+═══════════════════════════════════════════════════════════════════
+- scripts/__init__.py     (empty file — for module import)
+- scripts/seed_dpah_tables.py
+- scripts/README.md
+- TASK_1_REPORT.md        (at project root)
 
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| module_group_id | int | NO | PK | None | auto_increment |
-| module_id | int | NO | IDX | None |  |
-| group_idx | int | NO |  | None |  |
-| is_active | tinyint | NO |  | 1 |  |
-| assigned_by | varchar | NO |  | None |  |
-| assigned_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+═══════════════════════════════════════════════════════════════════
+DELIVERABLE
+═══════════════════════════════════════════════════════════════════
+TASK_1_REPORT.md must contain:
+  1. List of ORM classes added (with __tablename__ each)
+  2. List of ORM classes modified (with the exact changes per class)
+  3. List of ORM classes removed
+  4. List of new columns added to existing classes
+  5. Exact seed data inserted (counts per table, with example rows)
+  6. Confirmation that the script is idempotent (i.e., a second run
+     reports "skipped — already exists" for each row instead of erroring)
+  7. Any deviations from this task spec, with reasons
 
-**Indexes:**
-- `PRIMARY` on `module_group_id` (Unique: No)
-- `fk_mug_moduleid` on `module_id` (Unique: Yes)
-
----
-
-## Table: `dpah_agents`
-
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| agent_id | int | NO | PK | None | auto_increment |
-| agent_name | varchar | NO | UNQ | None |  |
-| collection_id | int | NO | IDX | None |  |
-| department | varchar | NO | IDX | None |  |
-| description | text | YES |  | None |  |
-| system_prompt | text | YES |  | None |  |
-| allowed_tools | longtext | YES |  | None |  |
-| model_name | varchar | YES |  | None |  |
-| is_active | tinyint | NO |  | 1 |  |
-| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
-| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
-
-**Indexes:**
-- `PRIMARY` on `agent_id` (Unique: No)
-- `uk_agent_name` on `agent_name` (Unique: No)
-- `idx_agents_dept` on `department` (Unique: Yes)
-- `idx_agents_dept` on `is_active` (Unique: Yes)
-- `fk_agent_collectionid_new` on `collection_id` (Unique: Yes)
-
----
-
-## Table: `dpah_role_agent_access`
-
-| Column Name | Data Type | Nullable | Key | Default | Extra |
-|-------------|-----------|----------|-----|---------|-------|
-| role_id | int | NO | PK | None |  |
-| group_id | int | NO | PK | None |  |
-| agent_id | int | NO | PK | None |  |
-| granted_by | varchar | YES |  | None |  |
-| granted_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
-
-**Indexes:**
-- `PRIMARY` on `role_id` (Unique: No)
-- `PRIMARY` on `group_id` (Unique: No)
-- `PRIMARY` on `agent_id` (Unique: No)
-- `idx_raa_agent` on `agent_id` (Unique: Yes)
-
----
-
+═══════════════════════════════════════════════════════════════════
+ACCEPTANCE TEST
+═══════════════════════════════════════════════════════════════════
+After Claude Code finishes:
+  - `python -m scripts.seed_dpah_tables` runs without error
+  - Running it a second time produces no duplicates and no errors
+  - All seed rows are present in the database (verify via
+    `SELECT COUNT(*) FROM dpah_roles;` etc.)
+  - The Python app still starts (`python main.py` or equivalent) —
+    even though nothing else has been changed, the ORM model imports
+    must not break the app's startup.
