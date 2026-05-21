@@ -1,50 +1,13 @@
+print(f"[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message={state.get('denial_message')!r}")
 
-C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM3Mjc3MH0.4YPHei_RljuhS_SGxcxmYFojA-OF8em0a_9lOWmonpc" ^  -d "{\"module_name\":\"RMS\",\"message\":\"list my current tasks\",\"chat_history\":[]}" ^  -i
-HTTP/1.1 200 OK
-date: Thu, 21 May 2026 09:53:41 GMT
-server: uvicorn
-content-type: text/event-stream; charset=utf-8
-transfer-encoding: chunked
+print(f"[DIAG-BLOCKED] returning with messages={result.get('messages') if 'result' in dir() else 'no result var'}")
 
-data: {"type": "meta", "thread_id": "94f3e112-91ff-4b81-989d-5614e4a5892a"}
+print(f"[DIAG-BLOCKED] permission_blocked_node returning. About to emit denial.")
 
-data: [DONE]
+print(f"[DIAG-REVIEWER] reviewer_agent_node ENTERED.")
 
+print(f"[DIAG-REVIEWER] reviewer_agent_node returning.")
 
-C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM3Mjc3MH0.4YPHei_RljuhS_SGxcxmYFojA-OF8em0a_9lOWmonpc" ^  -d "{\"module_name\":\"RMS\",\"message\":\"what is the weather today\",\"chat_history\":[]}" ^  -i
-HTTP/1.1 200 OK
-date: Thu, 21 May 2026 09:53:48 GMT
-server: uvicorn
-content-type: text/event-stream; charset=utf-8
-transfer-encoding: chunked
+print(f"[DIAG-APPROVER] approver_agent_node ENTERED.")
 
-data: {"type": "meta", "thread_id": "d418f829-fc91-4604-acb9-c471489de5f3"}
-
-data: [DONE]
-
-
-C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM3Mjc3MH0.4YPHei_RljuhS_SGxcxmYFojA-OF8em0a_9lOWmonpc" ^  -d "{\"module_name\":\"RMS\",\"message\":\"Approve worklog 47\",\"chat_history\":[]}" ^  -i
-HTTP/1.1 200 OK
-date: Thu, 21 May 2026 09:54:21 GMT
-server: uvicorn
-content-type: text/event-stream; charset=utf-8
-transfer-encoding: chunked
-
-data: {"type": "meta", "thread_id": "c0cd71fd-333e-49eb-991a-b02393c90d26"}
-
-data: [DONE]
-
-
-C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNzMxIiwidXNlcl9pZCI6IjE3MzEiLCJuYW1lIjoiSW10aGl5YXMgTSIsImVtYWlsIjoiaW10aGl5YXMubWFqaXRoQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJIREQiLCJncm91cF9pZHgiOjMsInJvbGVfaWRzIjpbOV0sInJvbGVfbmFtZXMiOlsiU2VuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6IkUyIiwiZ3JhZGVfaWQiOjUwLCJyZXBvcnRpbmdfdG8iOiI4MDEiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM4NTY4M30.HZgpkbgI1SrkzGkxCp3pdLqjBMrNyv8Giow7L8qv18Y" ^  -d "{\"module_name\":\"RMS\",\"message\":\"Approve worklog 47\",\"chat_history\":[]}" ^  -i
-HTTP/1.1 200 OK
-date: Thu, 21 May 2026 09:54:40 GMT
-server: uvicorn
-content-type: text/event-stream; charset=utf-8
-transfer-encoding: chunked
-
-data: {"type": "meta", "thread_id": "e718404c-5fc6-47bf-a588-e5be85cd6380"}
-
-data: [DONE]
-
-
-C:\Users\vinay.neelam>
+print(f"[DIAG-APPROVER] approver_agent_node returning.")
