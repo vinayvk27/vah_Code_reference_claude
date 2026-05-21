@@ -1,2 +1,19 @@
-[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_timesheet' persona='APPROVER' confidence='HIGH' reasoning="The user explicitly requests to 'Approve worklog', which directly corresponds to the APPROVER persona and the rms_timesheet collection as defined in the system specifications."
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=HIGH, reasoning=The user explicitly requests to 'Approve worklog', which directly corresponds to the APPROVER persona and the rms_timesheet collection as defined in the system specifications.
+INFO:     127.0.0.1:50995 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_projectplan' persona='REVIEWER' confidence='HIGH' reasoning="The user is requesting to view existing tasks, which aligns with the 'view tasks' capability of the rms_projectplan collection and does not involve creating or approving data."
+[DIAG-4.2] Classified as: collection=rms_projectplan, persona=REVIEWER, confidence=HIGH, reasoning=The user is requesting to view existing tasks, which aligns with the 'view tasks' capability of the rms_projectplan collection and does not involve creating or approving data.
+
+INFO:     127.0.0.1:51023 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-CLASSIFIER] LLM returned: domain='OUT_OF_DOMAIN' collection='' persona='' confidence='HIGH' reasoning="The user is asking about weather conditions, which is unrelated to the RMS module's scope of timesheet logging and project planning."
+[DIAG-4.2] Classified as: collection=, persona=, confidence=HIGH, reasoning=The user is asking about weather conditions, which is unrelated to the RMS module's scope of timesheet logging and project planning.
+
+INFO:     127.0.0.1:51066 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_timesheet' persona='APPROVER' confidence='HIGH' reasoning="The user explicitly requests to 'Approve', which maps directly to the APPROVER persona, 
+and 'worklog' falls under the rms_timesheet collection."
+[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=HIGH, reasoning=The user explicitly requests to 'Approve', which maps directly to the APPROVER persona, and 'worklog' falls under the rms_timesheet collection
+
+INFO:     127.0.0.1:51199 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_timesheet' persona='APPROVER' confidence='HIGH' reasoning="The user explicitly requests to 'Approve', which maps directly to the APPROVER persona, 
+and 'worklog' falls under the rms_timesheet collection."
+[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=HIGH, reasoning=The user explicitly requests to 'Approve', which maps directly to the APPROVER persona, and 'worklog' falls under the rms_timesheet collection.
+Embedding API Error: 403 Client Error: Forbidden for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: HDD)
