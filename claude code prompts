@@ -1,4 +1,4 @@
-SELECT agent_id, agent_name, collection_id, is_active
-FROM dpah_agents
-WHERE agent_name LIKE 'MRR_%' OR agent_name LIKE '%STR_ISSUER%' OR agent_name LIKE '%ERP%'
-ORDER BY agent_id;
+# agent_id, agent_name, collection_id, is_active
+'22', 'MRR_GENERAL_CREATOR', '8', '1'
+'23', 'MRR_GENERAL_REVIEWER', '8', '1'
+'24', 'MRR_GENERAL_APPROVER', '8', '1'
