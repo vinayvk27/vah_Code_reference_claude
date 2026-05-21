@@ -1,2 +1,10 @@
-INFO:     127.0.0.1:50140 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=LOW, reasoning=Keyword fallback used; LLM classifier unavailable.
+try:
+        response = llm.with_structured_output(RMSIntentClassification).invoke(prompt)
+        print(f"[DIAG-CLASSIFIER] LLM returned: {response}")
+        return response
+    except Exception as e:
+        import traceback
+        print(f"[DIAG-CLASSIFIER] LLM call failed: {type(e).__name__}: {e}")
+        print(f"[DIAG-CLASSIFIER] Traceback:")
+        traceback.print_exc()
+        return keyword_fallback(user_message)
