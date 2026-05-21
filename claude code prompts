@@ -1,132 +1,49 @@
-# TASK 4.1 Report — Remove collection_agents from chat_controller.py
+async def stream_chat_with_orchestrator(
+        db: Session,
+        user: dict,
+        raw_token: str,
+        request_data: dict
+    ):
+        module_name = (request_data.get("module_name") or "RMS").upper()
+        agent_role = request_data.get("agent_role") or None
+        user_msg_text = request_data.get("message", "")
+        thread_id = request_data.get("thread_id")
 
-## 1. INTENDED FOOTPRINT (declared at start of work)
+        if any(bad_word in user_msg_text.lower() for bad_word in ChatController.FORBIDDEN_INBOUND):
+            yield json.dumps({"error": "SECURITY FLAG: Message blocked by Inbound Guardrail."})
+            return
 
-- **READ:** `app/controllers/chat_controller.py`, `app/models/dto_schemas.py`
-- **MODIFY:** `app/controllers/chat_controller.py`
-- **CREATE:** `TASK_4_1_REPORT.md`
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
 
-## 2. ACTUAL FOOTPRINT (file list at end of work)
+        yield json.dumps({"type": "meta", "thread_id": thread_id})
 
-- **MODIFIED:** `app/controllers/chat_controller.py`
-- **CREATED:** `TASK_4_1_REPORT.md`
+        # FORM PERMISSION CHECK: moved to per-workflow handlers
+        # in Tasks 4.2-4.4. chat_controller is identity-only now.
 
-**Footprint matches intent.** No other files were touched.
+        if module_name == "HRMS":
+            graph = ChatController.get_hrms_graph()
+        elif module_name in ["SCM", "MRR"]:
+            graph = ChatController.get_mrr_graph()
+        else:
+            graph = ChatController.get_rms_graph()
 
-## 3. collection_agents references removed
+        user_dept = user.get("dept", "Operations")
 
-All references from `chat_controller.py` (line numbers from BEFORE edits):
+        config = {"configurable": {"thread_id": thread_id}}
 
-| # | Location | Code snippet (before) |
-|---|----------|----------------------|
-| 1 | Line 137 | `user_personas = (user.get("collection_agents") or {}).get(form_collection, [])` |
-| 2 | Line 146 | `"collection_agents": user.get("collection_agents", {})` |
-| 3 | Line 158 | `collection = (request_data.get("collection_name") or "RMS").upper()` |
-| 4 | Line 161 | `elif collection in ["SCM", "MRR"]:` |
-| 5 | Line 167 | `user_collection_agents = user.get("collection_agents", {})` |
-| 6 | Line 175 | `"collection_agents": user_collection_agents,` |
-| 7 | Line 176 | `"selected_collection": collection,` |
-| 8 | Line 407 | `collection = request_data.get("collection_name") or request_data.get("collection", "RMS")` |
-| 9 | Line 422 | `collection = collection.upper()` |
-| 10 | Line 425 | `elif collection in ["SCM", "MRR"]:` |
-| 11 | Line 431 | `user_collection_agents = user.get("collection_agents", {})` |
-| 12 | Line 439 | `"collection_agents": user_collection_agents,` |
-| 13 | Line 440 | `"selected_collection": collection,` |
-
-The entire form permission check block (lines 126–140) was removed, which eliminated two references (#1, #2). The remaining references (#3–#13) were either replaced with `module_name` or had `collection_agents` replaced with identity fields.
-
-## 4. New shape of initial_state
-
-### 4a. Regular stream path (`stream_chat_with_orchestrator`, now ~line 139):
-
-```python
-initial_state = {
-    "user_id": user["sub"],
-    "emp_no": user["sub"],
-    "group_idx": user.get("group_idx", 0),
-    "role_ids": user.get("role_ids", []),
-    "role_names": user.get("role_names", []),
-    "user_info": user,
-    "user_dept": user_dept,
-    "selected_collection": module_name,
-    "selected_agent_role": agent_role,
-    "parsed_intent": "",
-    "has_permission": False,
-    "messages": [],
-    "execution_log": []
-}
-```
-
-### 4b. File-upload path (`stream_chat_with_file`, now ~line 403):
-
-```python
-initial_state = {
-    "user_id": user["sub"],
-    "emp_no": user["sub"],
-    "group_idx": user.get("group_idx", 0),
-    "role_ids": user.get("role_ids", []),
-    "role_names": user.get("role_names", []),
-    "user_info": user,
-    "user_dept": user_dept,
-    "selected_collection": module_name,
-    "selected_agent_role": agent_role,
-    "parsed_intent": "",
-    "has_permission": False,
-    "messages": [],
-    "execution_log": [],
-    "uploaded_files": uploaded_files
-}
-```
-
-## 5. Workflow selection logic uses `module_name`
-
-### 5a. Regular stream path (now ~line 123):
-
-```python
-if module_name == "HRMS":
-    graph = ChatController.get_hrms_graph()
-elif module_name in ["SCM", "MRR"]:
-    graph = ChatController.get_mrr_graph()
-else:
-    graph = ChatController.get_rms_graph()
-```
-
-### 5b. File-upload path (now ~line 395):
-
-```python
-if module_name == "HRMS":
-    graph = ChatController.get_hrms_graph()
-elif module_name in ["SCM", "MRR"]:
-    graph = ChatController.get_mrr_graph()
-else:
-    graph = ChatController.get_rms_graph()
-```
-
-## 6. Form permission check removed
-
-The entire block (original lines 126–140) was removed and replaced with:
-
-```python
-# FORM PERMISSION CHECK: moved to per-workflow handlers
-# in Tasks 4.2-4.4. chat_controller is identity-only now.
-```
-
-Additionally, the unused form handler imports (`get_form_handler`, `validate_form_data`) were removed from the import section.
-
-## 7. Other fat-JWT patterns found
-
-No references to `collection_agents`, `allowed_agents`, or other fat-JWT patterns remain in `chat_controller.py`. A full grep confirms zero matches.
-
-## 8. Deviations from spec
-
-None. All changes were made exactly as specified.
-
-**Additional cleanup performed beyond spec:**
-- Removed unused imports (`asyncio`, `requests`, `jwt`, `datetime`, `typing.Any`, `validate_form_data`, `get_form_handler`) to fix linting errors.
-
-## 9. Expected runtime behavior after this task
-
-- **Login:** Still works (Task 4.1 doesn't touch auth).
-- **Chat request:** Reaches `chat_controller`, passes Gate 1 (Task 3's module-level check), invokes workflow with new `initial_state` shape.
-- **WORKFLOW WILL FAIL at runtime** because workflows still expect `collection_agents` in state. This is EXPECTED and is fixed in Tasks 4.2-4.4. Documented here so the human knows not to flag it as a bug.
-- The `initial_state` now carries identity fields (`emp_no`, `group_idx`, `role_ids`, `role_names`) that per-workflow handlers will use for DB-driven permission checks in Tasks 4.2-4.4.
+        initial_state = {
+            "user_id": user["sub"],
+            "emp_no": user["sub"],
+            "group_idx": user.get("group_idx", 0),
+            "role_ids": user.get("role_ids", []),
+            "role_names": user.get("role_names", []),
+            "user_info": user,
+            "user_dept": user_dept,
+            "selected_collection": module_name,
+            "selected_agent_role": agent_role,
+            "parsed_intent": "",
+            "has_permission": False,
+            "messages": [],
+            "execution_log": []
+        }
