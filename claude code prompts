@@ -1,12 +1,10 @@
 C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM3Mjc3MH0.4YPHei_RljuhS_SGxcxmYFojA-OF8em0a_9lOWmonpc" ^  -d "{\"module_name\":\"RMS\",\"message\":\"list my tasks\",\"chat_history\":[]}" ^  -i
 HTTP/1.1 200 OK
-date: Thu, 21 May 2026 06:22:31 GMT
+date: Thu, 21 May 2026 06:27:40 GMT
 server: uvicorn
 content-type: text/event-stream; charset=utf-8
 transfer-encoding: chunked
 
-data: {"type": "meta", "thread_id": "0c35c60f-2f75-4aa2-83de-2fe2b115d73f"}
-
-data: {"error": "Server error: 'sub'"}
+data: {"type": "meta", "thread_id": "6de5eba1-b86c-4610-9903-a19b677650ea"}
 
 data: [DONE]
