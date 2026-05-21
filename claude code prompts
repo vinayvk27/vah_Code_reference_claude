@@ -1,197 +1,722 @@
-═══════════════════════════════════════════════════════════════════
-TASK 3.6: Document the current state of LangGraph workflows
-═══════════════════════════════════════════════════════════════════
-
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT — READ FIRST
-───────────────────────────────────────────────────────────────────
-This is a READ-ONLY task. The deliverable is a markdown file.
-You must NOT:
-  - Modify any .py file.
-  - Create any .py file.
-  - Refactor, comment, or "fix" any code.
-  - Run any code.
-The ONLY file you create or modify is WORKFLOW_CURRENT_STATE.md at
-the project root.
-
-If you discover bugs or design issues in the workflows, RECORD them
-in the markdown — do not fix them. Future tasks will handle fixes.
-
-───────────────────────────────────────────────────────────────────
-MANDATORY FOOTPRINT DECLARATION
-───────────────────────────────────────────────────────────────────
-Output "INTENDED FOOTPRINT" before starting:
-  - Files I will READ
-  - Files I will MODIFY: (none expected)
-  - Files I will CREATE: WORKFLOW_CURRENT_STATE.md only
-
-At end: confirm only WORKFLOW_CURRENT_STATE.md was created and no
-other files changed.
-
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-The project has three LangGraph workflows:
-  - app/workflows/rms_workflow/
-  - app/workflows/hrms_workflow/
-  - app/workflows/material_workflow/
-
-Task 4 will rewrite parts of these workflows to:
-  - Replace the keyword-based intent classifier with an LLM-driven
-    classifier that returns BOTH collection and persona.
-  - Wire Gate 2 (per-agent permission check) into permission nodes.
-  - Load agent configs (system_prompt, allowed_tools, model_name)
-    from the dpah_agents table instead of hardcoded values.
-  - Remove the 24 legacy references to `collection_agents` and
-    similar fat-JWT patterns that survive in workflow files.
-
-Before writing Task 4, we need an accurate map of:
-  - Every file in each workflow folder, with its purpose.
-  - The graph structure of each workflow (nodes + edges).
-  - Where the intent classifier currently lives and how it works.
-  - Where the permission check currently lives and what it checks.
-  - Every reference to legacy fat-JWT patterns.
-  - Every place agent config is hardcoded (vs. loaded from DB).
-  - How the workflow integrates with chat_controller.py.
-
-This task produces that map.
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-A single file: WORKFLOW_CURRENT_STATE.md at the project root.
-
-Structure of the file (use these section headings exactly):
-
 # Workflow Current State
 
 ## 1. File inventory
-For each workflow folder (rms_workflow, hrms_workflow,
-material_workflow), list every .py file with:
-  - File path
-  - Total line count
-  - One-sentence purpose
+
+### rms_workflow (9 files, 2,037 lines total)
+
+| File Path | Lines | Purpose |
+|---|---|---|
+| `app/workflows/rms_workflow/__init__.py` | 35 | Package exports: graph builder, state, agents, tools |
+| `app/workflows/rms_workflow/agents.py` | 92 | Agent config classes and `AGENT_REGISTRY` for RMS_CREATOR, RMS_REVIEWER, RMS_APPROVER |
+| `app/workflows/rms_workflow/config.py` | 15 | LLM client wrapper (delegates to `app.core.llm.get_llm()`) |
+| `app/workflows/rms_workflow/graph.py` | 80 | LangGraph StateGraph construction: entry point → parse_intent → permission_check → conditional route → agent → END |
+| `app/workflows/rms_workflow/nodes.py` | 1,071 | All node functions: `parse_intent_node`, `permission_check_node`, `permission_router`, `permission_blocked_node`, `creator_agent_node`, `reviewer_agent_node`, `approver_agent_node` |
+| `app/workflows/rms_workflow/prompts.py` | 63 | Keyword lists, persona mappings, agent DB names for RMS |
+| `app/workflows/rms_workflow/rms_tools.py` | 613 | SQL-backed tool implementations: list_tasks, create_task, list_my_tasks, log_hours, etc. |
+| `app/workflows/rms_workflow/state.py` | 38 | TypedDict `RMSState` defining the workflow state schema |
+| `app/workflows/rms_workflow/tools.py` | 30 | Re-exports all RMS tool functions from `rms_tools.py` |
+
+### hrms_workflow (9 files, 1,357 lines total)
+
+| File Path | Lines | Purpose |
+|---|---|---|
+| `app/workflows/hrms_workflow/__init__.py` | 32 | Package exports: graph builder, state, agents, tools |
+| `app/workflows/hrms_workflow/agents.py` | 101 | Agent config classes and `AGENT_REGISTRY` for HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER |
+| `app/workflows/hrms_workflow/config.py` | 15 | LLM client wrapper (delegates to `app.core.llm.get_llm()`) |
+| `app/workflows/hrms_workflow/graph.py` | 63 | LangGraph StateGraph construction (identical structure to RMS graph) |
+| `app/workflows/hrms_workflow/hrms_tools.py` | 420 | SQL-backed tool implementations: leave types, payslips, leave requests, approvals |
+| `app/workflows/hrms_workflow/nodes.py` | 601 | Node functions mirroring RMS: `parse_intent_node`, `permission_check_node`, `permission_router`, `permission_blocked_node`, `creator_agent_node`, `reviewer_agent_node`, `approver_agent_node` |
+| `app/workflows/hrms_workflow/prompts.py` | 68 | Keyword lists, `KEYWORD_TO_PERSONA` dict, persona actions, agent DB names for HRMS |
+| `app/workflows/hrms_workflow/state.py` | 38 | TypedDict `HRMSState` (field-for-field identical to `RMSState`) |
+| `app/workflows/hrms_workflow/tools.py` | 19 | Re-exports all HRMS tool functions from `hrms_tools.py` |
+
+### material_workflow (9 files, 1,260 lines total)
+
+| File Path | Lines | Purpose |
+|---|---|---|
+| `app/workflows/material_workflow/__init__.py` | 39 | Package exports: mrr_graph, state, nodes |
+| `app/workflows/material_workflow/agents.py` | 147 | Agent config classes + LLM structured-output extractors (IntentClassification, HeaderExtraction, ItemExtraction) |
+| `app/workflows/material_workflow/config.py` | 15 | LLM client wrapper (delegates to `app.core.llm.get_llm()`) |
+| `app/workflows/material_workflow/graph.py` | 147 | Complex LangGraph with conditional entry point, RBAC routing, and form state machine sub-graph |
+| `app/workflows/material_workflow/mrr_tools.py` | 157 | MRR-specific tool implementations (currently mostly stubs: `tool_list_pending_mrr`, `tool_approve_mrr`, etc.) |
+| `app/workflows/material_workflow/nodes.py` | 385 | Node functions: `parse_intent_node`, `permission_check_node`, `welcome_node`, `permission_blocked_node`, `parse_user_input`, `handle_header`, `handle_items`, `evaluate_and_route`, `approver_agent_node`, `issuer_agent_node` |
+| `app/workflows/material_workflow/prompts.py` | 166 | Keywords, persona mappings, + Generative UI widget payload generators (`get_header_widget_payload`, `get_item_widget_payload`) |
+| `app/workflows/material_workflow/state.py` | 58 | TypedDict `MaterialRequisitionState` with core orchestration fields + form state machine fields |
+| `app/workflows/material_workflow/tools.py` | 146 | Tool functions: `search_projects`, `get_project_phases`, `get_effective_item_availability`, `get_item_details_from_db` |
+
+---
 
 ## 2. RMS workflow
 
 ### 2.1 Graph structure
-List every node in the StateGraph and every edge (including
-conditional edges). Use the format:
-  - Node: `parse_intent` (file: nodes.py, line N)
-    - Description: ...
-  - Edge: `parse_intent` → `permission_check`
-  - Conditional edge: `permission_check` → `creator_agent` if persona is "creator" else `permission_blocked`
+
+- Node: `parse_intent` (file: nodes.py, line 207)
+  - Description: Infers persona (creator/reviewer/approver) from user's last message using keyword matching with priority ordering.
+- Node: `permission_check` (file: nodes.py, line 147)
+  - Description: Checks if `selected_agent_role` is in `collection_agents[selected_collection]`. Sets `has_permission` and `denial_message`.
+- Node: `permission_blocked` (file: nodes.py, line 117)
+  - Description: Emits a permission-denied AIMessage and ends.
+- Node: `creator_agent` (file: nodes.py, line 336)
+  - Description: Async agent for content creation; binds list_tasks/create_task tools, invokes LLM with system prompt + history.
+- Node: `reviewer_agent` (file: nodes.py, line 590)
+  - Description: Async agent for filler/timesheet tasks; binds list_my_tasks/log_hours/show_log_hours_form tools.
+- Node: `approver_agent` (file: nodes.py, line 843)
+  - Description: Async agent for approval tasks; binds list_pending_approvals/approve_worklog tools.
+
+Edges:
+- `parse_intent` → `permission_check` (direct edge)
+- Conditional edge: `permission_check` → `permission_blocked` if `has_permission` is False
+- Conditional edge: `permission_check` → `creator_agent` if `selected_agent_role == "creator"`
+- Conditional edge: `permission_check` → `reviewer_agent` if `selected_agent_role == "reviewer"`
+- Conditional edge: `permission_check` → `approver_agent` if `selected_agent_role == "approver"`
+- `permission_blocked` → END (direct edge)
+- `creator_agent` → END (direct edge)
+- `reviewer_agent` → END (direct edge)
+- `approver_agent` → END (direct edge)
 
 ### 2.2 State shape
-Paste the RMSState TypedDict definition verbatim (from state.py).
+
+```python
+class RMSState(TypedDict):
+    user_id: str
+    user_dept: str
+    collection_agents: dict
+    selected_collection: str
+    selected_agent_role: str
+    parsed_intent: str
+    has_permission: bool
+    messages: list
+    execution_log: list[str]
+    uploaded_files: list  # Optional: for bulk data processing
+    denial_message: Optional[str]  # NEW: permission denial guidance
+```
 
 ### 2.3 Intent classifier
-Quote the current `parse_intent` (or equivalent) function body.
-Describe how it works: keyword matching? LLM call? Fixed mapping?
-Identify what inputs it reads from state and what it writes back.
+
+The `parse_intent_node` function (nodes.py, line 207-307) uses **keyword matching** (NOT LLM-driven).
+
+**Inputs from state:** `messages` (list), `collection_agents` (dict), `selected_collection` (str), `selected_agent_role` (str — explicit role hint).
+
+**What it does:**
+1. Extracts the last user message (HumanMessage content, lowercased).
+2. Gets available roles from `collection_agents[selected_collection]`.
+3. If `selected_agent_role` was provided explicitly AND the user has that role, uses it without keyword scanning.
+4. Otherwise, scans keywords in priority order:
+   - APPROVER keywords → `"approver"`
+   - CREATOR keywords → `"creator"`
+   - FILLER keywords → `"reviewer"`
+   - QUERY keywords → routes by user's highest privilege (approver > creator > reviewer)
+   - No match → defaults to `"reviewer"`
+
+**Writes back:** `selected_agent_role` (the inferred persona), `execution_log` (appended with inference reason).
+
+**Key code (nodes.py:207-307):**
+```python
+def parse_intent_node(state: RMSState) -> dict:
+    messages = state.get("messages", [])
+    collection_agents = state.get("collection_agents", {})
+    selected_collection = state.get("selected_collection", "")
+
+    # Get the last user message
+    last_user_message = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_message = str(msg.content).lower()
+            break
+
+    # Get user's available personas
+    available_roles = collection_agents.get(selected_collection, [])
+
+    # Check if there was an explicit hint from the request (old behavior)
+    explicit_role = state.get("selected_agent_role")
+
+    # If explicit role was provided and user has it, prefer it over inferred
+    if explicit_role and explicit_role in available_roles:
+        final_persona = explicit_role
+        return {
+            "selected_agent_role": final_persona,
+            "execution_log": state.get("execution_log", []) + [f"Explicit persona: {final_persona} (from intent: '{last_user_message[:50]}...')"]
+        }
+
+    # Infer persona from keywords with detection priority
+    # 1. APPROVER keywords first (highest priority)
+    for keyword in APPROVER_KEYWORDS:
+        if keyword in last_user_message:
+            final_persona = "approver"
+            return { ... }
+
+    # 2. CREATOR keywords ... 3. FILLER keywords ... 4. QUERY keywords ... 5. NO MATCH
+    final_persona = "reviewer"
+    return {
+        "selected_agent_role": final_persona,
+        "execution_log": state.get("execution_log", []) + [f"Inferred persona: {final_persona} (default, no keywords matched)"]
+    }
+```
 
 ### 2.4 Permission check
-Quote the current `permission_check` (or equivalent) function body.
-Identify what it checks against — `collection_agents`,
-`allowed_agents`, role_ids, agent_id, etc.
+
+The `permission_check_node` function (nodes.py, line 147-204).
+
+**What it checks:** Whether `selected_agent_role` is in `collection_agents[selected_collection]`.
+
+**Key code (nodes.py:147-204):**
+```python
+def permission_check_node(state: RMSState) -> dict:
+    selected_collection = state.get("selected_collection", "")
+    selected_agent_role = state.get("selected_agent_role", "")
+    collection_agents = state.get("collection_agents", {})
+
+    # Get the list of agent roles available for the selected collection
+    available_roles = collection_agents.get(selected_collection, [])
+
+    # Check if selected_agent_role is in the available roles
+    has_permission = selected_agent_role in available_roles
+
+    execution_log = state.get("execution_log", [])
+    if has_permission:
+        execution_log.append(f"Permission check PASSED: {selected_agent_role} in {available_roles}")
+        denial_message = None
+    else:
+        execution_log.append(f"Permission check DENIED: {selected_agent_role} not in {available_roles}")
+        # Build helpful denial message with persona actions, suggested alternatives
+        denial_message = (
+            f"I see you want to {wanted_action}, but you only have {user_personas_display} access for {selected_collection}. "
+            f"Did you want to {suggested_action} instead?"
+        )
+
+    return {
+        "has_permission": has_permission,
+        "denial_message": denial_message,
+        "execution_log": execution_log
+    }
+```
 
 ### 2.5 Agent nodes
-For `creator_agent`, `reviewer_agent`, `approver_agent`:
-  - Where do they get their system_prompt? (Hardcoded? From DB?
-    From prompts.py?)
-  - Where do they get their tool list?
-  - What model do they call?
-  - How long is each function (lines)?
+
+**`creator_agent_node`** (nodes.py:336-582, 247 lines)
+- `system_prompt`: Fetched from DB via `_get_agent_prompt("RMS_CREATOR")` (lines 400-405), then wrapped with user context, uploaded file context, tool instructions, data snapshot, and domain context.
+- `allowed_tools`: `list_tasks` and `create_task` (LangChain @tool wrappers at lines 480-491)
+- `model_name`: Calls `get_llm()` (from config.py, which delegates to `app.core.llm.get_llm()`). No hardcoded model name.
+- Note: For non-RMS collections, falls into the else branch at line 560 which references `system_prompt` — **this variable is undefined in the non-RMS path**, causing a NameError. (TODO comment at line 560-561 of nodes.py: the bug is preserved for zero-behavior-change refactor.)
+
+**`reviewer_agent_node`** (nodes.py:590-835, 246 lines)
+- `system_prompt`: Fetched from DB via `_get_agent_prompt("RMS_REVIEWER")` (lines 651-656), then wrapped similarly.
+- `allowed_tools`: `list_my_tasks`, `log_hours`, `show_log_hours_form` (lines 724-743)
+- `model_name`: `get_llm()` → `app.core.llm.get_llm()`. No hardcoded model.
+- Same non-RMS bug: line 814 `system_prompt` undefined for non-RMS path.
+
+**`approver_agent_node`** (nodes.py:843-1071, 229 lines)
+- `system_prompt`: Fetched from DB via `_get_agent_prompt("RMS_APPROVER")` (lines 907-912), then wrapped similarly.
+- `allowed_tools`: `list_pending_approvals`, `approve_worklog` (lines 978-989)
+- `model_name`: `get_llm()` → `app.core.llm.get_llm()`. No hardcoded model.
+- Unlike reviewer_agent, the non-RMS path at line 1053 does define `system_prompt` (uses the base variable from DB).
 
 ### 2.6 Legacy references
-For every match of `collection_agents`, `allowed_agents`,
-`role_collection_access`, or similar fat-JWT patterns:
-  - File:line
-  - The exact line
-  - What the code does with it
-  - Whether it would work / fail / silently misbehave with the
-    new CurrentUser-shaped dict (which has no `collection_agents`).
+
+| File:Line | Exact Line | What it does | Would work with CurrentUser? |
+|---|---|---|---|
+| `rms_workflow/state.py:17` | `# - collection_agents: dict (was collection_agents)` | Comment in docstring | OK — comment only |
+| `rms_workflow/state.py:30` | `collection_agents: dict` | TypedDict field definition | **Would FAIL** — CurrentUser dict has no `collection_agents` key; accessing it would return None/missing |
+| `rms_workflow/nodes.py:149` | `# Node 2: Check if... state['collection_agents']...` | Comment | OK — comment only |
+| `rms_workflow/nodes.py:155` | `collection_agents = state.get("collection_agents", {})` | Runtime lookup of available roles | **Would fail silently** — returns `{}` (default), then `.get()` returns `[]`, so `has_permission` always False → permission_blocked |
+| `rms_workflow/nodes.py:158` | `available_roles = collection_agents.get(selected_collection, [])` | Extracts available roles | **Would fail silently** — `collection_agents` is `{}` so `available_roles` is always `[]` |
+| `rms_workflow/nodes.py:235` | `collection_agents = state.get("collection_agents", {})` | In parse_intent_node | **Would fail silently** — same as above, `available_roles` always `[]` |
+| `rms_workflow/nodes.py:246` | `available_roles = collection_agents.get(selected_collection, [])` | In parse_intent_node | **Would fail silently** — explicit role in `available_roles` check always False |
+| `chat_controller.py:137` | `user_personas = (user.get("collection_agents") or {}).get(form_collection, [])` | Form submission permission check | **Would fail** — returns `None or {}` = `{}`, `{}.get()` = `[]`, always denied |
+| `chat_controller.py:146` | `"collection_agents": user.get("collection_agents", {})` | Passed to form handler | **OK** — default `{}` safe |
+| `chat_controller.py:167` | `user_collection_agents = user.get("collection_agents", {})` | Stored in initial_state | **OK** — default `{}` safe |
+| `chat_controller.py:175` | `"collection_agents": user_collection_agents` | In initial_state | **OK** — already defaulted |
+
+---
 
 ## 3. HRMS workflow
-Same structure as section 2 (3.1 through 3.6).
+
+### 3.1 Graph structure
+
+- Node: `parse_intent` (file: hrms_workflow/nodes.py, line 57)
+  - Description: Keyword-based persona inference with priority: APPROVER > CREATOR > REVIEWER > QUERY > default. Sets `selected_agent_role` and `parsed_intent`.
+- Node: `permission_check` (file: hrms_workflow/nodes.py, line 122)
+  - Description: Checks `selected_agent_role` against `collection_agents[selected_collection]`. Sets `has_permission` and `denial_message`.
+- Node: `permission_blocked` (file: hrms_workflow/nodes.py, line 185)
+  - Description: Emits denial message as AIMessage.
+- Node: `creator_agent` (file: hrms_workflow/nodes.py, line 200)
+  - Description: Sync agent for leave type creation and payslip generation.
+- Node: `reviewer_agent` (file: hrms_workflow/nodes.py, line 318)
+  - Description: Sync agent for leave balance, leave requests, and payslip viewing.
+- Node: `approver_agent` (file: hrms_workflow/nodes.py, line 478)
+  - Description: Sync agent for leave approvals and viewing any employee's payslip.
+
+Edges (identical to RMS):
+- `parse_intent` → `permission_check`
+- Conditional: `permission_check` → `permission_blocked` if `not has_permission`
+- Conditional: `permission_check` → `creator_agent` / `reviewer_agent` / `approver_agent`
+- All agents → END
+
+### 3.2 State shape
+
+```python
+class HRMSState(TypedDict):
+    user_id: str
+    user_dept: str
+    collection_agents: dict
+    selected_collection: str
+    selected_agent_role: str
+    parsed_intent: str
+    has_permission: bool
+    messages: list
+    execution_log: list[str]
+    uploaded_files: list
+    denial_message: Optional[str]
+```
+
+Field-for-field identical to `RMSState`.
+
+### 3.3 Intent classifier
+
+The `parse_intent_node` function (hrms_workflow/nodes.py, line 57-115) uses **keyword matching**, same approach as RMS but implemented differently.
+
+**What it does:**
+1. Extracts last user message.
+2. Checks explicit role preference first.
+3. Builds a priority order from `KEYWORD_TO_PERSONA` dict.
+4. Scans in order: approver keywords → creator keywords → reviewer (filler) keywords → query keywords → default "reviewer".
+5. Query intent routes to user's highest available privilege.
+6. Sets both `selected_agent_role` AND `parsed_intent` (RMS only sets `selected_agent_role`).
+
+**Key difference from RMS:** HRMS uses `KEYWORD_TO_PERSONA` dict comprehension (prompts.py:39-45) while RMS uses separate keyword lists imported from prompts.py.
+
+### 3.4 Permission check
+
+The `permission_check_node` function (hrms_workflow/nodes.py, line 122-158). Same pattern as RMS: checks `selected_agent_role` against `collection_agents[collection]`.
+
+### 3.5 Agent nodes
+
+All three HRMS agent nodes are **sync** (not async like RMS), which is a key difference.
+
+**`creator_agent_node`** (hrms_workflow/nodes.py:200-315, 116 lines)
+- `system_prompt`: DB-sourced via `_get_agent_prompt("HRMS_CREATOR")` at line 247.
+- `allowed_tools`: `create_leave_type`, `create_payslip` (lines 275-283).
+- `model_name`: `get_llm()` → `app.core.llm.get_llm()`. No hardcoded model.
+
+**`reviewer_agent_node`** (hrms_workflow/nodes.py:318-475, 158 lines)
+- `system_prompt`: DB-sourced via `_get_agent_prompt("HRMS_REVIEWER")` at line 371.
+- `allowed_tools`: `list_my_leave_balance`, `request_leave`, `my_payslip`, `list_my_leave_requests`, `show_leave_request_form` (lines 405-432).
+- `model_name`: `get_llm()`. No hardcoded model.
+- Uses `user_personas = (state.get("collection_agents") or {}).get("HRMS", []) or []` at line 325.
+
+**`approver_agent_node`** (hrms_workflow/nodes.py:478-601, 124 lines)
+- `system_prompt`: DB-sourced via `_get_agent_prompt("HRMS_APPROVER")` at line 525.
+- `allowed_tools`: `list_pending_leaves`, `decide_leave`, `view_any_payslip` (lines 554-567).
+- `model_name`: `get_llm()`. No hardcoded model.
+
+### 3.6 Legacy references
+
+| File:Line | Exact Line | What it does | Would work with CurrentUser? |
+|---|---|---|---|
+| `hrms_workflow/state.py:17` | `# - collection_agents: dict (was collection_agents)` | Comment | OK — comment only |
+| `hrms_workflow/state.py:30` | `collection_agents: dict` | TypedDict field | **Would FAIL** — missing from CurrentUser |
+| `hrms_workflow/nodes.py:39` | `"collection_agents": state.get("collection_agents", {})` | In `_get_user_context()` helper | **Would fail silently** — default `{}` |
+| `hrms_workflow/nodes.py:73` | `user_personas = (state.get("collection_agents") or {}).get(collection, []) or []` | In parse_intent_node | **Would fail silently** — always `[]` |
+| `hrms_workflow/nodes.py:129` | `user_personas = (state.get("collection_agents") or {}).get(collection, []) or []` | In permission_check_node | **Would fail silently** — always `[]` |
+| `hrms_workflow/nodes.py:325` | `user_personas = (state.get("collection_agents") or {}).get("HRMS", []) or []` | In reviewer_agent_node | **Would fail silently** — always `[]` |
+
+---
 
 ## 4. MRR (material) workflow
-Same structure as section 2 (4.1 through 4.6), PLUS:
+
+### 4.1 Graph structure
+
+This is the most complex graph with conditional entry points and a form state machine.
+
+- Node: `parse_intent_node` (file: nodes.py, line 41)
+  - Description: **LLM-driven** intent classifier (uses `get_intent_classifier_agent()` which returns a ChatOpenAI with structured output via `IntentClassification` Pydantic model). Returns `parsed_intent` (CREATE/APPROVE/ISSUE/UNKNOWN) and `selected_agent_role` (mrr_creator/mrr_approver/str_issuer/none).
+- Node: `permission_check_node` (file: nodes.py, line 56)
+  - Description: Checks intent-based role against MRR roles in `collection_agents["MRR"]`. Special handling for UNKNOWN intent (passes through to welcome node).
+- Node: `permission_blocked_node` (file: nodes.py, line 94)
+  - Description: Emits access denied message.
+- Node: `welcome_node` (file: nodes.py, line 81)
+  - Description: Greets user based on their MRR roles. Handles unknown/greeting intents.
+- Node: `approver_agent_node` (file: nodes.py, line 340)
+  - Description: Fetches pending MRR approvals from MySQL, distinguishes MRR vs ERP approver by user roles.
+- Node: `issuer_agent_node` (file: nodes.py, line 385)
+  - Description: Stub — returns "[Store Issuer UI] Ready to process stock issuance."
+- Node: `parse_user_input` (file: nodes.py, line 107)
+  - Description: Parses widget submissions (`widget_submit` action) from latest message JSON payload.
+- Node: `handle_header` (file: nodes.py, line 130)
+  - Description: Handles form header extraction from widget submission or natural language. Can auto-extract items from prompt.
+- Node: `handle_items` (file: nodes.py, line 201)
+  - Description: Handles item additions via text or Excel bulk upload. Transitions to EVALUATING on "submit"/"done".
+- Node: `evaluate_and_route` (file: nodes.py, line 270)
+  - Description: Saves requisition to MySQL (header + lines), determines routing based on total cost threshold (2000 Rs).
+
+**Entry point (conditional):**
+- `session_entry_router` (graph.py:27-32): If `current_step` is active → `parse_user_input` (resume form). Otherwise → `parse_intent_node` (new session, RBAC).
+
+**Edges:**
+- Conditional entry: `session_entry_router` → `parse_intent_node` (new session) or `parse_user_input` (resume form)
+- `parse_intent_node` → `permission_check_node`
+- Conditional: `permission_check_node` → `parse_user_input` (CREATE), `approver_agent_node` (APPROVE), `issuer_agent_node` (ISSUE), `welcome_node` (UNKNOWN/greeting), `permission_blocked_node`
+- Conditional form flow: `parse_user_input` → `handle_header` (HEADER step) or `handle_items` (ITEMS step) or `evaluate_and_route` (EVALUATING step) or END
+- `welcome_node` → END
+- `permission_blocked_node` → END
+- `approver_agent_node` → END
+- `issuer_agent_node` → END
+- `handle_header` → END
+- `handle_items` → END
+- `evaluate_and_route` → END
+
+### 4.2 State shape
+
+```python
+class MaterialRequisitionState(TypedDict):
+    # Core Orchestration Fields
+    user_id: str
+    user_info: Dict[str, Any]  # Full profile context
+    user_dept: str
+    collection_agents: Dict[str, List[str]]
+    selected_collection: str
+    selected_agent_role: str
+    parsed_intent: str
+    has_permission: bool
+    messages: list
+    execution_log: List[str]
+    uploaded_files: list
+    denial_message: Optional[str]
+
+    # MRR Form State Machine Fields
+    current_step: str
+    latest_submission: Optional[Dict[str, Any]]
+    form_state: Dict[str, Any]
+    items: List[Dict[str, Any]]
+    total_cost: float
+    routing_decision: Optional[str]
+```
+
+Note: `MaterialRequisitionState` has extra fields not in RMS/HRMS: `user_info`, `current_step`, `latest_submission`, `form_state`, `items`, `total_cost`, `routing_decision`.
+
+### 4.3 Intent classifier
+
+The MRR workflow uses an **LLM-driven classifier** (unlike RMS/HRMS which use keyword matching).
+
+**Implementation** (nodes.py:41-54):
+```python
+def parse_intent_node(state: MaterialRequisitionState) -> MaterialRequisitionState:
+    messages = state.get("messages", [])
+    last_user_message = messages[-1].content if messages else ""
+
+    classifier = get_intent_classifier_agent()
+    classification = classifier.invoke(
+        f"Analyze this user request for the Material Management System: '{last_user_message}'"
+    )
+
+    return {
+        "parsed_intent": classification.intent,
+        "selected_agent_role": classification.required_role,
+        "execution_log": state.get("execution_log", []) + [f"Intent: {classification.intent}, Role Required: {classification.required_role}"]
+    }
+```
+
+The classifier is created in `agents.py:131-138`:
+```python
+def get_intent_classifier_agent():
+    llm = get_internal_llm(temp=0)
+    return llm.with_structured_output(IntentClassification)
+```
+
+Where `IntentClassification` is a Pydantic v1 model (agents.py:91-98):
+```python
+class IntentClassification(BaseModel):
+    intent: str = Field(
+        description="Must be: 'CREATE' (items, projects, new request), 'APPROVE' (manager review), 'ISSUE' (warehouse dispatch), or 'UNKNOWN'."
+    )
+    required_role: str = Field(
+        description="Must map to: 'mrr_creator' (for CREATE), 'mrr_approver' (for APPROVE), 'str_issuer' (for ISSUE), or 'none'."
+    )
+```
+
+**Key difference:** This classifier returns BOTH `intent` (CREATE/APPROVE/ISSUE) AND `required_role` (mrr_creator/mrr_approver/str_issuer/none) in a single LLM call — unlike RMS/HRMS which infer persona from keywords only. This is the intended direction for Task 4.
+
+### 4.4 Permission check
+
+`permission_check_node` (nodes.py:56-79):
+```python
+def permission_check_node(state: MaterialRequisitionState) -> MaterialRequisitionState:
+    required_role = state.get("selected_agent_role")
+    intent = state.get("parsed_intent")
+    user_roles = state.get("collection_agents", {}).get("MRR", [])
+    user_roles_lower = [r.lower() for r in user_roles]
+
+    # If intent is ambiguous, allow it through to the Welcome Node
+    if required_role == "none" or intent == "UNKNOWN":
+        return {"has_permission": True, "selected_agent_role": "none", "parsed_intent": "UNKNOWN"}
+
+    role_map = {"mrr_creator": "creator", "mrr_approver": "approver", "erp_approver": "erp_approver", "str_issuer": "str_issuer"}
+    mapped_role = role_map.get(required_role, required_role)
+
+    # Approver check (Manager or ERP)
+    if required_role in ["mrr_approver", "erp_approver"]:
+        has_permission = "approver" in user_roles_lower or "erp_approver" in user_roles_lower
+    else:
+        has_permission = mapped_role in user_roles_lower
+
+    return {"has_permission": has_permission, "selected_agent_role": required_role, "parsed_intent": intent}
+```
+
+### 4.5 Agent nodes
+
+**`approver_agent_node`** (nodes.py:340-383, 44 lines)
+- No LLM call. Directly queries MySQL for pending approvals.
+- Returns formatted Markdown table of pending requests.
+
+**`issuer_agent_node`** (nodes.py:385-385, 1 line — stub)
+- Returns placeholder text: `"[Store Issuer UI] Ready to process stock issuance."`
+
+### 4.6 Legacy references
+
+| File:Line | Exact Line | What it does | Would work with CurrentUser? |
+|---|---|---|---|
+| `material_workflow/state.py:18` | `# - collection_agents: dict (JWT-injected roles...)` | Comment | OK — comment only |
+| `material_workflow/state.py:41` | `collection_agents: Dict[str, List[str]]` | TypedDict field | **Would FAIL** — missing from CurrentUser |
+| `material_workflow/nodes.py:59` | `user_roles = state.get("collection_agents", {}).get("MRR", [])` | In permission_check_node | **Would fail silently** — always `[]` |
+| `material_workflow/nodes.py:83` | `user_roles = state.get("collection_agents", {}).get("MRR", [])` | In welcome_node | **Would fail silently** — roles_list always empty |
+| `material_workflow/nodes.py:342` | `user_roles = state.get("collection_agents", {}).get("MRR", [])` | In approver_agent_node | **Would fail silently** — routing logic breaks (defaults to PENDING_MANAGER) |
 
 ### 4.7 Form state machine
-The MRR workflow has additional form-handling logic. Describe:
-  - The states the form can be in.
-  - How transitions happen.
-  - Which nodes handle form widgets vs. natural language.
+
+The MRR workflow includes a generative UI form state machine for material requisition creation.
+
+**States:**
+1. **HEADER** — Collects project_id, phase_id, warehouse, requisition_type, need_by_date, remarks. Either via widget form or natural language extraction.
+2. **ITEMS** — Collects line items. Supports:
+   - Natural language (LLM extracts items from text)
+   - Widget-based (typeahead + number input per item)
+   - Excel/CSV bulk upload
+   - Submit/Done keyword to finalize
+3. **EVALUATING** — Final processing: saves to DB, calculates routing.
+4. **END** — Terminates the form flow.
+
+**Transitions:**
+- Entry → HEADER (via `parse_user_input` if `current_step` is empty)
+- HEADER → ITEMS (after header data collected via widget or NL)
+- ITEMS → ITEMS (user adds more items via text or upload)
+- ITEMS → EVALUATING (user says "submit" or "done" with items in cart)
+- EVALUATING → END (requisition saved to DB, routing determined by total cost threshold)
+- Any form step can restart at HEADER if a new conversation starts (via `session_entry_router`)
+
+**Widget handling:**
+- `handle_header` (line 130): If widget submission → extracts header data, advances to ITEMS. If natural language → uses LLM `get_header_extractor_agent()` to extract structured data. Falls back to showing the header form widget (`get_header_widget_payload()`).
+- `handle_items` (line 201): Handles Excel uploads, item lookups via LLM (`get_item_extractor_agent()`), and shows item widget (`get_item_widget_payload()`). On "submit"/"done" with items → transitions to EVALUATING.
+
+---
 
 ## 5. Integration with chat_controller.py
 
 ### 5.1 How is a workflow invoked?
-Find the call site in chat_controller.py that invokes a workflow.
-Quote the relevant code block. Identify:
-  - How the right workflow is selected (RMS vs HRMS vs MRR).
-  - What gets passed into the workflow (request shape, user context).
-  - How the streaming response is constructed from workflow output.
+
+The call site is in `stream_chat_with_orchestrator` (chat_controller.py:105).
+
+**Workflow selection** (chat_controller.py:158-164):
+```python
+collection = (request_data.get("collection_name") or "RMS").upper()
+if collection == "HRMS":
+    graph = ChatController.get_hrms_graph()
+elif collection in ["SCM", "MRR"]:
+    graph = ChatController.get_mrr_graph()
+else:
+    graph = ChatController.get_rms_graph()
+```
+
+- "HRMS" → HRMS workflow
+- "SCM" or "MRR" → MRR workflow (MRR is the only collection under the SCM/MRR umbrella)
+- Everything else (default: "RMS") → RMS workflow
+
+**What gets passed in** (initial_state, chat_controller.py:171-182):
+```python
+initial_state = {
+    "user_id": user["sub"],
+    "user_info": user,
+    "user_dept": user_dept,
+    "collection_agents": user_collection_agents,
+    "selected_collection": collection,
+    "selected_agent_role": agent_role,
+    "parsed_intent": "",
+    "has_permission": False,
+    "messages": [],
+    "execution_log": []
+}
+```
+
+- `user` dict comes from JWT-decoded `CurrentUser` token
+- `chat_history` (last 10 messages) is reconstructed as LangChain `HumanMessage`/`AIMessage` objects
+- User's message is appended as the final `HumanMessage`
+
+**Streaming response construction** (chat_controller.py:204-294):
+- Uses `graph.astream_events(initial_state, config=config, version="v1")`
+- For `on_chat_model_stream` events: extracts LLM chunks, detects `<<ACTION>>...<<END>>` and `<<FORM>>...<<ENDFORM>>` delimiters, yields `"chunk"` or `"form"` JSON events to the SSE stream.
+- For `on_chain_end` events (MRR static nodes): extracts `output["messages"]` from nodes like `handle_header`, `handle_items`, `evaluate_and_route`, etc., and yields content or form specs.
+- Post-stream: processes any remaining buffer content.
 
 ### 5.2 Permission checks in chat_controller.py
-List every permission check in chat_controller.py with:
-  - File:line
-  - What it checks
-  - Whether it would pass/fail/crash with new CurrentUser dict
-  - Whether it's redundant with Gate 1 (already done at route boundary)
+
+| Line | What it checks | Would pass/fail/crash with CurrentUser? | Redundant with Gate 1? |
+|---|---|---|---|
+| 137 | `user.get("collection_agents")` → form submission permission | **FAIL** — returns `None`, then `.get()` on `None` crashes. With `or {}` it returns `[]`, always denied | Yes — but Gate 1 is at route level for module access, not form-level persona |
+| 146 | `"collection_agents": user.get("collection_agents", {})` | **OK** — default `{}`, never used for access control | No — passed to form handler as context |
+| 167 | `user.get("collection_agents", {})` | **OK** — default `{}`, stored in initial_state | No — needed by workflow's internal permission_check_node |
+| 175 | `"collection_agents": user_collection_agents` | **OK** — already defaulted | No — state field for workflow |
+| 431 | `user.get("collection_agents", {})` | **OK** — default `{}` | No — initial_state for file upload path |
+| 439 | `"collection_agents": user_collection_agents` | **OK** — already defaulted | No — state field for workflow |
 
 ### 5.3 Known issue from Task 3.5
-The Task 3.5 report flagged chat_controller.py:137 as having
-`user.get("collection_agents")` returning None — causing form
-submission permission checks to always fail.
 
-Locate this line. Quote the surrounding 15 lines of context.
-Identify the function it's in and what calls that function.
+**Location:** `chat_controller.py:137`
+
+**Function:** `stream_chat_with_orchestrator` (line 105)
+**Caller:** Invoked by the FastAPI route handler (not shown in this file — likely defined in a routes file).
+
+**Surrounding 15 lines of context (chat_controller.py:126-140):**
+```python
+        form_submission = request_data.get("form_submission")
+        if form_submission:
+            form_id = form_submission.get("form_id")
+            form_data = form_submission.get("data") or {}
+
+            handler_info = get_form_handler(form_id)
+            if not handler_info:
+                yield json.dumps({"type": "chunk", "text": f"Unknown form: {form_id}"})
+                return
+
+            required_persona = handler_info["required_persona"]
+            form_collection = handler_info["collection"]
+            user_personas = (user.get("collection_agents") or {}).get(form_collection, [])
+            if required_persona not in user_personas:
+                yield json.dumps({"type": "chunk", "text": "You don't have permission to submit this form."})
+                return
+```
+
+**Problem:** Line 137 uses `user.get("collection_agents")` **without a default value**. With the new `CurrentUser` dict (lean JWT), `user.get("collection_agents")` returns `None` (not missing — explicitly absent). `None or {}` evaluates to `{}`, then `{}.get(form_collection, [])` returns `[]`. So `required_persona not in []` is always True, and the form permission check always fails, returning "You don't have permission to submit this form."
+
+The fix needed: change `user.get("collection_agents")` to `user.get("collection_agents", {})` (with default value).
+
+---
 
 ## 6. Agent config — current vs. target
 
 ### 6.1 Where agent prompts currently live
-For each module (RMS, HRMS, MRR), document:
-  - File and line where `system_prompt` is defined for each persona.
-  - File and line where `allowed_tools` list is defined.
-  - File and line where `model_name` is defined.
-  - Are these per-persona, per-collection, or per-module?
+
+**RMS:**
+- `system_prompt` for each persona is fetched from DB in nodes.py:
+  - creator: `Agent.agent_name == "RMS_CREATOR"` (line 401)
+  - reviewer: `Agent.agent_name == "RMS_REVIEWER"` (line 652)
+  - approver: `Agent.agent_name == "RMS_APPROVER"` (line 908)
+- `allowed_tools` are hardcoded inline as Python lists of @tool-decorated functions:
+  - creator: `list_tasks`, `create_task` (lines 480-491)
+  - reviewer: `list_my_tasks`, `log_hours`, `show_log_hours_form` (lines 724-743)
+  - approver: `list_pending_approvals`, `approve_worklog` (lines 978-989)
+- `model_name`: No hardcoded model. All call `get_llm()` → `app.core.llm.get_llm()`.
+- These are **per-persona** (different agent names per persona within RMS).
+
+**HRMS:**
+- `system_prompt` fetched from DB:
+  - creator: `"HRMS_CREATOR"` (line 247)
+  - reviewer: `"HRMS_REVIEWER"` (line 371)
+  - approver: `"HRMS_APPROVER"` (line 525)
+- `allowed_tools` hardcoded inline:
+  - creator: `create_leave_type`, `create_payslip` (lines 275-283)
+  - reviewer: `list_my_leave_balance`, `request_leave`, `my_payslip`, `list_my_leave_requests`, `show_leave_request_form` (lines 405-432)
+  - approver: `list_pending_leaves`, `decide_leave`, `view_any_payslip` (lines 554-567)
+- `model_name`: No hardcoded model. All call `get_llm()`.
+- **Per-persona** (different agent names per persona).
+
+**MRR:**
+- `system_prompt`: **Not fetched from DB** at all. The MRR workflow uses the `evaluate_and_route` node which directly inserts SQL, and the `approver_agent_node` which is a DB query stub. The form nodes (`handle_header`, `handle_items`) do NOT use LLM with a system prompt — they use LLM extractors with Pydantic schemas.
+- `allowed_tools`: Defined in `agents.py:AGENT_REGISTRY` (lines 76-81) but **not actually consumed** by node functions. Tools are called directly or via LLM structured output.
+- `model_name`: MRR uses `get_internal_llm()` (agents.py:122-129) which reads `settings.AI_MODEL`. This is the **only** place a specific model name is referenced.
+- **Per-module** (not per-persona in the same way as RMS/HRMS).
 
 ### 6.2 Comparison with dpah_agents table
-The dpah_agents table has columns for system_prompt, allowed_tools,
-model_name (currently NULL per seed). Document:
-  - Which agents from the workflows could be migrated to DB-driven
-    config without code changes.
-  - Which agents have logic that's NOT representable as plain
-    config strings (e.g., dynamic prompt building, tool selection
-    based on state).
+
+The `Agent` model (from `app/models/db_schema.py`) has columns including `agent_name` and `system_prompt`. Per seed, `system_prompt` is currently NULL.
+
+**Agents that could be migrated to DB-driven config:**
+- RMS_CREATOR, RMS_REVIEWER, RMS_APPROVER — `system_prompt` is already fetched from DB (lines 400-405, 651-656, 907-912 in rms_workflow/nodes.py). Only `system_prompt` is DB-driven; tools and model are still hardcoded.
+- HRMS_CREATOR, HRMS_REVIEWER, HRMS_APPROVER — Same pattern as RMS. `system_prompt` from DB, tools hardcoded.
+- MRR agents — No DB fetch at all. Would need full migration.
+
+**Agents with logic NOT representable as plain config:**
+- **All RMS agent nodes**: The `system_prompt` is NOT a plain config string — it is dynamically built with:
+  - User identity (employee ID, name, dept, grade)
+  - Uploaded file context (conditional on whether files were uploaded)
+  - Tool-specific instructions with argument schemas
+  - Data snapshot (read-only reference data)
+  - Domain context (RAG retrieval)
+  - Action protocol instructions (`<<ACTION>>...<<END>>`)
+- **HRMS agent nodes**: Same pattern — dynamic prompt building with user context, data snapshot, and tool instructions.
+- **MRR intent classifier**: Uses Pydantic structured output with custom schemas (`IntentClassification`, `HeaderExtraction`, `ItemExtraction`) — not representable as a plain `system_prompt` string.
+
+---
 
 ## 7. Open questions / oddities
-A free-form section. Note anything that:
-  - Looks broken or inconsistent.
-  - Has TODO comments.
-  - Has duplicated logic across the three workflows.
-  - Has unused imports or unreachable code.
-  - Surprised you while reading.
 
-This section is for raising concerns to the human reviewer — not
-fixing them.
+### Bugs and issues discovered
 
-───────────────────────────────────────────────────────────────────
-OUT OF SCOPE — DO NOT TOUCH
-───────────────────────────────────────────────────────────────────
-- ALL .py files (read-only)
-- All other markdown files except WORKFLOW_CURRENT_STATE.md
-- The frontend
-- Any database operation
-- Any server startup or test execution
+1. **RMS non-RMS path bug (critical):** `creator_agent_node` and `reviewer_agent_node` in rms_workflow/nodes.py have a `system_prompt` variable that is only defined inside the `if selected_collection == "RMS":` branch. The else branch (non-RMS collections) at lines 560-572 and 812-825 references `system_prompt` which is undefined. This would cause a `NameError` if RMS workflow is ever invoked for a non-RMS collection.
 
-───────────────────────────────────────────────────────────────────
-ACCEPTANCE TEST (HUMAN VERIFIES)
-───────────────────────────────────────────────────────────────────
-1. WORKFLOW_CURRENT_STATE.md exists at project root.
-2. Running `git status` (if applicable) or comparing folder
-   timestamps shows NO .py files modified.
-3. The markdown contains all sections listed above, each populated
-   with actual content (not placeholders).
-4. Quoted code in the markdown matches the source files.
+2. **chat_controller.py:137 (known):** Form submission permission check uses `user.get("collection_agents")` without a default, causing it to crash or always deny with CurrentUser. (Documented in Task 3.5.)
+
+3. **MRR issuer_agent_node is a stub** (nodes.py:385): Returns a placeholder string. No actual functionality implemented.
+
+4. **MRR mrr_tools.py has tool stubs** (157 lines): Contains tool function signatures that are referenced in `agents.py`'s `AGENT_REGISTRY` but not actually used by the node functions. The node functions call SQL queries directly or use `tools.py` instead.
+
+### TODO comments
+
+1. **rms_workflow/nodes.py:11** (top of file): "All nodes complete EXCEPT approver_agent_node (still a stub at line ~785)" — this comment refers to an earlier state of the code. The approver node is now fully implemented at line 843, making this comment stale.
+
+2. **rms_workflow/nodes.py:560**: "TODO: pre-existing bug — system_prompt undefined for non-RMS path; preserved for zero-behavior-change refactor" — acknowledged bug.
+
+3. **hrms_workflow/nodes.py:197**: "PLACEHOLDER agent nodes — filled in by H2.4b and H2.4c" — the nodes are now fully implemented, making this comment stale.
+
+### Duplicated logic across workflows
+
+1. **Nearly identical graph structures** between RMS and HRMS: Same nodes, same edges, same conditional routing. Only the agent node implementations differ. The graph construction code in `graph.py` is identical except for the StateClass used.
+
+2. **Nearly identical agent node patterns** between RMS and HRMS: Each agent node follows the same structure:
+   - Fetch user info from Resource table
+   - Pre-fetch data snapshot from store
+   - Get base prompt from DB
+   - Build system_prompt with user context + snapshot + tool instructions
+   - Create @tool wrappers
+   - Invoke LLM
+   - Parse `<<ACTION>>` markers
+   - Execute tools or stream response
+   - Return messages + execution_log
+
+3. **Identical config.py files** across all three workflows: Each is exactly 15 lines, delegating to `app.core.llm.get_llm()`.
+
+4. **Identical agent config class pattern** across all three workflows: `RMSAgentConfig`, `HRMSAgentConfig`, `MRRAgentConfig` are structurally identical with `name`, `persona`, `allowed_tools`, `description`, and `to_dict()`.
+
+5. **Identical tools.py files**: Each re-exports tool functions from their respective `_tools.py` module.
+
+### Unused imports / unreachable code
+
+1. **rms_workflow/nodes.py:48**: `from app.workflows.rms_workflow.agents import AGENT_REGISTRY` — imported but **never used** in the file. The agent configs exist but are not consumed by the agent node functions (which build tools inline).
+
+2. **rms_workflow/nodes.py:23-24**: `from typing import Any, Optional` — `Any` is imported but not used.
+
+3. **material_workflow/graph.py:10**: `from typing import Literal` — imported but not used (the router functions use `str` return type, not `Literal` constraints).
+
+4. **material_workflow/tools.py:9**: `from langchain_core.tools import tool` — imported but only some functions use `@tool` decorator. `get_item_details_from_db` is a plain function, not decorated.
+
+### Surprises
+
+1. **The MRR workflow is the only one with an LLM-driven intent classifier.** RMS and HRMS both use keyword matching, which is fragile and requires updating keyword lists for every new use case. The MRR approach (Pydantic structured output) is more robust and is the intended direction.
+
+2. **The RMS and HRMS workflows are nearly identical in structure** with only the domain-specific tools and data snapshots differing. This suggests a strong opportunity for a shared base workflow class.
+
+3. **Agent configs exist in `agents.py` files** (AGENT_REGISTRY) but are **never consumed** by the workflow code. The agent node functions build their tool lists inline rather than looking them up from the registry. This means the `agents.py` files are documentation-only at present.
+
+4. **The `user_info` field in MaterialRequisitionState** is the only state that includes `user_info: Dict[str, Any]`. RMSState and HRMSState have this field in `initial_state` (passed from chat_controller.py) but it's not in the TypedDict definition. This is an inconsistency — `user_info` is used but not declared in the state schema for RMS/HRMS.
+
+5. **MRR workflow has no `system_prompt` fetching from the Agent table** — it uses direct SQL queries and Pydantic-based LLM extractors instead of the pattern used by RMS/HRMS.
+
+6. **The `parse_intent_node` in MRR writes `parsed_intent` and `selected_agent_role` but NOT `collection_agents`** — it only sets the two fields and execution_log. The `collection_agents` field is passed through unchanged from the initial state (as required by LangGraph's partial updates).
