@@ -1,159 +1,135 @@
-═══════════════════════════════════════════════════════════════════
-TASK 4.2.1: Fix RMS message accumulation using add_messages channel
-═══════════════════════════════════════════════════════════════════
+# TASK 4.2.1 — Fix RMS message accumulation using add_messages channel
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-If you encounter an error in a file under "Out of scope":
-  - Report and STOP.
-  - Do NOT modify out-of-scope files.
-  - Do NOT add, restore, or invent code beyond what is listed below.
-  - Do NOT clean up imports, refactor, or "fix" anything unrelated.
+## INTENDED FOOTPRINT
 
-If you find collection_agents or other fat-JWT patterns reappearing
-anywhere, STOP and report.
+| Action | File |
+|--------|------|
+| READ | `app/workflows/rms_workflow/state.py` |
+| READ | `app/workflows/rms_workflow/nodes.py` |
+| READ | `app/workflows/rms_workflow/graph.py` |
+| MODIFY | `app/workflows/rms_workflow/state.py` |
+| MODIFY | `app/workflows/rms_workflow/nodes.py` |
+| CREATE | `TASK_4_2_1_REPORT.md` |
 
-───────────────────────────────────────────────────────────────────
-MANDATORY FOOTPRINT DECLARATION
-───────────────────────────────────────────────────────────────────
-Before changes, output INTENDED FOOTPRINT:
-  - Files I will READ
-  - Files I will MODIFY
-  - Files I will CREATE
+## ACTUAL FOOTPRINT
 
-At end, output `git diff --stat HEAD` or list every file touched.
-Confirm actual matches intended.
+| Action | File | Status |
+|--------|------|--------|
+| READ | `app/workflows/rms_workflow/state.py` | Done |
+| READ | `app/workflows/rms_workflow/nodes.py` | Done |
+| READ | `app/workflows/rms_workflow/graph.py` | Done |
+| MODIFY | `app/workflows/rms_workflow/state.py` | Done |
+| MODIFY | `app/workflows/rms_workflow/nodes.py` | Done |
+| CREATE | `TASK_4_2_1_REPORT.md` | Done |
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-The RMS workflow currently has `messages: list` in RMSState as a
-plain (non-channel) field. Nodes that emit AIMessages return
-`{"messages": messages + [ai_message]}`, manually appending.
+No files outside the intended footprint were touched.
 
-This causes the chat_controller's on_chain_end handler to surface
-ALL accumulated messages from state — including ones from previous
-turns — every time a node ends. The user sees old messages echoed
-back in each new response.
+## NODE FUNCTIONS MODIFIED
 
-The standard LangGraph pattern is to use the `add_messages` channel
-annotation. With it, nodes return only the NEW message, and LangGraph
-itself appends to the accumulated state. Reads in chat_controller's
-on_chain_end still get a full message list, but each individual
-node's `output["messages"]` (the value returned by the node) contains
-only the new messages from that node.
+| # | Node Function | Change |
+|---|---------------|--------|
+| 1 | `permission_blocked_node` (line ~150) | `"messages": messages + [ai_message]` → `"messages": [ai_message]` |
+| 2 | `creator_agent_node` (line ~574) | `"messages": messages + [AIMessage(content=full_text)]` → `"messages": [AIMessage(content=full_text)]` |
+| 3 | `reviewer_agent_node` (line ~825) | `"messages": messages + [AIMessage(content=full_text)]` → `"messages": [AIMessage(content=full_text)]` |
+| 4 | `approver_agent_node` (line ~1059) | `"messages": messages + [AIMessage(content=full_text)]` → `"messages": [AIMessage(content=full_text)]` |
 
-This task fixes RMS only. HRMS and MRR will adopt the same pattern
-in Tasks 4.3 and 4.4.
+## BEFORE/AFTER OF EACH RETURN STATEMENT
 
-───────────────────────────────────────────────────────────────────
-SCOPE
-───────────────────────────────────────────────────────────────────
+### 1. `permission_blocked_node` (state.py:150-153)
 
-1. MODIFY app/workflows/rms_workflow/state.py
+**Before:**
+```python
+return {
+    "messages": messages + [ai_message],
+    "execution_log": execution_log
+}
+```
 
-   a. Add these imports at the top of the file:
-        from typing import Annotated
-        from langgraph.graph.message import add_messages
+**After:**
+```python
+return {
+    "messages": [ai_message],
+    "execution_log": execution_log
+}
+```
 
-   b. Change the `messages` field declaration from:
-        messages: list
-      to:
-        messages: Annotated[list, add_messages]
+### 2. `creator_agent_node` (nodes.py:574-577)
 
-   c. Leave every other field in RMSState exactly as-is.
+**Before:**
+```python
+return {
+    "messages": messages + [AIMessage(content=full_text)],
+    "execution_log": execution_log
+}
+```
 
-2. MODIFY app/workflows/rms_workflow/nodes.py
+**After:**
+```python
+return {
+    "messages": [AIMessage(content=full_text)],
+    "execution_log": execution_log
+}
+```
 
-   In EVERY node function that currently does either of these patterns:
-     - `"messages": messages + [ai_message]`
-     - `"messages": state.get("messages", []) + [ai_message]`
-     - any variation that manually concatenates the existing list
-       with the new message
+### 3. `reviewer_agent_node` (nodes.py:825-828)
 
-   Replace with returning ONLY the new message in a list:
-     - `"messages": [ai_message]`
+**Before:**
+```python
+return {
+    "messages": messages + [AIMessage(content=full_text)],
+    "execution_log": execution_log
+}
+```
 
-   The nodes that likely need this change:
-     - permission_blocked_node (we know this one does)
-     - creator_agent_node (its final return likely emits messages)
-     - reviewer_agent_node (same)
-     - approver_agent_node (same)
+**After:**
+```python
+return {
+    "messages": [AIMessage(content=full_text)],
+    "execution_log": execution_log
+}
+```
 
-   For each agent node, find the FINAL return statement (the one
-   that returns the response AIMessage). If it appends to the
-   existing list, change to return only the new message.
+### 4. `approver_agent_node` (nodes.py:1059-1062)
 
-   IMPORTANT — do NOT change intermediate appends within the function
-   body. Only the dict returned by the node function should contain
-   `"messages": [new_messages_only]` instead of the concatenated list.
+**Before:**
+```python
+return {
+    "messages": messages + [AIMessage(content=full_text)],
+    "execution_log": execution_log
+}
+```
 
-   If a node returns NO messages (e.g., parse_intent_node and
-   permission_check_node, which only update routing state), do NOT
-   add a messages field to their return. Leave them alone.
+**After:**
+```python
+return {
+    "messages": [AIMessage(content=full_text)],
+    "execution_log": execution_log
+}
+```
 
-3. CREATE TASK_4_2_1_REPORT.md at project root with:
-   - INTENDED FOOTPRINT
-   - ACTUAL footprint
-   - List of every node function modified
-   - Before/after of each modified return statement
-   - Any deviations
+## STATE.PY CHANGES
 
-───────────────────────────────────────────────────────────────────
-OUT OF SCOPE
-───────────────────────────────────────────────────────────────────
-- app/workflows/hrms_workflow/  (Task 4.3 will adopt this pattern)
-- app/workflows/material_workflow/  (Task 4.4)
-- app/controllers/*
-- app/core/*
-- app/models/*
-- app/routes/*
-- All other folders
-- intent.py
-- prompts.py
-- tools.py, rms_tools.py
-- agents.py, config.py, __init__.py
-- graph.py (verify it still compiles after state.py change, but
-  do NOT modify unless an import or reference breaks)
+Added imports:
+```python
+from typing import Annotated
+from langgraph.graph.message import add_messages
+```
 
-───────────────────────────────────────────────────────────────────
-FILES TO READ FIRST
-───────────────────────────────────────────────────────────────────
-- app/workflows/rms_workflow/state.py
-- app/workflows/rms_workflow/nodes.py (full file)
-- app/workflows/rms_workflow/graph.py (just to verify imports still work)
+Changed field:
+```python
+# Before
+messages: list
 
-───────────────────────────────────────────────────────────────────
-FILES TO MODIFY
-───────────────────────────────────────────────────────────────────
-- app/workflows/rms_workflow/state.py
-- app/workflows/rms_workflow/nodes.py
+# After
+messages: Annotated[list, add_messages]
+```
 
-───────────────────────────────────────────────────────────────────
-FILES TO CREATE
-───────────────────────────────────────────────────────────────────
-- TASK_4_2_1_REPORT.md
+## NODES LEFT UNCHANGED (as required)
 
-───────────────────────────────────────────────────────────────────
-ACCEPTANCE TEST (HUMAN VERIFIES)
-───────────────────────────────────────────────────────────────────
+- `parse_intent_node` — returns no messages, only routing/execution_log state.
+- `permission_check_node` — returns no messages, only `has_permission`/`denial_message`/`execution_log`.
+- `permission_router` — returns a string route key, no messages.
 
-Test A: Server boots cleanly.
+## DEVIATIONS
 
-Test B: Junior 1065 + "approve worklog 47"
-  Expected stream output:
-    data: {"type": "meta", ...}
-    data: {"type": "chunk", "text": "You don't have approver access..."}
-    data: [DONE]
-
-  Specifically: ONE chunk with the denial message. NOT multiple chunks
-  echoing previous messages from earlier turns.
-
-Test C: Junior 1065, send TWO messages in sequence in the same thread:
-  Message 1: "list my tasks"
-  Message 2: "approve worklog 47"
-
-  Each request is independent (the React frontend sends chat_history
-  in the body). The stream for Message 2 should contain ONLY the
-  AI reply to Message 2 — not Message 1's content or its AI reply.
+None. All changes match the task specification exactly.
