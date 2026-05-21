@@ -1,10 +1,42 @@
-try:
-        response = llm.with_structured_output(RMSIntentClassification).invoke(prompt)
-        print(f"[DIAG-CLASSIFIER] LLM returned: {response}")
-        return response
-    except Exception as e:
-        import traceback
-        print(f"[DIAG-CLASSIFIER] LLM call failed: {type(e).__name__}: {e}")
-        print(f"[DIAG-CLASSIFIER] Traceback:")
-        traceback.print_exc()
-        return keyword_fallback(user_message)
+INFO:     127.0.0.1:50367 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-CLASSIFIER] LLM call failed: TypeError: argument 'by_alias': 'NoneType' object cannot be converted to 'PyBool'
+[DIAG-CLASSIFIER] Traceback:
+Traceback (most recent call last):
+  File "d:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 74, in classify_rms_intent
+    response = llm.with_structured_output(RMSIntentClassification).invoke(prompt)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 3149, in invoke
+    input_ = context.run(step.invoke, input_, config, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 5557, in invoke
+    return self.bound.invoke(
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\language_models\chat_models.py", line 402, in invoke
+    self.generate_prompt(
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\language_models\chat_models.py", line 1121, in generate_prompt
+    return self.generate(prompt_messages, stop=stop, callbacks=callbacks, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\language_models\chat_models.py", line 931, in generate
+    self._generate_with_cache(
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\language_models\chat_models.py", line 1190, in _generate_with_cache
+    for chunk in self._stream(messages, stop=stop, **kwargs):
+  File "C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py", line 1305, in _stream
+    for chunk in response:
+  File "C:\ml_env_311\Lib\site-packages\openai\lib\streaming\chat\_completions.py", line 72, in __iter__
+    for item in self._iterator:
+  File "C:\ml_env_311\Lib\site-packages\openai\lib\streaming\chat\_completions.py", line 118, in __stream__
+    events_to_fire = self._state.handle_chunk(sse_event)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\openai\lib\streaming\chat\_completions.py", line 346, in handle_chunk
+    self.__current_completion_snapshot = self._accumulate_chunk(chunk)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\openai\lib\streaming\chat\_completions.py", line 379, in _accumulate_chunk
+    model_dump(
+  File "C:\ml_env_311\Lib\site-packages\openai\_compat.py", line 145, in model_dump
+    return model.model_dump(
+           ^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\pydantic\main.py", line 426, in model_dump
+    return self.__pydantic_serializer__.to_python(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: argument 'by_alias': 'NoneType' object cannot be converted to 'PyBool'
+[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=LOW, reasoning=Keyword fallback used; LLM classifier unavailable.
