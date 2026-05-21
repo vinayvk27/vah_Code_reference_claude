@@ -1,19 +1,197 @@
-All done. Summary of what was done:
+═══════════════════════════════════════════════════════════════════
+TASK 3.6: Document the current state of LangGraph workflows
+═══════════════════════════════════════════════════════════════════
 
-Deleted:
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT — READ FIRST
+───────────────────────────────────────────────────────────────────
+This is a READ-ONLY task. The deliverable is a markdown file.
+You must NOT:
+  - Modify any .py file.
+  - Create any .py file.
+  - Refactor, comment, or "fix" any code.
+  - Run any code.
+The ONLY file you create or modify is WORKFLOW_CURRENT_STATE.md at
+the project root.
 
-app/routes/agent_route.py — agent capabilities routes with collection_agents references
-Modified:
+If you discover bugs or design issues in the workflows, RECORD them
+in the markdown — do not fix them. Future tasks will handle fixes.
 
-main.py — removed commented-out agent_route import and router include (2 lines)
-ARCHITECTURE_DECISIONS.md — appended Decision 15
-Created:
+───────────────────────────────────────────────────────────────────
+MANDATORY FOOTPRINT DECLARATION
+───────────────────────────────────────────────────────────────────
+Output "INTENDED FOOTPRINT" before starting:
+  - Files I will READ
+  - Files I will MODIFY: (none expected)
+  - Files I will CREATE: WORKFLOW_CURRENT_STATE.md only
 
-TASK_3_5_REPORT.md — full report with all grep results
-Grep results:
+At end: confirm only WORKFLOW_CURRENT_STATE.md was created and no
+other files changed.
 
-collection_agents: 24 matches, all in out-of-scope files (workflows/, chat_controller.py) or comments — 0 deletions needed
-allowed_agents: 0 matches
-RoleCollectionAccess: 0 matches
-role_collection_access: 0 matches
-Key finding from Action 4 scan: Line 137 in chat_controller.py has a bug — user.get("collection_agents") returns None with the new CurrentUser, causing form submission permission checks to always fail. Logged for Task 4.
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The project has three LangGraph workflows:
+  - app/workflows/rms_workflow/
+  - app/workflows/hrms_workflow/
+  - app/workflows/material_workflow/
+
+Task 4 will rewrite parts of these workflows to:
+  - Replace the keyword-based intent classifier with an LLM-driven
+    classifier that returns BOTH collection and persona.
+  - Wire Gate 2 (per-agent permission check) into permission nodes.
+  - Load agent configs (system_prompt, allowed_tools, model_name)
+    from the dpah_agents table instead of hardcoded values.
+  - Remove the 24 legacy references to `collection_agents` and
+    similar fat-JWT patterns that survive in workflow files.
+
+Before writing Task 4, we need an accurate map of:
+  - Every file in each workflow folder, with its purpose.
+  - The graph structure of each workflow (nodes + edges).
+  - Where the intent classifier currently lives and how it works.
+  - Where the permission check currently lives and what it checks.
+  - Every reference to legacy fat-JWT patterns.
+  - Every place agent config is hardcoded (vs. loaded from DB).
+  - How the workflow integrates with chat_controller.py.
+
+This task produces that map.
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+A single file: WORKFLOW_CURRENT_STATE.md at the project root.
+
+Structure of the file (use these section headings exactly):
+
+# Workflow Current State
+
+## 1. File inventory
+For each workflow folder (rms_workflow, hrms_workflow,
+material_workflow), list every .py file with:
+  - File path
+  - Total line count
+  - One-sentence purpose
+
+## 2. RMS workflow
+
+### 2.1 Graph structure
+List every node in the StateGraph and every edge (including
+conditional edges). Use the format:
+  - Node: `parse_intent` (file: nodes.py, line N)
+    - Description: ...
+  - Edge: `parse_intent` → `permission_check`
+  - Conditional edge: `permission_check` → `creator_agent` if persona is "creator" else `permission_blocked`
+
+### 2.2 State shape
+Paste the RMSState TypedDict definition verbatim (from state.py).
+
+### 2.3 Intent classifier
+Quote the current `parse_intent` (or equivalent) function body.
+Describe how it works: keyword matching? LLM call? Fixed mapping?
+Identify what inputs it reads from state and what it writes back.
+
+### 2.4 Permission check
+Quote the current `permission_check` (or equivalent) function body.
+Identify what it checks against — `collection_agents`,
+`allowed_agents`, role_ids, agent_id, etc.
+
+### 2.5 Agent nodes
+For `creator_agent`, `reviewer_agent`, `approver_agent`:
+  - Where do they get their system_prompt? (Hardcoded? From DB?
+    From prompts.py?)
+  - Where do they get their tool list?
+  - What model do they call?
+  - How long is each function (lines)?
+
+### 2.6 Legacy references
+For every match of `collection_agents`, `allowed_agents`,
+`role_collection_access`, or similar fat-JWT patterns:
+  - File:line
+  - The exact line
+  - What the code does with it
+  - Whether it would work / fail / silently misbehave with the
+    new CurrentUser-shaped dict (which has no `collection_agents`).
+
+## 3. HRMS workflow
+Same structure as section 2 (3.1 through 3.6).
+
+## 4. MRR (material) workflow
+Same structure as section 2 (4.1 through 4.6), PLUS:
+
+### 4.7 Form state machine
+The MRR workflow has additional form-handling logic. Describe:
+  - The states the form can be in.
+  - How transitions happen.
+  - Which nodes handle form widgets vs. natural language.
+
+## 5. Integration with chat_controller.py
+
+### 5.1 How is a workflow invoked?
+Find the call site in chat_controller.py that invokes a workflow.
+Quote the relevant code block. Identify:
+  - How the right workflow is selected (RMS vs HRMS vs MRR).
+  - What gets passed into the workflow (request shape, user context).
+  - How the streaming response is constructed from workflow output.
+
+### 5.2 Permission checks in chat_controller.py
+List every permission check in chat_controller.py with:
+  - File:line
+  - What it checks
+  - Whether it would pass/fail/crash with new CurrentUser dict
+  - Whether it's redundant with Gate 1 (already done at route boundary)
+
+### 5.3 Known issue from Task 3.5
+The Task 3.5 report flagged chat_controller.py:137 as having
+`user.get("collection_agents")` returning None — causing form
+submission permission checks to always fail.
+
+Locate this line. Quote the surrounding 15 lines of context.
+Identify the function it's in and what calls that function.
+
+## 6. Agent config — current vs. target
+
+### 6.1 Where agent prompts currently live
+For each module (RMS, HRMS, MRR), document:
+  - File and line where `system_prompt` is defined for each persona.
+  - File and line where `allowed_tools` list is defined.
+  - File and line where `model_name` is defined.
+  - Are these per-persona, per-collection, or per-module?
+
+### 6.2 Comparison with dpah_agents table
+The dpah_agents table has columns for system_prompt, allowed_tools,
+model_name (currently NULL per seed). Document:
+  - Which agents from the workflows could be migrated to DB-driven
+    config without code changes.
+  - Which agents have logic that's NOT representable as plain
+    config strings (e.g., dynamic prompt building, tool selection
+    based on state).
+
+## 7. Open questions / oddities
+A free-form section. Note anything that:
+  - Looks broken or inconsistent.
+  - Has TODO comments.
+  - Has duplicated logic across the three workflows.
+  - Has unused imports or unreachable code.
+  - Surprised you while reading.
+
+This section is for raising concerns to the human reviewer — not
+fixing them.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- ALL .py files (read-only)
+- All other markdown files except WORKFLOW_CURRENT_STATE.md
+- The frontend
+- Any database operation
+- Any server startup or test execution
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TEST (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+1. WORKFLOW_CURRENT_STATE.md exists at project root.
+2. Running `git status` (if applicable) or comparing folder
+   timestamps shows NO .py files modified.
+3. The markdown contains all sections listed above, each populated
+   with actual content (not placeholders).
+4. Quoted code in the markdown matches the source files.
