@@ -1,73 +1,82 @@
-** two places it is available i ma giving two codes
+check the graph code agin for more clarity
+
+"""
+RMS Workflow Graph
+==================
+Builds the LangGraph workflow graph for RMS agent orchestration.
+"""
+
+from langgraph.graph import StateGraph, END
+
+from app.workflows.rms_workflow.state import RMSState
+from app.workflows.rms_workflow.nodes import (
+    parse_intent_node,
+    permission_check_node,
+    permission_router,
+    permission_blocked_node,
+    creator_agent_node,
+    reviewer_agent_node,
+    approver_agent_node,
+)
 
 
-# NEW: Listen for Generative UI JSON Widgets AND Static Messages from MRR Workflow
-            elif event_kind == "on_chain_end":
-                output = event.get("data", {}).get("output")
-                node_name = event.get("name")
-                
-                mrr_static_nodes = [
-                    "handle_header", "handle_items", "evaluate_and_route", 
-                    "permission_blocked_node", "approver_agent_node", "issuer_agent_node", "welcome_node"
-                ]
-                
-                if node_name in mrr_static_nodes and isinstance(output, dict) and "messages" in output:
-                    for msg in output["messages"]:
-                        if hasattr(msg, "content") and isinstance(msg.content, str):
-                            content = msg.content
-                            
-                            # Safely extract the <<FORM>> JSON out of the static string
-                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
-                                # 1. Yield any text before the form
-                                before_form = content.split("<<FORM>>")[0]
-                                if before_form.strip():
-                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
-                                
-                                # 2. Parse and yield the Form
-                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
-                                try:
-                                    form_spec = json.loads(form_str)
-                                    yield json.dumps({"type": "form", "form_spec": form_spec})
-                                except Exception as e:
-                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
-                                
-                                # 3. Yield any text after the form
-                                after_form = content.split("<<ENDFORM>>")[1]
-                                if after_form.strip():
-                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
-                            else:
-                                # No form tags, just yield as standard text
-                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
+def build_rms_graph() -> StateGraph:
+    """
+    Build and compile the RMS agent orchestration graph.
+
+    Graph flow:
+    1. parse_intent_node -> Infer persona from user message keywords
+    2. permission_check_node -> Check if user has permission for selected collection
+    3. permission_router -> Route to appropriate agent or block
+    4. Agent node (creator/reviewer/approver) -> Process request
+    5. END
+    """
+    # Initialize graph with state schema
+    graph_builder = StateGraph(RMSState)
+
+    # Add nodes
+    graph_builder.add_node("parse_intent", parse_intent_node)
+    graph_builder.add_node("permission_check", permission_check_node)
+    graph_builder.add_node("permission_blocked", permission_blocked_node)
+    graph_builder.add_node("creator_agent", creator_agent_node)
+    graph_builder.add_node("reviewer_agent", reviewer_agent_node)
+    graph_builder.add_node("approver_agent", approver_agent_node)
+
+    # Set entry point
+    graph_builder.set_entry_point("parse_intent")
+
+    # Add edges
+    graph_builder.add_edge("parse_intent", "permission_check")
+
+    # Add conditional edges from permission_check
+    graph_builder.add_conditional_edges(
+        "permission_check",
+        permission_router,
+        {
+            "permission_blocked": "permission_blocked",
+            "creator_agent": "creator_agent",
+            "reviewer_agent": "reviewer_agent",
+            "approver_agent": "approver_agent",
+        }
+    )
+
+    # All agent nodes lead to END
+    graph_builder.add_edge("permission_blocked", END)
+    graph_builder.add_edge("creator_agent", END)
+    graph_builder.add_edge("reviewer_agent", END)
+    graph_builder.add_edge("approver_agent", END)
+
+    # Compile and return
+    return graph_builder.compile()
 
 
-elif event_kind == "on_chain_end":
-                output = event.get("data", {}).get("output")
-                node_name = event.get("name")
-                
-                mrr_static_nodes = [
-                    "handle_header", "handle_items", "evaluate_and_route", 
-                    "permission_blocked_node", "approver_agent_node", "issuer_agent_node", "welcome_node"
-                ]
-                
-                if node_name in mrr_static_nodes and isinstance(output, dict) and "messages" in output:
-                    for msg in output["messages"]:
-                        if hasattr(msg, "content") and isinstance(msg.content, str):
-                            content = msg.content
-                            
-                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
-                                before_form = content.split("<<FORM>>")[0]
-                                if before_form.strip():
-                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
-                                
-                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
-                                try:
-                                    form_spec = json.loads(form_str)
-                                    yield json.dumps({"type": "form", "form_spec": form_spec})
-                                except Exception as e:
-                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
-                                
-                                after_form = content.split("<<ENDFORM>>")[1]
-                                if after_form.strip():
-                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
-                            else:
-                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
+# Singleton graph instance
+_rms_graph = None
+
+
+def get_rms_graph():
+    """Lazy initialization of the RMS graph."""
+    global _rms_graph
+    if _rms_graph is None:
+        _rms_graph = build_rms_graph()
+    return _rms_graph
