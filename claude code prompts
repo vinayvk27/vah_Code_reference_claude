@@ -1,25 +1,8 @@
-check my leave balance
-A
-🤖
-You don't have reviewer access to hrms leave data. Please contact your administrator if you need this permission.
-
-what is the weathere
-A
-🤖
-I can only help with HRMS tasks like leave management, payslips, or leave approvals. Could you rephrase your request?
-
-
-approve leave request
-I
-🤖
-
-
-Leave request #4 has beLeave request #4 has been approved.
-
-en approved.
-
-
-approve leave request
-A
-🤖
-You don't have approver access to hrms leave data. Please contact your administrator if you need this permission.
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by, granted_at)
+SELECT 7, 1, agent_id, 'system', NOW()
+FROM dpah_agents
+WHERE agent_name IN ('HRMS_LEAVE_DATA_REVIEWER', 'HRMS_SALARYDATA_REVIEWER')
+  AND NOT EXISTS (
+    SELECT 1 FROM dpah_role_agent_access r
+    WHERE r.role_id = 7 AND r.group_id = 1 AND r.agent_id = dpah_agents.agent_id
+  );
