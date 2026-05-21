@@ -1,16 +1,426 @@
+═══════════════════════════════════════════════════════════════════
+TASK 4.3: Rewrite HRMS workflow — LLM intent classifier + DB permissions
+═══════════════════════════════════════════════════════════════════
 
-Reply from LLM:- 
-list my tasks
-A
-🤖
-(I assumed you wanted to create a project task. Let me know if you meant something else.)
-approve worklogs
-A
-🤖
-You don't have approver access to rms timesheet. Please contact your administrator if you need this permission.
-how is the weather today?
-A
-🤖
-I can only help with RMS tasks like logging hours, viewing your tasks, or approving worklogs. Could you rephrase your request?
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT — READ FIRST
+───────────────────────────────────────────────────────────────────
+If you encounter an error in a file under "Out of scope":
+  - Report and STOP.
+  - Do NOT modify out-of-scope files.
+  - Do NOT add fields, restore removed structures (collection_agents,
+    allowed_agents), or invent code beyond what is listed below.
+  - Do NOT clean up imports, refactor, or "fix" anything unrelated.
 
+If you find collection_agents reappearing in any file you write,
+STOP and report — it indicates spec misinterpretation.
 
+───────────────────────────────────────────────────────────────────
+MANDATORY FOOTPRINT DECLARATION
+───────────────────────────────────────────────────────────────────
+Output INTENDED FOOTPRINT before changes:
+  - Files I will READ
+  - Files I will MODIFY
+  - Files I will CREATE
+
+At end, output `git diff --stat HEAD` or list every file touched.
+Confirm actual matches intended.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+HRMS workflow currently uses keyword-based intent classification and
+the deprecated collection_agents state field. This task rewrites it
+to match the pattern established in RMS workflow (Task 4.2 + 4.2.1):
+
+  - LLM intent classifier via PydanticOutputParser, returning
+    domain / collection / persona / confidence / reasoning.
+  - Defense-in-depth: HIGH proceeds silently, MEDIUM/LOW appends
+    a soft correction; OUT_OF_DOMAIN routes to permission_blocked.
+  - DB-driven Gate 2 via AuthController.check_agent_access().
+  - State uses add_messages channel for the messages field.
+  - Nodes return only NEW messages (not appended to old).
+
+HRMS collections (from dpah_collections seed):
+  - hrms_leave_data: leave types, leave requests, leave approvals.
+  - hrms_salarydata: payslips (creator), view own payslip (reviewer),
+    view any payslip (approver).
+
+HRMS personas: CREATOR / REVIEWER / APPROVER (same as RMS).
+
+Agent name convention: HRMS_{COLLECTION_SUFFIX}_{PERSONA}
+  e.g., HRMS_LEAVE_DATA_CREATOR, HRMS_SALARYDATA_REVIEWER.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. CREATE app/workflows/hrms_workflow/intent.py
+
+   Mirror app/workflows/rms_workflow/intent.py exactly, but with:
+
+   a. MODULE_DOMAIN_DESCRIPTION specific to HRMS:
+
+      """The HRMS (Human Resource Management System) module handles
+      leave management and payslip operations.
+      Available collections:
+        - hrms_leave_data: define leave types, check leave balance,
+          submit leave requests, approve/reject leave requests.
+        - hrms_salarydata: generate payslips, view own payslip,
+          view any employee's payslip.
+      Available personas: CREATOR (creates leave types or payslips),
+      REVIEWER (reviews own data, submits leave requests), APPROVER
+      (approves leave requests, views any payslip)."""
+
+   b. Pydantic model HRMSIntentClassification with same five fields:
+        - domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"]
+        - collection: str (one of: "hrms_leave_data", "hrms_salarydata", or "")
+        - persona: str ("CREATOR" / "REVIEWER" / "APPROVER" / "")
+        - confidence: Literal["HIGH", "MEDIUM", "LOW"]
+        - reasoning: str
+
+   c. Module-level _parser and _prompt_template using
+      PydanticOutputParser, same structure as RMS.
+
+   d. classify_hrms_intent(user_message) — same logic as RMS:
+        - Get llm via get_llm_non_streaming() from app.core.llm.
+        - Render prompt template, invoke LLM, parse response.
+        - On exception, fall back to keyword_fallback.
+        - DO NOT include diagnostic print statements.
+
+   e. keyword_fallback(user_message) — same priority logic as RMS
+      (APPROVER > CREATOR > REVIEWER, default REVIEWER).
+      Default collection: "hrms_leave_data".
+      Confidence: "LOW".
+      Reasoning: "Keyword fallback used; LLM classifier unavailable."
+
+      Import HRMS keyword lists from app/workflows/hrms_workflow/prompts.py.
+      Note: HRMS prompts.py uses a `KEYWORD_TO_PERSONA` dict
+      structure, not separate keyword lists like RMS. You will need
+      to either:
+        - Extract keyword lists from KEYWORD_TO_PERSONA in the fallback
+          function, OR
+        - Loop over the dict directly.
+      Whichever is cleaner. Do NOT modify prompts.py to add separate
+      lists; work with what's already there.
+
+2. UPDATE app/workflows/hrms_workflow/state.py
+
+   a. Add these imports at the top:
+        from typing import Annotated
+        from langgraph.graph.message import add_messages
+
+   b. Update HRMSState TypedDict:
+
+      REMOVE:
+        - collection_agents
+
+      ADD:
+        - emp_no: str
+        - group_idx: int
+        - role_ids: List[int]
+        - role_names: List[str]
+        - selected_module: str
+        - classifier_confidence: str
+        - append_soft_correction: bool
+
+      CHANGE:
+        - messages: list  →  messages: Annotated[list, add_messages]
+
+      KEEP unchanged:
+        - user_id, user_dept, selected_collection, selected_agent_role,
+          parsed_intent, has_permission, execution_log, uploaded_files,
+          denial_message
+
+      Update the class docstring to reflect new shape.
+
+3. UPDATE app/workflows/hrms_workflow/nodes.py
+
+   3a. Rewrite parse_intent_node (currently at line ~57):
+
+       def parse_intent_node(state: HRMSState) -> dict:
+           messages = state.get("messages", [])
+           last_user_message = ""
+           for msg in reversed(messages):
+               if isinstance(msg, HumanMessage):
+                   last_user_message = str(msg.content)
+                   break
+
+           if not last_user_message:
+               return {
+                   "parsed_intent": "OUT_OF_DOMAIN",
+                   "selected_collection": "",
+                   "selected_agent_role": "",
+                   "classifier_confidence": "LOW",
+                   "append_soft_correction": False,
+                   "execution_log": state.get("execution_log", []) + ["No user message found."]
+               }
+
+           from app.workflows.hrms_workflow.intent import classify_hrms_intent
+           classification = classify_hrms_intent(last_user_message)
+
+           append_soft_correction = (
+               classification.domain == "IN_DOMAIN"
+               and classification.confidence in ("MEDIUM", "LOW")
+           )
+
+           return {
+               "parsed_intent": classification.domain,
+               "selected_collection": classification.collection,
+               "selected_agent_role": classification.persona.lower() if classification.persona else "",
+               "classifier_confidence": classification.confidence,
+               "append_soft_correction": append_soft_correction,
+               "execution_log": state.get("execution_log", []) + [
+                   f"Intent classified: domain={classification.domain}, "
+                   f"collection={classification.collection}, "
+                   f"persona={classification.persona}, "
+                   f"confidence={classification.confidence}, "
+                   f"reasoning={classification.reasoning}"
+               ]
+           }
+
+   3b. Rewrite permission_check_node (currently at line ~122):
+
+       Same structure as RMS permission_check_node, but with HRMS
+       agent name convention:
+         expected_agent_name = f"HRMS_{collection_suffix}_{selected_agent_role.upper()}"
+       where collection_suffix = selected_collection.upper().replace("HRMS_", "")
+
+       OUT_OF_DOMAIN denial message:
+         "I can only help with HRMS tasks like leave management,
+         payslips, or leave approvals. Could you rephrase your
+         request?"
+
+       Other denial messages — same patterns as RMS but with
+       HRMS-appropriate wording.
+
+       Use SessionLocal from app.dao.database (verify import exists
+       at top of nodes.py; if not, add it).
+
+   3c. Update permission_router (the conditional edge function):
+
+       def permission_router(state: HRMSState) -> str:
+           if not state.get("has_permission", False):
+               return "permission_blocked"
+
+           selected_role = state.get("selected_agent_role", "").lower()
+           if selected_role == "creator":
+               return "creator_agent"
+           elif selected_role == "reviewer":
+               return "reviewer_agent"
+           elif selected_role == "approver":
+               return "approver_agent"
+           else:
+               return "permission_blocked"
+
+   3d. Update permission_blocked_node (currently at line ~185):
+
+       Same as RMS: use denial_message from state, fall back to a
+       generic HRMS message if denial_message is None. Return only
+       the new AIMessage in messages — DO NOT append to existing.
+
+       Return:
+         return {
+             "messages": [ai_message],
+             "execution_log": execution_log
+         }
+
+   3e. Update agent nodes (creator/reviewer/approver):
+
+       Three changes ONLY. Do NOT touch other logic.
+
+       Change 1: Remove ALL references to
+         state.get("collection_agents", ...)
+       throughout each agent node. Any branch that depends on
+       collection_agents must be either:
+         - Rewritten to use emp_no/role_ids/group_idx if it serves
+           a real purpose, OR
+         - Deleted if it was a dead branch for non-HRMS collections
+           that this workflow never handles.
+
+       The HRMS workflow only handles HRMS — non-HRMS branches are
+       dead code. Delete them.
+
+       Change 2: At the FINAL return of each agent node, change
+       from `"messages": messages + [AIMessage(content=full_text)]`
+       (or equivalent) to `"messages": [AIMessage(content=full_text)]`.
+       The add_messages channel will handle appending.
+
+       Change 3: Implement soft correction append.
+
+       Add this helper near the top of nodes.py:
+
+         def _describe_assumed_action_hrms(persona: str, collection: str) -> str:
+             persona = (persona or "").lower()
+             collection = (collection or "").lower()
+             if collection == "hrms_leave_data":
+                 if persona == "creator":
+                     return "create a leave type"
+                 elif persona == "reviewer":
+                     return "check your leave balance or submit a leave request"
+                 elif persona == "approver":
+                     return "approve or reject leave requests"
+             elif collection == "hrms_salarydata":
+                 if persona == "creator":
+                     return "generate a payslip"
+                 elif persona == "reviewer":
+                     return "view your payslip"
+                 elif persona == "approver":
+                     return "view another employee's payslip"
+             return "do that"
+
+       In each agent node, just before the final return statement,
+       check append_soft_correction and append to full_text:
+
+         if state.get("append_soft_correction", False):
+             soft_correction = (
+                 f" (I assumed you wanted to "
+                 f"{_describe_assumed_action_hrms(state.get('selected_agent_role', ''), state.get('selected_collection', ''))}. "
+                 f"Let me know if you meant something else.)"
+             )
+             full_text += soft_correction
+
+       Then return:
+         return {
+             "messages": [AIMessage(content=full_text)],
+             "execution_log": execution_log
+         }
+
+4. UPDATE app/workflows/hrms_workflow/graph.py — only if needed.
+
+   The graph structure stays the same. Verify node names match the
+   function names. If anything in graph.py imports something that
+   no longer exists, fix only the broken import. Otherwise leave it.
+
+5. UPDATE app/workflows/hrms_workflow/prompts.py — keep keyword
+   data structure (KEYWORD_TO_PERSONA dict) for fallback use. Do
+   NOT restructure or modify. Only delete anything that becomes
+   genuinely unreferenced after this task.
+
+6. UPDATE app/controllers/chat_controller.py
+
+   In BOTH on_chain_end handler blocks (regular stream + file
+   upload), the existing static_output_nodes list (or
+   mrr_static_nodes if Task 4.2 left it under that name) should
+   include the HRMS node names. The list should already cover
+   short names like "permission_blocked", "creator_agent",
+   "reviewer_agent", "approver_agent" from Task 4.2. Verify
+   that's still the case after this task. If those names are
+   missing, restore them.
+
+   No new node names need to be added because HRMS uses the same
+   short node names as RMS (per the existing HRMS graph.py
+   convention). Both workflows register nodes with names like
+   "permission_blocked", "creator_agent", etc., and on_chain_end
+   uses the same names regardless of which workflow is running.
+
+   If you're uncertain whether the existing list covers HRMS,
+   add a comment noting that it covers RMS and HRMS both, and
+   keep the list as-is.
+
+7. CREATE TASK_4_3_REPORT.md at project root.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/ — completed in Task 4.2
+- app/workflows/material_workflow/ — Task 4.4
+- app/controllers/auth_controller.py
+- app/controllers/rag_controller.py
+- app/routes/*
+- app/core/* (the new get_llm_non_streaming is already in place)
+- app/models/*
+- app/forms/*, app/services/*, app/utils/*
+- ARCHITECTURE_DECISIONS.md
+- FRONTEND_MIGRATION_SPEC.md
+- main.py
+- The frontend
+- hrms_tools.py — actual @tool functions stay untouched
+- agents.py, config.py, __init__.py — unchanged
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/workflows/hrms_workflow/nodes.py (full file)
+- app/workflows/hrms_workflow/state.py
+- app/workflows/hrms_workflow/prompts.py
+- app/workflows/hrms_workflow/graph.py
+- app/workflows/hrms_workflow/config.py
+- app/workflows/rms_workflow/intent.py (as reference for the
+  pattern this task mirrors)
+- app/workflows/rms_workflow/state.py (reference for State shape)
+- app/workflows/rms_workflow/nodes.py (reference for parse_intent
+  and permission_check patterns)
+- app/controllers/chat_controller.py (verify static_output_nodes list)
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/workflows/hrms_workflow/state.py
+- app/workflows/hrms_workflow/nodes.py
+- app/workflows/hrms_workflow/graph.py (if needed)
+- app/workflows/hrms_workflow/prompts.py (only if cleanup needed)
+- app/controllers/chat_controller.py (only if list needs verification)
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- app/workflows/hrms_workflow/intent.py
+- TASK_4_3_REPORT.md
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+TASK_4_3_REPORT.md must contain:
+  1. INTENDED FOOTPRINT (declared at start).
+  2. ACTUAL footprint. Confirm match.
+  3. Full code of app/workflows/hrms_workflow/intent.py.
+  4. The new HRMSState TypedDict (full Python code).
+  5. The new parse_intent_node function (full Python code).
+  6. The new permission_check_node function (full Python code).
+  7. The new permission_router function (full Python code).
+  8. Brief summary of changes to each agent node.
+  9. Confirmation that messages: Annotated[list, add_messages] is
+     in place.
+  10. Confirmation that all agent nodes return only NEW messages
+      (no `messages + [ai_message]` patterns remain).
+  11. Confirmation that zero references to `collection_agents`
+      remain in any hrms_workflow file.
+  12. Confirmation that chat_controller.py's static_output_nodes
+      list covers HRMS (paste the current list).
+  13. Any deviations.
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Login as Junior 1065 (password SDG) for tests 1-3.
+Login as Senior 1731 (password HDD) for test 4.
+
+Test 1: Server boots cleanly.
+
+Test 2: Junior 1065 + HRMS in-domain request (allowed):
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <JUNIOR_TOKEN>" \
+    -d '{"module_name":"HRMS","message":"check my leave balance","chat_history":[]}' -i
+
+  Expected: 200, meta event, chunk(s) with agent response, [DONE].
+  (Agent response may be rough because system_prompt is NULL.)
+  No history echoing.
+
+Test 3: Junior 1065 + HRMS out-of-domain:
+  curl ... -d '{"module_name":"HRMS","message":"what is the weather","chat_history":[]}' -i
+
+  Expected: chunk containing "I can only help with HRMS tasks..."
+
+Test 4: Senior 1731 + HRMS approver action:
+  curl ... -d '{"module_name":"HRMS","message":"approve leave request 14","chat_history":[]}' -i
+
+  Expected: classifier picks APPROVER for hrms_leave_data, permission
+  granted, approver_agent_node reached, some chunks produced.
+
+Test 5: Junior 1065 + HRMS denied (APPROVER without rights):
+  curl ... -d '{"module_name":"HRMS","message":"approve leave request 14","chat_history":[]}' -i
+
+  Expected: chunk with denial message about lacking approver access.
