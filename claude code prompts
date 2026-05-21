@@ -1,2 +1,56 @@
-INFO:     127.0.0.1:61752 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG] permission_check_node: role=reviewer available=[] has_permission=False
+# Frontend Tasks — DPAH Backend v1 (port 5970)
+
+## Status
+- ✓ Login flow migrated to lean JWT. Verified.
+- ✓ access_tree stored in localStorage. Verified.
+- Next: dashboard rebuild + chat scaffolding.
+
+## Backend endpoints to integrate
+
+Base URL: `http://localhost:5970` (development)
+Auth: `Authorization: Bearer <access_token>` on every protected request.
+
+| Method | Path | Purpose | Status |
+|---|---|---|---|
+| POST | /api/v1/auth/login | Login, returns lean JWT + access_tree | DONE |
+| GET | /api/v1/auth/me/access | Refresh access_tree | Build now |
+| POST | /api/v1/chat/stream | Send a chat message, receive SSE stream | Build scaffolding now, chat output not yet useful — see "Chat scaffolding caveat" below |
+| POST | /api/v1/chat/stream-with-file | Same but with file upload | Same caveat |
+| GET | /api/v1/chat/history | List chat threads (mock data for now) | Optional now |
+| GET | /api/v1/chat/history/{thread_id} | Get messages in a thread (mock data for now) | Optional now |
+| GET | /api/v1/chat/tools/{tool_name} | UI tool lookups for form widgets | Wait for chat output to work first |
+
+## Tasks in priority order
+
+### Task A — Dashboard: render module tiles
+Read `access_tree.modules[]` from localStorage. Render one tile per module.
+Each tile shows:
+- `module_name` (e.g., "RMS")
+- `description` (e.g., "Resource Management System")
+- Click handler: open chat for that module.
+
+DO NOT render collections or agents on the dashboard. The user does not pick a collection or persona — backend infers both from the user's message.
+
+If `access_tree.modules` is empty, show a message: "You don't have access to any modules. Contact your administrator."
+
+### Task B — Chat window: open from a module tile
+When the user clicks a module tile, open a chat interface. The chat:
+- Has a title showing the module name (e.g., "RMS Chat").
+- Has a message input area.
+- Has a message display area (empty at first).
+- Has no collection selector. No persona selector. No agent dropdown. These have all been removed.
+
+For now, show an empty chat or a simple greeting like "Hi! What can I help you with?"
+
+### Task C — Send a chat message
+On submit, POST to `/api/v1/chat/stream` with body:
+```json
+{
+  "module_name": "RMS",
+  "message": "<user's message text>",
+  "chat_history": [
+    {"role": "user", "content": "previous user msg"},
+    {"role": "assistant", "content": "previous AI msg"}
+  ],
+  "thread_id": "<optional uuid from previous response, omit on first message>"
+}
