@@ -1,53 +1,5 @@
-Important:
-module_name is from the tile the user is currently in. Always uppercase ("RMS", "HRMS", "MRR").
-chat_history is the last 10 messages from this thread (alternating user/assistant).
-thread_id: on the first message of a new chat, omit. On subsequent messages, send the thread_id you received from the first response.
-Task D — Consume the SSE stream
-Response is Content-Type: text/event-stream. Each event is data: <json>\n\n. Parse each event as JSON and dispatch by type:
-Event shape
-Meaning
-Frontend action
-{"type": "meta", "thread_id": "..."}
-Start of stream; save thread_id for follow-ups
-Save thread_id to component state
-{"type": "chunk", "text": "..."}
-A chunk of the AI's response text
-Append to the current AI message in the display
-{"type": "form", "spec": {...}}
-Render a form widget inline
-Render the form (existing form widget code)
-{"error": "..."}
-Server-side error
-Show as a system message: "Error: "
-[DONE] (raw, not JSON)
-Stream end
-Finalize the current AI message
-Task E — Handle HTTP error responses
-On /api/v1/chat/stream, before the SSE starts:
-HTTP 400: malformed request or unknown module. Show error toast.
-HTTP 403: user has no access to this module. Show: "You don't have access to this module. Please contact your administrator." Refresh the access_tree from /api/v1/auth/me/access since their permissions may have changed.
-HTTP 401: token expired. Redirect to login.
-Task F — Refresh access_tree on app load
-On app initialization (or React mount), call GET /api/v1/auth/me/access with the stored token. Update localStorage with the fresh access_tree. This handles the case where an admin changed the user's permissions during the session.
-Task G — Cleanup
-Search the codebase for references to:
-collection_agents
-allowed_agents
-/api/v1/me/capabilities
-Any "collection selector" or "persona dropdown" UI components
-Delete or comment out all of them. These belong to the old architecture.
-Chat scaffolding caveat
-The chat endpoint accepts requests and responds with HTTP 200, BUT the AI workflow that generates the actual response is still being rebuilt on the backend. Until further notice, when you send a chat message, expect:
-Stream starts with a meta event containing thread_id. ✓ (proves the endpoint is reachable)
-No chunk events with AI text. (workflow doesn't produce output yet)
-Stream ends with [DONE].
-This is NOT a frontend bug. The chat UI should display "Working on it..." or a typing indicator during the silence and gracefully handle the empty response. Backend will start producing real AI responses after Tasks 4.2, 4.3, 4.4 complete.
-When real chat output ships, you'll see chunk events flowing — no frontend code change needed if you've built Task D correctly.
-What NOT to build yet
-These are coming later, do not start them:
-Welcome panel on tile click (showing "Here are things you can do"). This is a future enhancement, design is not finalized.
-Form widget for clarification (asking the user "did you mean X or Y"). We decided against this — backend will use soft-correction text instead.
-Admin panel for managing roles/permissions. Separate workstream, not yet started.
-Files I've consolidated
-FRONTEND_MIGRATION_SPEC.md — formal endpoint contracts (you may already have this).
-This file — concrete tasks in priority order
+Send that to your React dev. Tasks A through G should keep them busy for the duration of Tasks 4.2 through 4.4. When we ship Task 4.4 (MRR), your React dev can finally test end-to-end.
+
+---
+
+**Part 2 — Task 4.2 spec for Claude Code. This is long.**
