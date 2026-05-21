@@ -1,8 +1,10 @@
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by, granted_at)
-SELECT 7, 1, agent_id, 'system', NOW()
-FROM dpah_agents
-WHERE agent_name IN ('HRMS_LEAVE_DATA_REVIEWER', 'HRMS_SALARYDATA_REVIEWER')
-  AND NOT EXISTS (
-    SELECT 1 FROM dpah_role_agent_access r
-    WHERE r.role_id = 7 AND r.group_id = 1 AND r.agent_id = dpah_agents.agent_id
-  );
+static_output_nodes = [
+    # MRR static-output nodes (no LLM streaming):
+    "handle_header", "handle_items", "evaluate_and_route",
+    "welcome_node", "issuer_agent_node",
+    # Permission-blocked from RMS/HRMS/MRR (no LLM call):
+    "permission_blocked", "permission_blocked_node",
+    # NOTE: agent nodes (creator/reviewer/approver) intentionally
+    # excluded — they stream via on_chat_model_stream, adding them
+    # here causes duplicated output.
+]
