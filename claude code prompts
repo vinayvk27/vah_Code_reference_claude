@@ -1,13 +1,4 @@
-print(f"[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message={state.get('denial_message')!r}")
-
-print(f"[DIAG-BLOCKED] returning with messages={result.get('messages') if 'result' in dir() else 'no result var'}")
-
-print(f"[DIAG-BLOCKED] permission_blocked_node returning. About to emit denial.")
-
-print(f"[DIAG-REVIEWER] reviewer_agent_node ENTERED.")
-
-print(f"[DIAG-REVIEWER] reviewer_agent_node returning.")
-
-print(f"[DIAG-APPROVER] approver_agent_node ENTERED.")
-
-print(f"[DIAG-APPROVER] approver_agent_node returning.")
+[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_timesheet' persona='APPROVER' confidence='HIGH' reasoning="The user explicitly requests to 'approve' a worklog, which is a specific function of the APPROVER persona within the rms_timesheet collection."
+[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=HIGH, reasoning=The user explicitly requests to 'approve' a worklog, which is a specific function of the APPROVER persona within the 
+rms_timesheet collection.
+[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message=None
