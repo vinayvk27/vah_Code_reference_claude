@@ -1,171 +1,173 @@
-User context built for: 1065 (Arun Kumar M)
+"""
+RMS Intent Classification
+=========================
+LLM-driven classifier with keyword-fallback for RMS workflow routing.
 
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3}
-  intersection_module_ids = {1, 3}
-  modules in access_tree = 2
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-    - HRMS: 2 collections
-        - hrms_leave_data: 1 agents
-        - hrms_salarydata: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63736 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 1065 (Arun Kumar M)
+The classifier returns an RMSIntentClassification with:
+  - domain: "IN_DOMAIN" or "OUT_OF_DOMAIN"
+  - collection: "rms_timesheet", "rms_projectplan", or ""
+  - persona: "CREATOR", "REVIEWER", "APPROVER", or ""
+  - confidence: "HIGH", "MEDIUM", or "LOW"
+  - reasoning: short explanation
 
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3}
-  intersection_module_ids = {1, 3}
-  modules in access_tree = 2
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-    - HRMS: 2 collections
-        - hrms_leave_data: 1 agents
-        - hrms_salarydata: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63741 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:63767 - "GET /api/v1/me/chat/welcome?collection=RMS HTTP/1.1" 404 Not Found
-INFO:     10.5.1.58:63852 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-CLASSIFIER] LLM call failed: ValueError: Structured Output response does not have a 'parsed' field nor a 'refusal' field. Received message:
+Uses PydanticOutputParser for structured output, which works with any LLM
+provider that can produce JSON-formatted text. This is more portable than
+relying on provider-native structured-output APIs (which our internal LLM
+does not fully implement).
+"""
 
-content='' additional_kwargs={'parsed': None, 'refusal': None} response_metadata={'token_usage': {'completion_tokens': 101, 'prompt_tokens': 604, 'total_tokens': 705, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 0, 'rejected_prediction_tokens': None, 'text_tokens': 101}, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0, 'text_tokens': 604, 'cache_creation_tokens': 0}, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}, 'model_provider': 'openai', 'model_name': 'claude-opus-4-6', 'system_fingerprint': None, 'id': 'chatcmpl-fbde839d-34b5-4e46-9c1e-9050c2f885c5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019e49e3-e5a5-7473-8a6f-230d1e7c46c8-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 604, 'output_tokens': 101, 'total_tokens': 705, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 0}}
-[DIAG-CLASSIFIER] Traceback:
-Traceback (most recent call last):
-  File "d:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 74, in classify_rms_intent
-    response = llm.with_structured_output(RMSIntentClassification).invoke(prompt)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 3151, in invoke
-    input_ = context.run(step.invoke, input_, config)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 5557, in invoke
-    return self.bound.invoke(
-           ^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 4880, in invoke
-    return self._call_with_config(
-           ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 2058, in _call_with_config
-    context.run(
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\config.py", line 435, in call_func_with_variable_args
-    return func(input, **kwargs)  # type: ignore[call-arg]
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 4737, in _invoke
-    output = call_func_with_variable_args(
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\config.py", line 435, in call_func_with_variable_args
-    return func(input, **kwargs)  # type: ignore[call-arg]
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py", line 3610, in _oai_structured_outputs_parser
-    raise ValueError(msg)
-ValueError: Structured Output response does not have a 'parsed' field nor a 'refusal' field. Received message:
+from pydantic import BaseModel, Field
+from typing import Literal
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
 
-content='' additional_kwargs={'parsed': None, 'refusal': None} response_metadata={'token_usage': {'completion_tokens': 101, 'prompt_tokens': 604, 'total_tokens': 705, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 0, 'rejected_prediction_tokens': None, 'text_tokens': 101}, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0, 'text_tokens': 604, 'cache_creation_tokens': 0}, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}, 'model_provider': 'openai', 'model_name': 'claude-opus-4-6', 'system_fingerprint': None, 'id': 'chatcmpl-fbde839d-34b5-4e46-9c1e-9050c2f885c5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019e49e3-e5a5-7473-8a6f-230d1e7c46c8-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 604, 'output_tokens': 101, 'total_tokens': 705, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 0}}
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=LOW, reasoning=Keyword fallback used; LLM classifier unavailable.
-User context built for: 1065 (Arun Kumar M)
+from app.core.llm import get_llm_non_streaming
+from app.workflows.rms_workflow.prompts import (
+    APPROVER_KEYWORDS,
+    CREATOR_KEYWORDS,
+    FILLER_KEYWORDS,
+    QUERY_KEYWORDS,
+)
 
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3}
-  intersection_module_ids = {1, 3}
-  modules in access_tree = 2
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-    - HRMS: 2 collections
-        - hrms_leave_data: 1 agents
-        - hrms_salarydata: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63934 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 1065 (Arun Kumar M)
+# =============================================================================
+# MODULE DOMAIN DESCRIPTION
+# =============================================================================
 
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3}
-  intersection_module_ids = {1, 3}
-  modules in access_tree = 2
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-    - HRMS: 2 collections
-        - hrms_leave_data: 1 agents
-        - hrms_salarydata: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63938 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:63948 - "GET /api/v1/me/chat/welcome?collection=RMS HTTP/1.1" 404 Not Found
-INFO:     10.5.1.58:63987 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-CLASSIFIER] LLM call failed: ValueError: Structured Output response does not have a 'parsed' field nor a 'refusal' field. Received message:
+MODULE_DOMAIN_DESCRIPTION = """The RMS (Resource Management System) module handles timesheet logging and project planning.
+Available collections:
+  - rms_timesheet: log hours, view tasks, approve worklogs, review team timesheets.
+  - rms_projectplan: create tasks, plan project work, manage project structure.
+Available personas: CREATOR (creates entries), REVIEWER (reviews own data and submits), APPROVER (approves others' submissions)."""
 
-content='' additional_kwargs={'parsed': None, 'refusal': None} response_metadata={'token_usage': {'completion_tokens': 101, 'prompt_tokens': 604, 'total_tokens': 705, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 0, 'rejected_prediction_tokens': None, 'text_tokens': 101}, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0, 'text_tokens': 604, 'cache_creation_tokens': 0}, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}, 'model_provider': 'openai', 'model_name': 'claude-opus-4-6', 'system_fingerprint': None, 'id': 'chatcmpl-fbde839d-34b5-4e46-9c1e-9050c2f885c5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019e49e4-3a45-7610-9c89-b22a7338f7bf-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 604, 'output_tokens': 101, 'total_tokens': 705, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 0}}
-[DIAG-CLASSIFIER] Traceback:
-Traceback (most recent call last):
-  File "d:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 74, in classify_rms_intent
-    response = llm.with_structured_output(RMSIntentClassification).invoke(prompt)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 3151, in invoke
-    input_ = context.run(step.invoke, input_, config)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 5557, in invoke
-    return self.bound.invoke(
-           ^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 4880, in invoke
-    return self._call_with_config(
-           ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 2058, in _call_with_config
-    context.run(
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\config.py", line 435, in call_func_with_variable_args
-    return func(input, **kwargs)  # type: ignore[call-arg]
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 4737, in _invoke
-    output = call_func_with_variable_args(
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\config.py", line 435, in call_func_with_variable_args
-    return func(input, **kwargs)  # type: ignore[call-arg]
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py", line 3610, in _oai_structured_outputs_parser
-    raise ValueError(msg)
-ValueError: Structured Output response does not have a 'parsed' field nor a 'refusal' field. Received message:
+# =============================================================================
+# PYDANTIC MODEL
+# =============================================================================
 
-content='' additional_kwargs={'parsed': None, 'refusal': None} response_metadata={'token_usage': {'completion_tokens': 101, 'prompt_tokens': 604, 'total_tokens': 705, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 0, 'rejected_prediction_tokens': None, 'text_tokens': 101}, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0, 'text_tokens': 604, 'cache_creation_tokens': 0}, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}, 'model_provider': 'openai', 'model_name': 'claude-opus-4-6', 'system_fingerprint': None, 'id': 'chatcmpl-fbde839d-34b5-4e46-9c1e-9050c2f885c5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019e49e4-3a45-7610-9c89-b22a7338f7bf-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 604, 'output_tokens': 101, 'total_tokens': 705, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 0}}
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=LOW, reasoning=Keyword fallback used; LLM classifier unavailable.
-INFO:     127.0.0.1:50768 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-CLASSIFIER] LLM call failed: ValueError: Structured Output response does not have a 'parsed' field nor a 'refusal' field. Received message:
 
-content='' additional_kwargs={'parsed': None, 'refusal': None} response_metadata={'token_usage': {'completion_tokens': 101, 'prompt_tokens': 604, 'total_tokens': 705, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 0, 'rejected_prediction_tokens': None, 'text_tokens': 101}, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0, 'text_tokens': 604, 'cache_creation_tokens': 0}, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}, 'model_provider': 'openai', 'model_name': 'claude-opus-4-6', 'system_fingerprint': None, 'id': 'chatcmpl-fbde839d-34b5-4e46-9c1e-9050c2f885c5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019e49e4-6703-7481-8778-734d176e7de7-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 604, 'output_tokens': 101, 'total_tokens': 705, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 0}}
-[DIAG-CLASSIFIER] Traceback:
-Traceback (most recent call last):
-  File "d:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 74, in classify_rms_intent
-    response = llm.with_structured_output(RMSIntentClassification).invoke(prompt)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 3151, in invoke
-    input_ = context.run(step.invoke, input_, config)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 5557, in invoke
-    return self.bound.invoke(
-           ^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 4880, in invoke
-    return self._call_with_config(
-           ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 2058, in _call_with_config
-    context.run(
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\config.py", line 435, in call_func_with_variable_args
-    return func(input, **kwargs)  # type: ignore[call-arg]
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\base.py", line 4737, in _invoke
-    output = call_func_with_variable_args(
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\runnables\config.py", line 435, in call_func_with_variable_args
-    return func(input, **kwargs)  # type: ignore[call-arg]
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py", line 3610, in _oai_structured_outputs_parser
-    raise ValueError(msg)
-ValueError: Structured Output response does not have a 'parsed' field nor a 'refusal' field. Received message:
+class RMSIntentClassification(BaseModel):
+    """Structured output for RMS intent classification."""
 
-content='' additional_kwargs={'parsed': None, 'refusal': None} response_metadata={'token_usage': {'completion_tokens': 101, 'prompt_tokens': 604, 'total_tokens': 705, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 0, 'rejected_prediction_tokens': None, 'text_tokens': 101}, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0, 'text_tokens': 604, 'cache_creation_tokens': 0}, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}, 'model_provider': 'openai', 'model_name': 'claude-opus-4-6', 'system_fingerprint': None, 'id': 'chatcmpl-fbde839d-34b5-4e46-9c1e-9050c2f885c5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019e49e4-6703-7481-8778-734d176e7de7-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 604, 'output_tokens': 101, 'total_tokens': 705, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 0}}
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=LOW, reasoning=Keyword fallback used; LLM classifier unavailable.
+    domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"] = Field(
+        description='Whether the user message falls within RMS scope.'
+    )
+    collection: str = Field(
+        description='Which RMS collection the request targets: "rms_timesheet", "rms_projectplan", or empty if out of domain.'
+    )
+    persona: str = Field(
+        description='Which persona the request targets: "CREATOR", "REVIEWER", "APPROVER", or empty if out of domain.'
+    )
+    confidence: Literal["HIGH", "MEDIUM", "LOW"] = Field(
+        description='Confidence level in the classification.'
+    )
+    reasoning: str = Field(
+        description='One-sentence explanation of the classification.'
+    )
+
+
+# =============================================================================
+# PARSER & PROMPT TEMPLATE (module-level — built once at import time)
+# =============================================================================
+
+_parser = PydanticOutputParser(pydantic_object=RMSIntentClassification)
+
+_prompt_template = PromptTemplate(
+    template=(
+        "{module_description}\n\n"
+        "Classify the following user message into a structured response.\n\n"
+        "{format_instructions}\n\n"
+        "User message: {user_message}\n"
+    ),
+    input_variables=["user_message"],
+    partial_variables={
+        "module_description": MODULE_DOMAIN_DESCRIPTION,
+        "format_instructions": _parser.get_format_instructions(),
+    },
+)
+
+
+# =============================================================================
+# LLM CLASSIFIER
+# =============================================================================
+
+
+def classify_rms_intent(user_message: str) -> RMSIntentClassification:
+    """Classify the user's intent using the LLM with PydanticOutputParser."""
+    llm = get_llm_non_streaming()
+
+    try:
+        prompt_value = _prompt_template.invoke({"user_message": user_message})
+        llm_response = llm.invoke(prompt_value)
+        # llm_response is an AIMessage; the JSON is in .content
+        raw_text = getattr(llm_response, "content", "") or ""
+        parsed = _parser.parse(raw_text)
+        print(f"[DIAG-CLASSIFIER] LLM returned: {parsed}")
+        return parsed
+    except Exception as e:
+        import traceback
+        print(f"[DIAG-CLASSIFIER] LLM call failed: {type(e).__name__}: {e}")
+        print(f"[DIAG-CLASSIFIER] Traceback:")
+        traceback.print_exc()
+        return keyword_fallback(user_message)
+
+
+# =============================================================================
+# KEYWORD FALLBACK
+# =============================================================================
+
+
+def keyword_fallback(user_message: str) -> RMSIntentClassification:
+    """
+    Keyword-based fallback classifier when LLM is unavailable.
+    Returns LOW confidence and assumes in-domain.
+    """
+    msg_lower = user_message.lower()
+
+    # Priority: APPROVER > CREATOR > REVIEWER
+    for keyword in APPROVER_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="APPROVER",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    for keyword in CREATOR_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="CREATOR",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    for keyword in FILLER_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="REVIEWER",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    for keyword in QUERY_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="REVIEWER",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    # No match — default to reviewer
+    return RMSIntentClassification(
+        domain="IN_DOMAIN",
+        collection="rms_timesheet",
+        persona="REVIEWER",
+        confidence="LOW",
+        reasoning="Keyword fallback used; LLM classifier unavailable.",
+    )
