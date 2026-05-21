@@ -1,32 +1,73 @@
-[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_timesheet' persona='APPROVER' confidence='HIGH' reasoning="The user explicitly requests to 'approve' a worklog, which is a specific function of the APPROVER persona within the rms_timesheet collection."
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=HIGH, reasoning=The user explicitly requests to 'approve' a worklog, which is a specific function of the APPROVER persona within the 
-rms_timesheet collection.
-[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message="You don't have approver access to rms timesheet. Please contact your administrator if you need this permission."
+** two places it is available i ma giving two codes
 
-def permission_blocked_node(state: RMSState) -> dict:
-    """
-    Node 4: Handle permission-denied scenarios.
-    Appends an error message to the messages list.
-    Uses denial_message from state if present, else falls back to default message.
-    """
-    print(f"[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message={state.get('denial_message')!r}")
-    messages = state.get("messages", [])
-    denial_message = state.get("denial_message")
 
-    if denial_message:
-        response_text = denial_message
-    else:
-        response_text = (
-            "I can only help with RMS tasks like logging hours, "
-            "viewing your tasks, or approving worklogs. "
-            "Could you rephrase your request?"
-        )
+# NEW: Listen for Generative UI JSON Widgets AND Static Messages from MRR Workflow
+            elif event_kind == "on_chain_end":
+                output = event.get("data", {}).get("output")
+                node_name = event.get("name")
+                
+                mrr_static_nodes = [
+                    "handle_header", "handle_items", "evaluate_and_route", 
+                    "permission_blocked_node", "approver_agent_node", "issuer_agent_node", "welcome_node"
+                ]
+                
+                if node_name in mrr_static_nodes and isinstance(output, dict) and "messages" in output:
+                    for msg in output["messages"]:
+                        if hasattr(msg, "content") and isinstance(msg.content, str):
+                            content = msg.content
+                            
+                            # Safely extract the <<FORM>> JSON out of the static string
+                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
+                                # 1. Yield any text before the form
+                                before_form = content.split("<<FORM>>")[0]
+                                if before_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
+                                
+                                # 2. Parse and yield the Form
+                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
+                                try:
+                                    form_spec = json.loads(form_str)
+                                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                                except Exception as e:
+                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
+                                
+                                # 3. Yield any text after the form
+                                after_form = content.split("<<ENDFORM>>")[1]
+                                if after_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
+                            else:
+                                # No form tags, just yield as standard text
+                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
 
-    ai_message = AIMessage(content=response_text)
 
-    execution_log = state.get("execution_log", []) + ["Permission blocked"]
-
-    return {
-        "messages": messages + [ai_message],
-        "execution_log": execution_log
-    }
+elif event_kind == "on_chain_end":
+                output = event.get("data", {}).get("output")
+                node_name = event.get("name")
+                
+                mrr_static_nodes = [
+                    "handle_header", "handle_items", "evaluate_and_route", 
+                    "permission_blocked_node", "approver_agent_node", "issuer_agent_node", "welcome_node"
+                ]
+                
+                if node_name in mrr_static_nodes and isinstance(output, dict) and "messages" in output:
+                    for msg in output["messages"]:
+                        if hasattr(msg, "content") and isinstance(msg.content, str):
+                            content = msg.content
+                            
+                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
+                                before_form = content.split("<<FORM>>")[0]
+                                if before_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
+                                
+                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
+                                try:
+                                    form_spec = json.loads(form_str)
+                                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                                except Exception as e:
+                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
+                                
+                                after_form = content.split("<<ENDFORM>>")[1]
+                                if after_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
+                            else:
+                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
