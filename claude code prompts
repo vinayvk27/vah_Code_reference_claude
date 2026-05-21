@@ -1,4 +1,158 @@
-[DIAG-CLASSIFIER] LLM returned: domain='IN_DOMAIN' collection='rms_timesheet' persona='APPROVER' confidence='HIGH' reasoning="The user explicitly requests to 'approve' a worklog, which is a specific function of the APPROVER persona within the rms_timesheet collection."
-[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=HIGH, reasoning=The user explicitly requests to 'approve' a worklog, which is a specific function of the APPROVER persona within the 
-rms_timesheet collection.
-[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message=None
+"""
+RMS Workflow State Schema
+=========================
+Defines the state container for the RMS LangGraph workflow.
+
+The state carries identity fields (emp_no, group_idx, role_ids, role_names)
+from the chat_controller, plus routing results from the intent classifier
+and permission checker.
+"""
+from typing import TypedDict, Optional, List
+
+
+class RMSState(TypedDict):
+    """
+    State container for RMS agent orchestration workflow.
+
+    Identity fields (from chat_controller handoff):
+    - user_id: str (was user_id)
+    - user_dept: str (was user_dept)
+    - emp_no: str (NEW — employee ID for permission checks)
+    - group_idx: int (NEW — user's group for DB lookups)
+    - role_ids: List[int] (NEW — user's role IDs for DB lookups)
+    - role_names: List[str] (NEW — user's role names)
+    - selected_module: str (NEW — always "RMS" for this workflow)
+    - selected_collection: str (collection target from classifier)
+    - selected_agent_role: str (persona from classifier: "creator"/"reviewer"/"approver")
+    - parsed_intent: str ("IN_DOMAIN" or "OUT_OF_DOMAIN")
+    - classifier_confidence: str (NEW — "HIGH"/"MEDIUM"/"LOW")
+    - append_soft_correction: bool (NEW — flag for soft-correction append)
+    - has_permission: bool (result of permission_check_node)
+    - messages: list (conversation history)
+    - execution_log: list[str]
+    - uploaded_files: list (for bulk data processing)
+    - denial_message: Optional[str] (context for permission-denied responses)
+    """
+
+    user_id: str
+    user_dept: str
+    emp_no: str
+    group_idx: int
+    role_ids: List[int]
+    role_names: List[str]
+    selected_module: str
+    selected_collection: str
+    selected_agent_role: str
+    parsed_intent: str
+    classifier_confidence: str
+    append_soft_correction: bool
+    has_permission: bool
+    messages: list
+    execution_log: list[str]
+    uploaded_files: list
+    denial_message: Optional[str]
+
+def permission_check_node(state: RMSState) -> dict:
+    """
+    Node 2: Check user permissions via DB (check_agent_access).
+    Sets has_permission to True/False.
+    OUT_OF_DOMAIN requests short-circuit with a denial message.
+    """
+    print(f"[DIAG-BLOCKED] permission_blocked_node ENTERED. denial_message={state.get('denial_message')!r}")
+    from app.controllers.auth_controller import AuthController
+
+    parsed_intent = state.get("parsed_intent", "")
+    selected_agent_role = state.get("selected_agent_role", "")
+    selected_collection = state.get("selected_collection", "")
+    emp_no = state.get("emp_no", "")
+    group_idx = state.get("group_idx", 0)
+    role_ids = state.get("role_ids", [])
+
+    execution_log = state.get("execution_log", [])
+
+    # OUT_OF_DOMAIN short-circuits
+    if parsed_intent == "OUT_OF_DOMAIN":
+        execution_log.append("Out-of-domain request; routing to blocked node.")
+        return {
+            "has_permission": False,
+            "denial_message": (
+                "I can only help with RMS tasks like logging hours, "
+                "viewing your tasks, or approving worklogs. "
+                "Could you rephrase your request?"
+            ),
+            "execution_log": execution_log
+        }
+
+    # IN_DOMAIN: look up agent in DB and check access
+    if not selected_collection or not selected_agent_role:
+        execution_log.append("Classifier returned incomplete result; denying.")
+        return {
+            "has_permission": False,
+            "denial_message": (
+                "I wasn't able to understand your request. "
+                "Could you rephrase it?"
+            ),
+            "execution_log": execution_log
+        }
+
+    # Build the expected agent_name following the convention:
+    # {MODULE}_{COLLECTION_SUFFIX}_{PERSONA}
+    # e.g., rms_timesheet + creator → RMS_TIMESHEET_CREATOR
+    collection_suffix = selected_collection.upper().replace("RMS_", "")
+    expected_agent_name = f"RMS_{collection_suffix}_{selected_agent_role.upper()}"
+
+    # Look up the agent by name first to get its agent_id
+    db = SessionLocal()
+    try:
+        from app.models.db_schema import Agent
+        agent_row = db.query(Agent).filter(
+            Agent.agent_name == expected_agent_name,
+            Agent.is_active == 1
+        ).first()
+
+        if not agent_row:
+            execution_log.append(f"Agent {expected_agent_name} not found in DB.")
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    f"The {selected_agent_role} role for {selected_collection} "
+                    f"is not available."
+                ),
+                "execution_log": execution_log
+            }
+
+        # Check access via Gate 2
+        agent_or_none = AuthController.check_agent_access(
+            emp_no=emp_no,
+            group_idx=group_idx,
+            role_ids=role_ids,
+            agent_id=agent_row.agent_id,
+            db=db
+        )
+
+        if agent_or_none is None:
+            execution_log.append(
+                f"Permission DENIED: user lacks {expected_agent_name}."
+            )
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    f"You don't have {selected_agent_role.lower()} access to "
+                    f"{selected_collection.replace('_', ' ')}. "
+                    f"Please contact your administrator if you need this permission."
+                ),
+                "execution_log": execution_log
+            }
+
+        execution_log.append(f"Permission GRANTED: {expected_agent_name}")
+        print(f"[DIAG-BLOCKED] returning with messages={result.get('messages') if 'result' in dir() else 'no result var'}")
+
+        print(f"[DIAG-BLOCKED] permission_blocked_node returning. About to emit denial.")
+
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+    finally:
+        db.close()
