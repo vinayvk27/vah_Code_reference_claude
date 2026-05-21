@@ -1,1 +1,2 @@
-print(f"[DIAG] permission_check_node: role={selected_agent_role} available={available_roles} has_permission={has_permission}")
+INFO:     127.0.0.1:61752 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG] permission_check_node: role=reviewer available=[] has_permission=False
