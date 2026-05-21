@@ -1,1 +1,2 @@
-print(f"[DIAG-4.2] Classified as: collection={classification.collection}, persona={classification.persona}, confidence={classification.confidence}, reasoning={classification.reasoning}")
+INFO:     127.0.0.1:50140 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-4.2] Classified as: collection=rms_timesheet, persona=APPROVER, confidence=LOW, reasoning=Keyword fallback used; LLM classifier unavailable.
