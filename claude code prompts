@@ -1,14 +1,159 @@
-C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNzMxIiwidXNlcl9pZCI6IjE3MzEiLCJuYW1lIjoiSW10aGl5YXMgTSIsImVtYWlsIjoiaW10aGl5YXMubWFqaXRoQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJIREQiLCJncm91cF9pZHgiOjMsInJvbGVfaWRzIjpbOV0sInJvbGVfbmFtZXMiOlsiU2VuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6IkUyIiwiZ3JhZGVfaWQiOjUwLCJyZXBvcnRpbmdfdG8iOiI4MDEiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM4NTY4M30.HZgpkbgI1SrkzGkxCp3pdLqjBMrNyv8Giow7L8qv18Y" ^  -d "{\"module_name\":\"RMS\",\"message\":\"Approve worklog 47\",\"chat_history\":[]}" ^  -i
-HTTP/1.1 200 OK
-date: Thu, 21 May 2026 10:32:24 GMT
-server: uvicorn
-content-type: text/event-stream; charset=utf-8
-transfer-encoding: chunked
+═══════════════════════════════════════════════════════════════════
+TASK 4.2.1: Fix RMS message accumulation using add_messages channel
+═══════════════════════════════════════════════════════════════════
 
-data: {"type": "meta", "thread_id": "58ed1709-383c-41c7-8e6a-1dcf7c4de50b"}
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+If you encounter an error in a file under "Out of scope":
+  - Report and STOP.
+  - Do NOT modify out-of-scope files.
+  - Do NOT add, restore, or invent code beyond what is listed below.
+  - Do NOT clean up imports, refactor, or "fix" anything unrelated.
 
-data: {"type": "chunk", "text": "Approve worklog 47\n\n"}
+If you find collection_agents or other fat-JWT patterns reappearing
+anywhere, STOP and report.
 
-data: {"type": "chunk", "text": "\n\n"}
+───────────────────────────────────────────────────────────────────
+MANDATORY FOOTPRINT DECLARATION
+───────────────────────────────────────────────────────────────────
+Before changes, output INTENDED FOOTPRINT:
+  - Files I will READ
+  - Files I will MODIFY
+  - Files I will CREATE
 
-data: [DONE]
+At end, output `git diff --stat HEAD` or list every file touched.
+Confirm actual matches intended.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The RMS workflow currently has `messages: list` in RMSState as a
+plain (non-channel) field. Nodes that emit AIMessages return
+`{"messages": messages + [ai_message]}`, manually appending.
+
+This causes the chat_controller's on_chain_end handler to surface
+ALL accumulated messages from state — including ones from previous
+turns — every time a node ends. The user sees old messages echoed
+back in each new response.
+
+The standard LangGraph pattern is to use the `add_messages` channel
+annotation. With it, nodes return only the NEW message, and LangGraph
+itself appends to the accumulated state. Reads in chat_controller's
+on_chain_end still get a full message list, but each individual
+node's `output["messages"]` (the value returned by the node) contains
+only the new messages from that node.
+
+This task fixes RMS only. HRMS and MRR will adopt the same pattern
+in Tasks 4.3 and 4.4.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. MODIFY app/workflows/rms_workflow/state.py
+
+   a. Add these imports at the top of the file:
+        from typing import Annotated
+        from langgraph.graph.message import add_messages
+
+   b. Change the `messages` field declaration from:
+        messages: list
+      to:
+        messages: Annotated[list, add_messages]
+
+   c. Leave every other field in RMSState exactly as-is.
+
+2. MODIFY app/workflows/rms_workflow/nodes.py
+
+   In EVERY node function that currently does either of these patterns:
+     - `"messages": messages + [ai_message]`
+     - `"messages": state.get("messages", []) + [ai_message]`
+     - any variation that manually concatenates the existing list
+       with the new message
+
+   Replace with returning ONLY the new message in a list:
+     - `"messages": [ai_message]`
+
+   The nodes that likely need this change:
+     - permission_blocked_node (we know this one does)
+     - creator_agent_node (its final return likely emits messages)
+     - reviewer_agent_node (same)
+     - approver_agent_node (same)
+
+   For each agent node, find the FINAL return statement (the one
+   that returns the response AIMessage). If it appends to the
+   existing list, change to return only the new message.
+
+   IMPORTANT — do NOT change intermediate appends within the function
+   body. Only the dict returned by the node function should contain
+   `"messages": [new_messages_only]` instead of the concatenated list.
+
+   If a node returns NO messages (e.g., parse_intent_node and
+   permission_check_node, which only update routing state), do NOT
+   add a messages field to their return. Leave them alone.
+
+3. CREATE TASK_4_2_1_REPORT.md at project root with:
+   - INTENDED FOOTPRINT
+   - ACTUAL footprint
+   - List of every node function modified
+   - Before/after of each modified return statement
+   - Any deviations
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE
+───────────────────────────────────────────────────────────────────
+- app/workflows/hrms_workflow/  (Task 4.3 will adopt this pattern)
+- app/workflows/material_workflow/  (Task 4.4)
+- app/controllers/*
+- app/core/*
+- app/models/*
+- app/routes/*
+- All other folders
+- intent.py
+- prompts.py
+- tools.py, rms_tools.py
+- agents.py, config.py, __init__.py
+- graph.py (verify it still compiles after state.py change, but
+  do NOT modify unless an import or reference breaks)
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/state.py
+- app/workflows/rms_workflow/nodes.py (full file)
+- app/workflows/rms_workflow/graph.py (just to verify imports still work)
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/state.py
+- app/workflows/rms_workflow/nodes.py
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- TASK_4_2_1_REPORT.md
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TEST (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Test A: Server boots cleanly.
+
+Test B: Junior 1065 + "approve worklog 47"
+  Expected stream output:
+    data: {"type": "meta", ...}
+    data: {"type": "chunk", "text": "You don't have approver access..."}
+    data: [DONE]
+
+  Specifically: ONE chunk with the denial message. NOT multiple chunks
+  echoing previous messages from earlier turns.
+
+Test C: Junior 1065, send TWO messages in sequence in the same thread:
+  Message 1: "list my tasks"
+  Message 2: "approve worklog 47"
+
+  Each request is independent (the React frontend sends chat_history
+  in the body). The stream for Message 2 should contain ONLY the
+  AI reply to Message 2 — not Message 1's content or its AI reply.
