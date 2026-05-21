@@ -1,10 +1,14 @@
-static_output_nodes = [
-                    # MRR
-                    "handle_header", "handle_items", "evaluate_and_route",
-                    "welcome_node", "issuer_agent_node",
-                    # RMS + HRMS + MRR — both registered names per workflow
-                    "permission_blocked", "permission_blocked_node",
-                    "creator_agent", "creator_agent_node",
-                    "reviewer_agent", "reviewer_agent_node",
-                    "approver_agent", "approver_agent_node",
-                ]
+C:\Users\vinay.neelam>curl -X POST http://localhost:5970/api/v1/chat/stream ^  -H "Content-Type: application/json" ^  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNzMxIiwidXNlcl9pZCI6IjE3MzEiLCJuYW1lIjoiSW10aGl5YXMgTSIsImVtYWlsIjoiaW10aGl5YXMubWFqaXRoQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJIREQiLCJncm91cF9pZHgiOjMsInJvbGVfaWRzIjpbOV0sInJvbGVfbmFtZXMiOlsiU2VuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6IkUyIiwiZ3JhZGVfaWQiOjUwLCJyZXBvcnRpbmdfdG8iOiI4MDEiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTM4NTY4M30.HZgpkbgI1SrkzGkxCp3pdLqjBMrNyv8Giow7L8qv18Y" ^  -d "{\"module_name\":\"RMS\",\"message\":\"Approve worklog 47\",\"chat_history\":[]}" ^  -i
+HTTP/1.1 200 OK
+date: Thu, 21 May 2026 10:32:24 GMT
+server: uvicorn
+content-type: text/event-stream; charset=utf-8
+transfer-encoding: chunked
+
+data: {"type": "meta", "thread_id": "58ed1709-383c-41c7-8e6a-1dcf7c4de50b"}
+
+data: {"type": "chunk", "text": "Approve worklog 47\n\n"}
+
+data: {"type": "chunk", "text": "\n\n"}
+
+data: [DONE]
