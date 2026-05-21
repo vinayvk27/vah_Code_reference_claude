@@ -1,6 +1,24 @@
-AGENT_REGISTRY: Dict[str, MRRAgentConfig] = {
-    "mrr_creator": MRR_CREATOR,
-    "mrr_approver": MRR_APPROVER,
-    "erp_approver": ERP_APPROVER,
-    "str_issuer": STR_ISSUER,
-}
+# test_erp.py
+from sqlalchemy import create_engine, text
+
+# Updated with the exact service name: erp
+TEST_URL = "oracle+oracledb://T28NOV25:PRI_123@10.5.0.106:1521/?service_name=ERP"
+
+def test_connection():
+    print(f"Attempting to connect to Oracle ERP...") 
+    try:
+        engine = create_engine(TEST_URL)
+        
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1 FROM DUAL")).scalar()
+            if result == 1:
+                print("✅ SUCCESS! Connected to Oracle ERP.")
+            else:
+                print("⚠️ Connected, but got an unexpected result.")
+                
+    except Exception as e:
+        print("\n❌ FAILED to connect to Oracle ERP.")
+        print(f"Error Details: {str(e)}")
+
+if __name__ == "__main__":
+    test_connection()
