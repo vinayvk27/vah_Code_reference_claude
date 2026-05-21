@@ -47,3 +47,20 @@ async def stream_chat_with_orchestrator(
             "messages": [],
             "execution_log": []
         }
+
+
+10.5.1.24:5970/api/v1/chat/stream
+
+{
+    "module_name": "RMS",
+    "message":"list my tasks",
+    "chat_history":[]
+}
+
+Connection closed
+11:45:12
+[DONE]
+11:45:12
+Connection closed
+11:45:06
+[DONE]
