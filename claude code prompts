@@ -1,5 +1,604 @@
-Send that to your React dev. Tasks A through G should keep them busy for the duration of Tasks 4.2 through 4.4. When we ship Task 4.4 (MRR), your React dev can finally test end-to-end.
+═══════════════════════════════════════════════════════════════════
+TASK 4.2: Rewrite RMS workflow — LLM intent classifier + DB permissions
+═══════════════════════════════════════════════════════════════════
 
----
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT — READ FIRST
+───────────────────────────────────────────────────────────────────
+If you encounter an error in a file listed under "Out of scope —
+do not touch":
+  - Report the error and STOP.
+  - Do NOT modify out-of-scope files to make errors go away.
+  - Do NOT modify in-scope files to compensate.
+  - Do NOT add fields, methods, or restore removed structures
+    (e.g., collection_agents) to make compilation/runtime errors
+    disappear.
 
-**Part 2 — Task 4.2 spec for Claude Code. This is long.**
+Additional constraints for this task:
+  - Do NOT modify the agent_node functions (creator_agent_node,
+    reviewer_agent_node, approver_agent_node) EXCEPT for removing
+    legacy references and fixing the documented NameError bug.
+    Their core agent logic (LLM invocation, tool binding, action
+    parsing) STAYS UNCHANGED.
+  - Do NOT optimize, refactor, or "clean up" existing code unless
+    explicitly requested.
+  - Do NOT remove imports unless they become genuinely unused
+    after your changes. If unsure, leave them.
+
+If completing an in-scope file requires touching an out-of-scope
+file, STOP and report the dependency.
+
+───────────────────────────────────────────────────────────────────
+MANDATORY FOOTPRINT DECLARATION
+───────────────────────────────────────────────────────────────────
+Before making any code changes, output "INTENDED FOOTPRINT":
+  - Files I will READ
+  - Files I will MODIFY
+  - Files I will CREATE
+
+At the end, output the result of `git diff --stat HEAD` (if git
+is available) OR a list of every file actually changed. Confirm
+the actual footprint matches the intended one.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+After Task 4.1, chat_controller.py hands off to workflows with
+identity fields in initial_state (emp_no, group_idx, role_ids,
+role_names) instead of `collection_agents`. RMS workflow currently
+expects collection_agents in state and silently denies all requests
+because it's missing.
+
+This task rewrites the RMS workflow's intent classification and
+permission check to use:
+  1. An LLM-driven classifier (replacing keyword matching).
+  2. DB-driven permission check via check_agent_access() function
+     that already exists in auth_controller.py.
+
+Agent node logic (the LLM invocation that actually serves user
+requests) stays unchanged. We only rewrite the routing layer:
+parse_intent → permission_check → permission_blocked. The agent
+node bodies stay as-is except for removing collection_agents
+references and fixing a known NameError bug.
+
+THE FOUR-FIELD CLASSIFIER:
+The classifier returns:
+  - domain: "IN_DOMAIN" or "OUT_OF_DOMAIN"
+  - collection: one of "rms_timesheet" or "rms_projectplan",
+    or empty string if OUT_OF_DOMAIN
+  - persona: "CREATOR" / "REVIEWER" / "APPROVER", or empty string
+    if OUT_OF_DOMAIN
+  - confidence: "HIGH" / "MEDIUM" / "LOW"
+  - reasoning: short explanation (1 sentence)
+
+DEFENSE IN DEPTH BEHAVIOR:
+  - OUT_OF_DOMAIN: workflow short-circuits, emits a friendly
+    redirect message ("I can only help with RMS tasks..."), ends.
+  - IN_DOMAIN + permission DENIED: workflow emits a friendly
+    permission message explaining what the user CAN do, ends.
+  - IN_DOMAIN + permission GRANTED + confidence HIGH: proceed
+    silently to the agent node.
+  - IN_DOMAIN + permission GRANTED + confidence MEDIUM/LOW:
+    proceed to the agent node, BUT set a flag in state
+    (`append_soft_correction = True`) that the agent node will
+    use to append a soft correction message at the end of its
+    response.
+
+LLM FAILURE FALLBACKS:
+  - Timeout (5s): keyword matching is used as a last-resort
+    classifier. Confidence is set to LOW.
+  - Pydantic validation fails: treat as LOW confidence, best-effort
+    fallback to keyword matching.
+  - Empty/garbage response: same as Pydantic failure.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. CREATE app/workflows/rms_workflow/intent.py
+
+   This is a new file containing the LLM intent classifier for RMS.
+
+   Required contents:
+
+   1a. Module-level constant MODULE_DOMAIN_DESCRIPTION:
+       A string used in the classifier prompt to give the LLM
+       context about what RMS does. Suggested content:
+
+       """The RMS (Resource Management System) module handles
+       timesheet logging and project planning.
+       Available collections:
+         - rms_timesheet: log hours, view tasks, approve worklogs,
+           review team timesheets.
+         - rms_projectplan: create tasks, plan project work, manage
+           project structure.
+       Available personas: CREATOR (creates entries), REVIEWER
+       (reviews own data and submits), APPROVER (approves others'
+       submissions)."""
+
+   1b. Pydantic v2 model RMSIntentClassification:
+       Fields:
+         - domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"]
+         - collection: str (e.g., "rms_timesheet", "rms_projectplan", or "")
+         - persona: str (e.g., "CREATOR", "REVIEWER", "APPROVER", or "")
+         - confidence: Literal["HIGH", "MEDIUM", "LOW"]
+         - reasoning: str
+
+       Use pydantic v2 with Literal types where applicable.
+
+   1c. Function classify_rms_intent(user_message: str) -> RMSIntentClassification:
+       - Calls get_llm() from config.py.
+       - Uses .with_structured_output(RMSIntentClassification).
+       - Prompts the LLM with MODULE_DOMAIN_DESCRIPTION + user_message.
+       - Wraps the LLM call in a try/except. If the LLM client
+         doesn't natively support timeout, use a try/except for
+         exceptions and skip the timeout — the keyword fallback
+         is the safety net for any failure.
+       - On any exception, return a LOW-confidence fallback by
+         calling the keyword fallback function.
+
+   1d. Function keyword_fallback(user_message: str) -> RMSIntentClassification:
+       The existing keyword-matching logic from parse_intent_node
+       (the one being deleted from nodes.py) is moved here. It
+       returns an RMSIntentClassification with:
+         - domain="IN_DOMAIN" (keyword fallback assumes in-domain)
+         - collection="rms_timesheet" (default, since timesheet is
+           the most common RMS interaction)
+         - persona: determined by keyword priority (APPROVER >
+           CREATOR > REVIEWER, default REVIEWER on no match)
+         - confidence="LOW" (because we fell back)
+         - reasoning="Keyword fallback used; LLM classifier
+           unavailable."
+
+       Note: the keyword lists currently in prompts.py
+       (APPROVER_KEYWORDS, CREATOR_KEYWORDS, etc.) stay in
+       prompts.py — import them into intent.py rather than
+       duplicating.
+
+2. UPDATE app/workflows/rms_workflow/state.py
+
+   The RMSState TypedDict changes:
+
+   REMOVE these fields:
+     - collection_agents (the legacy field)
+
+   ADD these fields:
+     - emp_no: str               (the user's employee ID)
+     - group_idx: int            (the user's group)
+     - role_ids: List[int]       (the user's role IDs)
+     - role_names: List[str]     (the user's role names)
+     - selected_module: str      (the module — always "RMS" here)
+     - classifier_confidence: str  ("HIGH", "MEDIUM", "LOW")
+     - append_soft_correction: bool
+
+   KEEP these fields unchanged:
+     - user_id
+     - user_dept
+     - selected_collection
+     - selected_agent_role
+     - parsed_intent
+     - has_permission
+     - messages
+     - execution_log
+     - uploaded_files
+     - denial_message
+
+   Also update the docstring at the top of RMSState to reflect
+   the new shape.
+
+3. UPDATE app/workflows/rms_workflow/nodes.py
+
+   3a. parse_intent_node (currently lines ~207-307):
+
+       REPLACE the function body entirely. The new logic:
+
+       def parse_intent_node(state: RMSState) -> dict:
+           messages = state.get("messages", [])
+           last_user_message = ""
+           for msg in reversed(messages):
+               if hasattr(msg, "content") and isinstance(msg, HumanMessage):
+                   last_user_message = str(msg.content)
+                   break
+
+           if not last_user_message:
+               # No user message to classify
+               return {
+                   "parsed_intent": "OUT_OF_DOMAIN",
+                   "selected_collection": "",
+                   "selected_agent_role": "",
+                   "classifier_confidence": "LOW",
+                   "append_soft_correction": False,
+                   "execution_log": state.get("execution_log", []) + ["No user message found."]
+               }
+
+           from app.workflows.rms_workflow.intent import classify_rms_intent
+           classification = classify_rms_intent(last_user_message)
+
+           append_soft_correction = (
+               classification.domain == "IN_DOMAIN"
+               and classification.confidence in ("MEDIUM", "LOW")
+           )
+
+           return {
+               "parsed_intent": classification.domain,
+               "selected_collection": classification.collection,
+               "selected_agent_role": classification.persona.lower() if classification.persona else "",
+               "classifier_confidence": classification.confidence,
+               "append_soft_correction": append_soft_correction,
+               "execution_log": state.get("execution_log", []) + [
+                   f"Intent classified: domain={classification.domain}, "
+                   f"collection={classification.collection}, "
+                   f"persona={classification.persona}, "
+                   f"confidence={classification.confidence}, "
+                   f"reasoning={classification.reasoning}"
+               ]
+           }
+
+       NOTE: lower-case the persona because the workflow's
+       agent_node routing checks for lowercase values like
+       "creator", "reviewer", "approver".
+
+   3b. permission_check_node (currently lines ~147-204):
+
+       REPLACE the function body entirely. The new logic:
+
+       def permission_check_node(state: RMSState) -> dict:
+           from app.controllers.auth_controller import AuthController
+           from app.dao.database import SessionLocal
+
+           parsed_intent = state.get("parsed_intent", "")
+           selected_agent_role = state.get("selected_agent_role", "")
+           selected_collection = state.get("selected_collection", "")
+           emp_no = state.get("emp_no", "")
+           group_idx = state.get("group_idx", 0)
+           role_ids = state.get("role_ids", [])
+
+           execution_log = state.get("execution_log", [])
+
+           # OUT_OF_DOMAIN short-circuits: workflow will route to
+           # permission_blocked_node which emits the out-of-domain
+           # message.
+           if parsed_intent == "OUT_OF_DOMAIN":
+               execution_log.append("Out-of-domain request; routing to blocked node.")
+               return {
+                   "has_permission": False,
+                   "denial_message": (
+                       "I can only help with RMS tasks like logging hours, "
+                       "viewing your tasks, or approving worklogs. "
+                       "Could you rephrase your request?"
+                   ),
+                   "execution_log": execution_log
+               }
+
+           # IN_DOMAIN: look up agent in DB and check access
+           if not selected_collection or not selected_agent_role:
+               execution_log.append("Classifier returned incomplete result; denying.")
+               return {
+                   "has_permission": False,
+                   "denial_message": (
+                       "I wasn't able to understand your request. "
+                       "Could you rephrase it?"
+                   ),
+                   "execution_log": execution_log
+               }
+
+           # Build the expected agent_name following the convention:
+           # {MODULE}_{COLLECTION_SUFFIX}_{PERSONA}
+           # e.g., rms_timesheet + creator → RMS_TIMESHEET_CREATOR
+           collection_suffix = selected_collection.upper().replace("RMS_", "")
+           expected_agent_name = f"RMS_{collection_suffix}_{selected_agent_role.upper()}"
+
+           # Look up the agent by name first to get its agent_id
+           db = SessionLocal()
+           try:
+               from app.models.db_schema import Agent
+               agent_row = db.query(Agent).filter(
+                   Agent.agent_name == expected_agent_name,
+                   Agent.is_active == 1
+               ).first()
+
+               if not agent_row:
+                   execution_log.append(f"Agent {expected_agent_name} not found in DB.")
+                   return {
+                       "has_permission": False,
+                       "denial_message": (
+                           f"The {selected_agent_role} role for {selected_collection} "
+                           f"is not available."
+                       ),
+                       "execution_log": execution_log
+                   }
+
+               # Check access via Gate 2
+               agent_or_none = AuthController.check_agent_access(
+                   emp_no=emp_no,
+                   group_idx=group_idx,
+                   role_ids=role_ids,
+                   agent_id=agent_row.agent_id,
+                   db=db
+               )
+
+               if agent_or_none is None:
+                   execution_log.append(
+                       f"Permission DENIED: user lacks {expected_agent_name}."
+                   )
+                   return {
+                       "has_permission": False,
+                       "denial_message": (
+                           f"You don't have {selected_agent_role.lower()} access to "
+                           f"{selected_collection.replace('_', ' ')}. "
+                           f"Please contact your administrator if you need this permission."
+                       ),
+                       "execution_log": execution_log
+                   }
+
+               execution_log.append(f"Permission GRANTED: {expected_agent_name}")
+               return {
+                   "has_permission": True,
+                   "denial_message": None,
+                   "execution_log": execution_log
+               }
+           finally:
+               db.close()
+
+   3c. permission_blocked_node (currently lines ~117-145):
+
+       Update to use the new denial_message field structure (it
+       already does this — verify it reads denial_message from
+       state and emits it as an AIMessage). No major changes
+       expected. Just verify it's compatible.
+
+   3d. permission_router (the conditional edge function,
+       currently lines ~310-334):
+
+       This function decides which node to route to based on
+       permission_check_node's output. Update its return values
+       to map to new state shape:
+
+       def permission_router(state: RMSState) -> str:
+           if not state.get("has_permission"):
+               return "permission_blocked"
+
+           agent_role = state.get("selected_agent_role", "").lower()
+           if agent_role == "creator":
+               return "creator_agent"
+           elif agent_role == "reviewer":
+               return "reviewer_agent"
+           elif agent_role == "approver":
+               return "approver_agent"
+           else:
+               # Should not happen if permission_check_node did its job
+               return "permission_blocked"
+
+   3e. Agent nodes (creator_agent_node, reviewer_agent_node,
+       approver_agent_node):
+
+       Three changes ONLY. Do NOT modify any other logic.
+
+       Change 1: Remove ALL references to state.get("collection_agents", ...)
+       in each agent node. Any code that conditionally branches
+       based on collection_agents must be rewritten to use:
+         - state.get("emp_no")
+         - state.get("role_ids")
+         - state.get("group_idx")
+       But ONLY if the existing branch actually uses these values.
+       If the branch is dead code (never reachable, or only used
+       for non-RMS collections that this workflow never handles),
+       delete the branch entirely.
+
+       Change 2: Fix the documented NameError bug:
+       In creator_agent_node (around line 560) and
+       reviewer_agent_node (around line 812), there's an else
+       branch for non-RMS collections that references `system_prompt`
+       without defining it. Since the RMS workflow only handles
+       RMS collections, delete the non-RMS else branch entirely
+       (it's unreachable code).
+
+       Change 3: Implement the soft correction append.
+       At the end of each agent node's response logic (just before
+       the final return statement that emits the AIMessage), check:
+
+         if state.get("append_soft_correction", False):
+             soft_correction = " (I assumed you wanted to "
+             soft_correction += f"{_describe_assumed_action(persona, collection)}. "
+             soft_correction += "Let me know if you meant something else.)"
+             # Append soft_correction to the response message text
+
+       For the inference helper, create a small function near the
+       top of nodes.py:
+
+         def _describe_assumed_action(persona: str, collection: str) -> str:
+             persona = (persona or "").lower()
+             collection = (collection or "").lower()
+             if collection == "rms_timesheet":
+                 if persona == "creator":
+                     return "create a timesheet entry"
+                 elif persona == "reviewer":
+                     return "view your timesheet"
+                 elif persona == "approver":
+                     return "approve worklogs"
+             elif collection == "rms_projectplan":
+                 if persona == "creator":
+                     return "create a project task"
+                 elif persona == "reviewer":
+                     return "view project plans"
+                 elif persona == "approver":
+                     return "approve project changes"
+             return "do that"
+
+       Then use this helper in each agent node:
+         soft_correction = (
+             f" (I assumed you wanted to "
+             f"{_describe_assumed_action(state.get('selected_agent_role', ''), state.get('selected_collection', ''))}. "
+             f"Let me know if you meant something else.)"
+         )
+
+4. UPDATE app/workflows/rms_workflow/graph.py (only if needed):
+
+   The graph structure (nodes + edges) stays the same. Only
+   verify that:
+   - Node names match the function names in nodes.py.
+   - The conditional edge function (permission_router) routes
+     to the right nodes.
+   - The entry point is still parse_intent_node.
+
+   If no changes are needed in graph.py, that's fine — leave it.
+   If anything needs to change to compile, change only what's
+   necessary.
+
+5. UPDATE app/workflows/rms_workflow/prompts.py:
+
+   Keep the keyword lists (used by keyword_fallback in intent.py).
+   Remove anything that's no longer referenced after this task.
+
+   If prompts.py becomes essentially empty (only the keyword lists
+   for the fallback), leave it as-is — it's still serving a purpose.
+
+6. CREATE TASK_4_2_REPORT.md at the project root.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/hrms_workflow/ — Task 4.3
+- app/workflows/material_workflow/ — Task 4.4
+- app/controllers/auth_controller.py
+- app/controllers/chat_controller.py — already updated in 4.1
+- app/controllers/rag_controller.py
+- app/routes/*
+- app/core/*
+- app/models/*
+- app/forms/*, app/services/*, app/utils/*
+- ARCHITECTURE_DECISIONS.md — Decisions for Task 4 are added at end of 4.5
+- FRONTEND_MIGRATION_SPEC.md — updated by human, not by this task
+- main.py
+- The frontend
+- The tools and rms_tools.py files (the actual @tool functions
+  that agent nodes use) — these stay untouched
+- agents.py and config.py — unchanged
+- __init__.py — unchanged
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/nodes.py (full file)
+- app/workflows/rms_workflow/state.py
+- app/workflows/rms_workflow/prompts.py
+- app/workflows/rms_workflow/graph.py
+- app/workflows/rms_workflow/config.py
+- app/workflows/rms_workflow/__init__.py
+- app/controllers/auth_controller.py (for check_agent_access signature)
+- app/models/db_schema.py (for Agent ORM class)
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/state.py
+- app/workflows/rms_workflow/nodes.py
+- app/workflows/rms_workflow/graph.py (if needed)
+- app/workflows/rms_workflow/prompts.py (if cleanup needed)
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/intent.py
+- TASK_4_2_REPORT.md
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+TASK_4_2_REPORT.md must contain:
+
+  1. INTENDED FOOTPRINT (declared at start).
+  2. ACTUAL footprint (file diff stat at end). Confirm match.
+  3. Full code of app/workflows/rms_workflow/intent.py.
+  4. The new RMSState TypedDict definition (full Python code).
+  5. The new parse_intent_node function (full Python code).
+  6. The new permission_check_node function (full Python code).
+  7. The new permission_router function (full Python code).
+  8. List of all changes made to creator_agent_node,
+     reviewer_agent_node, approver_agent_node — be specific
+     about what was added, what was removed, what stayed.
+  9. Confirmation that the NameError bug at lines ~560 and ~812
+     has been fixed (paste the before/after of those code regions).
+  10. List of any references to `collection_agents` that still
+      remain in any rms_workflow file (should be zero).
+  11. Any deviations from this spec, with reasons.
+  12. Expected runtime behavior:
+      - A Junior 1065 sending "log 8 hours on task 12" should
+        reach creator_agent_node and produce a response.
+      - A Junior 1065 sending "approve worklog 47" should be
+        denied (no APPROVER access) at permission_check_node.
+      - A Junior 1065 sending "what's the weather" should be
+        classified OUT_OF_DOMAIN and emit the redirect message.
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Each test uses curl with the server running.
+
+Test 1: App boots
+  Restart the server. Confirm no import errors.
+
+Test 2: Junior 1065 normal request (HIGH confidence path)
+  Login as Junior 1065. Use the token.
+
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <TOKEN>" \
+    -d '{"module_name":"RMS","message":"show me my tasks","chat_history":[]}' -i
+
+  Expected:
+  - HTTP 200
+  - SSE stream contains meta event with thread_id
+  - SSE stream contains at least one chunk event with text
+    response from the agent (or a placeholder if the agent's
+    LLM call also has issues — that's a separate problem)
+  - Stream ends with [DONE]
+  - Server terminal shows execution_log entries about classification
+    and permission grant
+
+Test 3: Junior 1065 out-of-domain request
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <TOKEN>" \
+    -d '{"module_name":"RMS","message":"what is the weather today","chat_history":[]}' -i
+
+  Expected:
+  - HTTP 200
+  - SSE stream contains meta event
+  - SSE stream contains a chunk event with the out-of-domain
+    redirect message ("I can only help with RMS tasks...")
+  - No agent_node was invoked (no real LLM agent call happened)
+  - Stream ends with [DONE]
+
+Test 4: Junior 1065 denied (no APPROVER access)
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <TOKEN>" \
+    -d '{"module_name":"RMS","message":"approve worklog 47","chat_history":[]}' -i
+
+  Expected:
+  - HTTP 200
+  - SSE stream contains meta event
+  - SSE stream contains a chunk event with the denial message
+    explaining that Junior lacks APPROVER access
+  - Stream ends with [DONE]
+
+Test 5: Senior 1731 broad access
+  Login as Senior 1731 (password HDD). Use the token.
+
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <TOKEN>" \
+    -d '{"module_name":"RMS","message":"approve worklog 47","chat_history":[]}' -i
+
+  Expected:
+  - HTTP 200
+  - SSE stream contains meta event
+  - SSE stream contains chunk events from the approver_agent_node
+    (real LLM response, or at least an attempt that proves the
+    agent was reached)
+  - Stream ends with [DONE]
+
+If any test fails, paste the curl output and the server terminal
+log. We'll debug before proceeding to Task 4.3.
