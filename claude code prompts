@@ -1,3 +1,5 @@
-tasklist /FI "IMAGENAME eq php.exe" /FO list /v
+C:\Users\vinay.neelam>tasklist /FI "IMAGENAME eq php.exe" /FO list /v
+INFO: No tasks are running which match the specified criteria.
 
-tasklist /FI "IMAGENAME eq php-cgi.exe" /FO list /v
+C:\Users\vinay.neelam>tasklist /FI "IMAGENAME eq php-cgi.exe" /FO list /v
+INFO: No tasks are running which match the specified criteria.
