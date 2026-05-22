@@ -1,7 +1,7 @@
-$connect = oci_connect(ERP_ITWH_USERNAME, ERP_ITWH_PASSWORD, ERP_DB_HOSTNAME, ERP_CHARSET);
-                        $getUnitRate = oci_parse($connect, "SELECT H.CONVERSIONRATE,L.PRICE FROM POHEADERS H,POLINES L WHERE H.POHEADERID = L.POHEADERID AND H.ALTERNATEORDERNUMBER = '$po_no' AND L.ITEMDESCRIPTION = '$mfg_no'");
-                        oci_execute($getUnitRate);
-                        while (($row = oci_fetch_row($getUnitRate)) != false) {
-                            $RATE_PER_UNIT = (float)$row[0] * (float)$row[1];
-                        }
-                        oci_free_statement($getUnitRate);
+import oracledb
+conn = oracledb.connect(
+    user="T28NOV25",
+    password="PRI_123",
+    dsn="10.5.0.106:1521/ERP"
+)
+print(conn.version)
