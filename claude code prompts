@@ -1,7 +1,46 @@
-import oracledb
-conn = oracledb.connect(
-    user="T28NOV25",
-    password="PRI_123",
-    dsn="10.5.0.106:1521/ERP"
-)
-print(conn.version)
+ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>import oracledb
+'import' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>conn = oracledb.connect(
+'conn' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>    user="T28NOV25",
+'user' is not recognized as an internal or external command,
+operable program or batch file.
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>    password="PRI_123",
+'password' is not recognized as an internal or external command,
+
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>python -c "import oracledb; conn = oracledb.connect(user='T28NOV25', password='PRI_123', dsn='10.5.0.106:1521/ERP'); print(conn.version)"
+Traceback (most recent call last):
+  File "src/oracledb/impl/thin/connection.pyx", line 421, in oracledb.thin_impl.ThinConnImpl._connect_with_address
+  File "src/oracledb/impl/thin/protocol.pyx", line 288, in oracledb.thin_impl.Protocol._connect_phase_one
+  File "src/oracledb/impl/thin/protocol.pyx", line 470, in oracledb.thin_impl.Protocol._process_message
+  File "src/oracledb/impl/thin/protocol.pyx", line 446, in oracledb.thin_impl.Protocol._process_message
+  File "src/oracledb/impl/thin/messages/connect.pyx", line 66, in oracledb.thin_impl.ConnectMessage.process       
+  File "C:\ml_env_311\Lib\site-packages\oracledb\errors.py", line 199, in _raise_err
+    raise error.exc_type(error) from cause
+oracledb.exceptions.NotSupportedError: DPY-3010: connections to this database server version are not supported by python-oracledb in thin mode
+Help: https://python-oracledb.readthedocs.io/en/latest/user_guide/troubleshooting.html#dpy-3010
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "C:\ml_env_311\Lib\site-packages\oracledb\connection.py", line 1768, in connect
+    return conn_class(dsn=dsn, pool=pool, params=params, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\oracledb\connection.py", line 892, in __init__
+    impl.connect(params_impl)
+  File "src/oracledb/impl/thin/connection.pyx", line 544, in oracledb.thin_impl.ThinConnImpl.connect
+  File "src/oracledb/impl/thin/connection.pyx", line 540, in oracledb.thin_impl.ThinConnImpl.connect
+  File "src/oracledb/impl/thin/connection.pyx", line 482, in oracledb.thin_impl.ThinConnImpl._connect_with_params
+  File "src/oracledb/impl/thin/connection.pyx", line 463, in oracledb.thin_impl.ThinConnImpl._connect_with_description
+  File "src/oracledb/impl/thin/connection.pyx", line 425, in oracledb.thin_impl.ThinConnImpl._connect_with_address
+  File "C:\ml_env_311\Lib\site-packages\oracledb\errors.py", line 199, in _raise_err
+    raise error.exc_type(error) from cause
+oracledb.exceptions.OperationalError: DPY-6005: cannot connect to database (CONNECTION_ID=GUN0tQ8QLXkohTBifab2vA==).
+DPY-3010: connections to this database server version are not supported by python-oracledb in thin mode
+Help: https://python-oracledb.readthedocs.io/en/latest/user_guide/troubleshooting.html#dpy-3010
