@@ -1,50 +1,7 @@
-"""
-Oracle ERP Database Access
-===========================
-Sets up SQLAlchemy engine to Oracle ERP database.
-Lazy-initialized to avoid errors if Oracle is unreachable at startup.
-"""
+python -c "import struct; print(struct.calcsize('P') * 8)"
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+dumpbin /headers C:\instantclient_12_1\oci.dll | findstr "machine"
 
-from app.core.config import settings
+powershell "[System.Reflection.AssemblyName]::GetAssemblyName('C:\instantclient_12_1\oci.dll').ProcessorArchitecture"
 
-import oracledb
-oracledb.init_oracle_client(lib_dir=r"C:\instantclient_12_1")
-
-ORACLE_URL = (
-    f"oracle+oracledb://{settings.ORACLE_USER}:{settings.ORACLE_PASSWORD}"
-    f"@{settings.ORACLE_HOST}:{settings.ORACLE_PORT}"
-    f"/?service_name={settings.ORACLE_SERVICE}"
-)
-
-# Lazy-initialized engine (created on first use)
-_oracle_engine = None
-
-
-def get_oracle_engine():
-    """Lazy-initialize and return the Oracle SQLAlchemy engine."""
-    global _oracle_engine
-    if _oracle_engine is None:
-        _oracle_engine = create_engine(ORACLE_URL, pool_pre_ping=True)
-    return _oracle_engine
-
-
-def get_oracle_session():
-    """Create and return a new Oracle session."""
-    engine = get_oracle_engine()
-    SessionLocal = sessionmaker(bind=engine)
-    return SessionLocal()
-
-
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>python -c "import oracledb; oracledb.init_oracle_client(lib_dir=r'C:\instantclient_12_1'); conn = oracledb.connect(user='T28NOV25', password='PRI_123', dsn='10.5.0.106:1521/ERP'); print(conn.version); conn.close()"
-Traceback (most recent call last):
-  File "<string>", line 1, in <module>
-  File "C:\ml_env_311\Lib\site-packages\oracledb\utils.py", line 215, in init_oracle_client    
-    thick_impl.init_oracle_client(lib_dir, config_dir, error_url, driver_name)
-  File "src/oracledb/impl/thick/utils.pyx", line 529, in oracledb.thick_impl.init_oracle_client
-  File "src/oracledb/impl/thick/utils.pyx", line 564, in oracledb.thick_impl.init_oracle_client
-  File "src/oracledb/impl/thick/utils.pyx", line 476, in oracledb.thick_impl._raise_from_info
-oracledb.exceptions.DatabaseError: DPI-1047: Cannot locate a 64-bit Oracle Client library: "The specified module could not be found". See https://python-oracledb.readthedocs.io/en/latest/user_guide/initialization.html for help
-Help: https://python-oracledb.readthedocs.io/en/latest/user_guide/troubleshooting.html#dpi-1047
+dir C:\instantclient_12_1\oci.dll
