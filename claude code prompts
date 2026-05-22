@@ -1,39 +1,502 @@
-Sheet 1: "Header" (one row of data)
-Column name in Excel
-User enters?
-Example value
-Notes
-Project Number
-Yes
-YEB1021
-Resolves to PROJECTID from posproject
-Requisition Type
-Yes
-NONRETURNABLE
-Either RETURNABLE or NONRETURNABLE
-Need By Date
-Yes
-28-11-2026
-DD-MM-YYYY format
-Description
-Yes (optional)
-Spare parts for Q4 maintenance
-Free text
-Comments
-Yes (optional)
-Urgent — needed before audit
-Free text
-That's five columns. Everything else (MRR number, warehouse, department, dates, IDs, statuses) is auto-computed by the system.
-Sheet 2: "Items" (one row per line item, can have many rows)
-Column name in Excel
-User enters?
-Example value
-Notes
-Item Name
-Yes
-DP-RM-CAB-03890
-Resolves to ITEMID from scmitems
-Requested Quantity
-Yes
-5
-Integer
+# Task 4.5: MRR Data Resolution Layer — Report
+
+## INTENDED FOOTPRINT
+- Modify: `app/services/oracle_queries.py`
+- Create: `app/services/mariadb_queries.py`
+- Create: `app/services/mrr_helpers.py`
+- Create: `TASK_4_5_REPORT.md`
+- Out of scope: all other files (workflows, controllers, routes, auth, dao, core, models, scripts, frontend, .env, config.py)
+
+## ACTUAL FOOTPRINT
+- Modified: `app/services/oracle_queries.py` — added 4 new functions, updated `get_item_lpp` error message
+- Created: `app/services/mariadb_queries.py` — 6 functions
+- Created: `app/services/mrr_helpers.py` — 3 functions
+- Created: `TASK_4_5_REPORT.md`
+
+## DEVIATIONS
+- Removed unused `import re` in `mariadb_queries.py`
+- `get_item_lpp` error message changed from `"get_item_lpp failed: %s"` to `"get_item_lpp failed for item_id=%s: %s"` (more informative logging per spec)
+- No workflow, controller, route, auth, dao, core, or model files were touched
+
+---
+
+## FULL CODE — `oracle_queries.py` (all functions)
+
+```python
+"""
+Oracle ERP Query Helpers
+=========================
+Parameterized queries against the Oracle ERP database.
+Each function gracefully degrades (returns None) on errors.
+"""
+
+import logging
+from typing import Optional
+
+from sqlalchemy import text
+
+from app.dao.oracle import get_oracle_session
+
+logger = logging.getLogger(__name__)
+
+
+def get_item_availability(item_id: int) -> Optional[dict]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT i.ITEMID as item_id,
+                       i.NAME as name,
+                       q.ONHANDQUANTITY as onhand_quantity
+                FROM SCMQUANTITYONHAND q
+                JOIN scmitems i ON i.ITEMID = q.ITEMID
+                WHERE q.ITEMID = :item_id
+                FETCH FIRST 1 ROWS ONLY
+            """),
+            {"item_id": item_id},
+        ).first()
+        if row:
+            return {"item_id": row.item_id, "name": row.name, "onhand_quantity": row.onhand_quantity}
+        return None
+    except Exception as e:
+        logger.warning("get_item_availability failed for item_id=%s: %s", item_id, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_item_lpp(item_id: int, warehouse_id: int = 1) -> Optional[dict]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(text("""
+            SELECT B.ITEMID as item_id, C.NAME as name,
+                   (B.PRICE * A.CONVERSIONRATE) as lpp_rate
+            FROM SCMUNITOFMEASURES UOM, POHEADERS A, POLINES B,
+                 SCMITEMS C, SCMCURRENCIES D, SCMSUPPLIERS SUP
+            WHERE UOM.UNITOFMEASUREID = B.UNITOFMEASUREID
+              AND SUP.SUPPLIERID = A.SUPPLIERID
+              AND A.POHEADERID = B.POHEADERID
+              AND B.STATUS = 'A'
+              AND B.WAREHOUSEID = :wh
+              AND C.WAREHOUSEID = B.WAREHOUSEID
+              AND A.CURRENCYID = D.CURRENCYID
+              AND B.ITEMID = C.ITEMID
+              AND B.ITEMID = :item_id
+              AND A.POHEADERID = (
+                  SELECT MAX(A2.POHEADERID)
+                  FROM POHEADERS A2, POLINES B2
+                  WHERE A2.POHEADERID = B2.POHEADERID
+                    AND B2.STATUS = 'A'
+                    AND B2.WAREHOUSEID = :wh
+                    AND B2.ITEMID = :item_id
+              )
+              AND ROWNUM = 1
+        """), {"item_id": item_id, "wh": warehouse_id}).first()
+        if row:
+            return {"item_id": row.item_id, "name": row.name, "lpp_rate": float(row.lpp_rate or 0)}
+        return None
+    except Exception as e:
+        logger.warning("get_item_lpp failed for item_id=%s: %s", item_id, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_department_id(department_name: str) -> Optional[int]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT DEPARTMENTID
+                FROM scmdepartments
+                WHERE NAME = :name
+                FETCH FIRST 1 ROWS ONLY
+            """),
+            {"name": department_name},
+        ).first()
+        if row:
+            return row.DEPARTMENTID
+        return None
+    except Exception as e:
+        logger.warning("get_department_id failed for dept='%s': %s", department_name, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_item_id_by_name(item_name: str) -> Optional[int]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT ITEMID
+                FROM scmitems
+                WHERE UPPER(NAME) = UPPER(:name)
+                FETCH FIRST 1 ROWS ONLY
+            """),
+            {"name": item_name},
+        ).first()
+        if row:
+            return row.ITEMID
+        return None
+    except Exception as e:
+        logger.warning("get_item_id_by_name failed for name='%s': %s", item_name, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_item_full_details(item_id: int) -> Optional[dict]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT ITEMID, NAME, UNITOFMEASUREID
+                FROM scmitems
+                WHERE ITEMID = :item_id
+                FETCH FIRST 1 ROWS ONLY
+            """),
+            {"item_id": item_id},
+        ).first()
+        if row:
+            return {"item_id": row.ITEMID, "name": row.NAME, "unitofmeasureid": row.UNITOFMEASUREID}
+        return None
+    except Exception as e:
+        logger.warning("get_item_full_details failed for item_id=%s: %s", item_id, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_uom_name(uom_id: int) -> Optional[str]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT UNITOFMEASURE
+                FROM scmunitofmeasures
+                WHERE UNITOFMEASUREID = :id
+            """),
+            {"id": uom_id},
+        ).first()
+        if row:
+            return row.UNITOFMEASURE
+        return None
+    except Exception as e:
+        logger.warning("get_uom_name failed for uom_id=%s: %s", uom_id, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_latest_item_revision(item_id: int) -> Optional[int]:
+    session = None
+    try:
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT MAX(ITEMREVISIONID) as ITEMREVISIONID
+                FROM scmitemrevisions
+                WHERE ITEMID = :item_id
+            """),
+            {"item_id": item_id},
+        ).first()
+        if row and row.ITEMREVISIONID is not None:
+            return row.ITEMREVISIONID
+        return None
+    except Exception as e:
+        logger.warning("get_latest_item_revision failed for item_id=%s: %s", item_id, e)
+        return None
+    finally:
+        if session:
+            session.close()
+```
+
+---
+
+## FULL CODE — `mariadb_queries.py`
+
+```python
+"""
+MariaDB Query Helpers
+======================
+Parameterized queries against the MariaDB database for MRR/project data.
+Each function gracefully degrades (returns None or 0) on errors.
+"""
+
+import logging
+from typing import Optional
+
+from sqlalchemy import text
+
+from app.dao.database import SessionLocal
+
+logger = logging.getLogger(__name__)
+
+
+def get_project_by_number(project_number: str) -> Optional[dict]:
+    session = None
+    try:
+        session = SessionLocal()
+        row = session.execute(
+            text("""
+                SELECT PROJECTID as project_id,
+                       PROJECTNUMBER as project_number,
+                       DESCRIPTION as description,
+                       WAREHOUSEID as warehouse_id
+                FROM posproject
+                WHERE PROJECTNUMBER = :pn
+                LIMIT 1
+            """),
+            {"pn": project_number},
+        ).first()
+        if row:
+            return {
+                "project_id": row.project_id,
+                "project_number": row.project_number,
+                "description": row.description,
+                "warehouse_id": row.warehouse_id,
+            }
+        return None
+    except Exception as e:
+        logger.warning("get_project_by_number failed for '%s': %s", project_number, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_project_phase(project_id: int) -> Optional[dict]:
+    session = None
+    try:
+        session = SessionLocal()
+        row = session.execute(
+            text("""
+                SELECT PROJECTPHASEID as phase_id,
+                       PROJECTID as project_id,
+                       PHASENAME as phase_name,
+                       PHASEDESCRIPTION as phase_description
+                FROM posprojectphases
+                WHERE PROJECTID = :pid
+                ORDER BY PROJECTPHASEID ASC
+                LIMIT 1
+            """),
+            {"pid": project_id},
+        ).first()
+        if row:
+            return {
+                "phase_id": row.phase_id,
+                "project_id": row.project_id,
+                "phase_name": row.phase_name,
+                "phase_description": row.phase_description,
+            }
+        return None
+    except Exception as e:
+        logger.warning("get_project_phase failed for project_id=%s: %s", project_id, e)
+        return None
+    finally:
+        if session:
+            session.close()
+
+
+def get_max_matrequisition_id() -> int:
+    session = None
+    try:
+        session = SessionLocal()
+        row = session.execute(
+            text("SELECT IFNULL(MAX(MATREQUISITIONID), 0) as max_id FROM mrr_matrequisitionheader")
+        ).first()
+        return int(row.max_id) if row else 0
+    except Exception as e:
+        logger.warning("get_max_matrequisition_id failed: %s", e)
+        return 0
+    finally:
+        if session:
+            session.close()
+
+
+def get_max_matrequisition_line_id() -> int:
+    session = None
+    try:
+        session = SessionLocal()
+        row = session.execute(
+            text("SELECT IFNULL(MAX(MATREQUISITIONLINEID), 0) as max_id FROM mrr_matrequisitionlines")
+        ).first()
+        return int(row.max_id) if row else 0
+    except Exception as e:
+        logger.warning("get_max_matrequisition_line_id failed: %s", e)
+        return 0
+    finally:
+        if session:
+            session.close()
+
+
+def get_max_mrr_sequence_for_fy(fy_string: str) -> int:
+    session = None
+    try:
+        session = SessionLocal()
+        pattern = f"DPE/MRR/%/{fy_string}"
+        rows = session.execute(
+            text("SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader WHERE MATREQUISITIONNO LIKE :pattern"),
+            {"pattern": pattern},
+        ).fetchall()
+
+        max_seq = 0
+        for r in rows:
+            no = r.MATREQUISITIONNO
+            if no and isinstance(no, str):
+                parts = no.split("/")
+                if len(parts) >= 3:
+                    try:
+                        seq = int(parts[2])
+                        if seq > max_seq:
+                            max_seq = seq
+                    except (ValueError, TypeError):
+                        pass
+
+        return max_seq
+    except Exception as e:
+        logger.warning("get_max_mrr_sequence_for_fy failed for FY '%s': %s", fy_string, e)
+        return 0
+    finally:
+        if session:
+            session.close()
+
+
+def get_existing_mrr_numbers_count() -> int:
+    session = None
+    try:
+        session = SessionLocal()
+        row = session.execute(
+            text("SELECT COUNT(*) as cnt FROM mrr_matrequisitionheader")
+        ).first()
+        return int(row.cnt) if row else 0
+    except Exception as e:
+        logger.warning("get_existing_mrr_numbers_count failed: %s", e)
+        return 0
+    finally:
+        if session:
+            session.close()
+```
+
+---
+
+## FULL CODE — `mrr_helpers.py`
+
+```python
+"""
+MRR Helper Utilities
+=====================
+Small utility functions specific to MRR number generation and financial year.
+"""
+
+from datetime import datetime
+
+from app.services import mariadb_queries
+
+
+def current_financial_year() -> str:
+    """
+    Returns the current Indian financial year as a string like "25-26".
+    Indian FY runs April 1 to March 31.
+    """
+    now = datetime.now()
+    if now.month >= 4:
+        fy_start = now.year
+    else:
+        fy_start = now.year - 1
+    return f"{str(fy_start)[2:]}-{str(fy_start + 1)[2:]}"
+
+
+def build_mrr_number(seq: int, fy: str) -> str:
+    """Returns f'DPE/MRR/{seq}/{fy}'."""
+    return f"DPE/MRR/{seq}/{fy}"
+
+
+def next_mrr_number() -> tuple:
+    """
+    Combines current FY and next sequence number.
+    Returns (next_seq, mrr_number_string).
+    Example: (1, "DPE/MRR/1/26-27") if FY just rolled over.
+    """
+    fy = current_financial_year()
+    last_seq = mariadb_queries.get_max_mrr_sequence_for_fy(fy)
+    next_seq = last_seq + 1
+    return (next_seq, build_mrr_number(next_seq, fy))
+```
+
+---
+
+## Acceptance Tests
+
+Run from project root with `C:\ml_env_311\Scripts\python.exe`:
+
+```python
+# Test 1: Imports
+from app.services.oracle_queries import (
+    get_item_id_by_name, get_item_full_details,
+    get_uom_name, get_latest_item_revision, get_item_lpp
+)
+from app.services.mariadb_queries import (
+    get_project_by_number, get_project_phase,
+    get_max_matrequisition_id, get_max_matrequisition_line_id,
+    get_max_mrr_sequence_for_fy
+)
+from app.services.mrr_helpers import (
+    current_financial_year, build_mrr_number, next_mrr_number
+)
+
+# Test 2: Financial year
+print(current_financial_year())     # expect "26-27" (May 2026)
+print(build_mrr_number(1, "26-27")) # expect "DPE/MRR/1/26-27"
+
+# Test 3: Project lookup
+result = get_project_by_number("YEB1021")
+print(result)  # dict or None
+
+# Test 4: Project phase
+if result:
+    phase = get_project_phase(result["project_id"])
+    print(phase)  # dict or None
+
+# Test 5: Item lookup by name
+item_id = get_item_id_by_name("DP-RM-CAB-03890")
+print(item_id)  # int or None
+
+# Test 6: MRR sequence
+fy = current_financial_year()
+max_seq = get_max_mrr_sequence_for_fy(fy)
+print(f"Last seq in FY {fy}: {max_seq}")
+next_seq, mrr_no = next_mrr_number()
+print(f"Next MRR: {mrr_no}")
+
+# Test 7: Max IDs
+print(get_max_matrequisition_id())
+print(get_max_matrequisition_line_id())
+```
+
+All 3 files pass Python syntax validation (`py_compile`).
+
+
+All imports passed and most tests look good:
+
+current_financial_year() → "26-27"
+build_mrr_number(1, "26-27") → "DPE/MRR/1/26-27"
+get_project_by_number("YEB1021") → found project (id=12001)
+get_project_phase(12001) → phase "PRODUCTION"
+get_max_matrequisition_id() → 0 (no MRR rows yet)
+get_max_matrequisition_line_id() → 0
+next_mrr_number() → (1, "DPE/MRR/1/26-27")
+The only failure is get_item_id_by_name — it's an Oracle driver issue (python-oracledb thin mode can't connect to the Oracle server version, not a code problem). The MariaDB functions all work fine since get_project_by_number and get_max_matrequisition_* both succeeded.
