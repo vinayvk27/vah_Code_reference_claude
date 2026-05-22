@@ -1,5 +1,403 @@
-C:\Users\vinay.neelam>tasklist /FI "IMAGENAME eq php.exe" /FO list /v
-INFO: No tasks are running which match the specified criteria.
+═══════════════════════════════════════════════════════════════════
+TASK 4.6: MRR Excel Validator + Resolver
+═══════════════════════════════════════════════════════════════════
+Validates uploaded Excel and resolves user-friendly names to DB IDs.
+No workflow changes. No DB writes. Pure validation + resolution layer.
 
-C:\Users\vinay.neelam>tasklist /FI "IMAGENAME eq php-cgi.exe" /FO list /v
-INFO: No tasks are running which match the specified criteria.
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Out-of-scope files: do NOT touch.
+- Do NOT modify workflows, controllers, routes, auth.
+- Do NOT add Excel parsing — the existing _parse_excel in
+  chat_controller already produces a structured dict; we consume it.
+- Do NOT do any DB writes (no INSERT/UPDATE).
+- If anything requires touching out-of-scope code, STOP and report.
+
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The MRR workflow allows users to upload an Excel file containing
+their requisition. The Excel is a single sheet where:
+- Each row represents one line item.
+- Header-level fields (Project Number, Requisition Type, Need By
+  Date, Description, Comments) repeat identically on every row.
+- Item-level fields (Item Name, Requested Quantity, Return Date)
+  vary per row.
+
+The validator must:
+1. Validate the structure (required columns present, no extra junk).
+2. Validate consistency (header fields identical across rows).
+3. Validate field values (correct format, allowed values).
+4. Resolve user-friendly inputs (project number → PROJECTID, item
+   name → ITEMID, etc.) using the data-resolution layer built in
+   Task 4.5.
+5. Return EITHER a fully-resolved data structure ready for DB insert,
+   OR a list of friendly error messages.
+
+The resolver does NOT write to the database. The workflow (Task 4.7)
+will take the validated structure and do the DB inserts.
+
+A few earlier Task 4.5 resolver functions live in oracle_queries.py
+because we initially planned Oracle. The Oracle environment is not
+yet ready; MariaDB will host these tables instead. As part of this
+task, MOVE the Oracle-dependent resolvers to mariadb_queries.py and
+update implementations to use MariaDB SessionLocal.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. MIGRATE Oracle resolvers to MariaDB (in mariadb_queries.py)
+
+   Move these functions from oracle_queries.py to mariadb_queries.py
+   and rewrite to use SessionLocal from app.dao.database:
+
+   a. get_item_id_by_name(item_name: str) -> Optional[int]
+      Query MariaDB scmitems WHERE UPPER(NAME) = UPPER(:name) LIMIT 1.
+      Return ITEMID or None.
+
+   b. get_item_full_details(item_id: int) -> Optional[dict]
+      Query MariaDB scmitems for ITEMID, NAME, UNITOFMEASUREID.
+      Return {"item_id", "name", "unitofmeasureid"} or None.
+
+   c. get_uom_name(uom_id: int) -> Optional[str]
+      Query MariaDB scmunitofmeasures for UNITOFMEASURE column.
+      Return UOM name string or None.
+
+   d. get_latest_item_revision(item_id: int) -> Optional[int]
+      Query MariaDB scmitemrevisions: SELECT MAX(ITEMREVISIONID).
+      Return integer or None.
+
+   e. get_item_lpp(item_id: int, warehouse_id: int = 1) -> Optional[dict]
+      The Oracle LPP JOIN translated to MariaDB syntax.
+      Replace `AND ROWNUM = 1` with `LIMIT 1`.
+      Query:
+        SELECT B.ITEMID as item_id, C.NAME as name,
+               (B.PRICE * A.CONVERSIONRATE) as lpp_rate
+        FROM SCMUNITOFMEASURES UOM, POHEADERS A, POLINES B,
+             SCMITEMS C, SCMCURRENCIES D, SCMSUPPLIERS SUP
+        WHERE UOM.UNITOFMEASUREID = B.UNITOFMEASUREID
+          AND SUP.SUPPLIERID = A.SUPPLIERID
+          AND A.POHEADERID = B.POHEADERID
+          AND B.STATUS = 'A'
+          AND B.WAREHOUSEID = :wh
+          AND C.WAREHOUSEID = B.WAREHOUSEID
+          AND A.CURRENCYID = D.CURRENCYID
+          AND B.ITEMID = C.ITEMID
+          AND B.ITEMID = :item_id
+          AND A.POHEADERID = (
+              SELECT MAX(A2.POHEADERID)
+              FROM POHEADERS A2, POLINES B2
+              WHERE A2.POHEADERID = B2.POHEADERID
+                AND B2.STATUS = 'A'
+                AND B2.WAREHOUSEID = :wh
+                AND B2.ITEMID = :item_id
+          )
+        LIMIT 1
+      Return {"item_id", "name", "lpp_rate"} or None.
+
+   f. get_department_id(department_name: str) -> Optional[int]
+      Query MariaDB scmdepartments WHERE NAME = :name LIMIT 1.
+      Return DEPARTMENTID or None.
+
+   g. get_item_availability(item_id: int) -> Optional[dict]
+      Query MariaDB SCMQUANTITYONHAND + scmitems.
+      Return {"item_id", "name", "onhand_quantity"} or None.
+
+   All functions use SessionLocal from app.dao.database.
+   Use logger.warning on errors; return None gracefully.
+
+2. CLEAN UP oracle_queries.py
+
+   Either:
+   (a) Delete oracle_queries.py entirely, OR
+   (b) Leave it as a stub file with all functions removed, with a
+       comment explaining the migration to mariadb_queries.py.
+
+   Go with (a) — delete the file. If anything still imports from it,
+   STOP and report. Imports should now come from mariadb_queries.
+
+3. CREATE app/services/mrr_validator.py
+
+   The Excel validator + resolver. Pure functions, no DB writes.
+
+   Required columns in the Excel (exact, case-insensitive):
+   - Project Number
+   - Requisition Type
+   - Need By Date
+   - Description
+   - Comments
+   - Item Name
+   - Requested Quantity
+   - Return Date
+
+   Allowed REQUISITIONTYPE values: "RETURNABLE", "NONRETURNABLE"
+   (case-insensitive, uppercase the value before validation).
+
+   Date formats accepted: pandas-parseable date strings. Treat as
+   DATE (no time component) for Need By Date and Return Date.
+
+   Validation rules:
+
+   R1. Required columns all present. Missing any → reject.
+   R2. At least one data row (excluding header row).
+   R3. Header fields (cols 1-5) identical across all rows.
+       Different value on any row → reject with "Header field X
+       must be the same on all rows; found '...' and '...'."
+   R4. Requisition Type ∈ {"RETURNABLE", "NONRETURNABLE"}.
+   R5. Need By Date parseable as date, in future (>= today).
+   R6. If Requisition Type == "RETURNABLE":
+       - Return Date is required on every row.
+       - Return Date parseable as date.
+       - Return Date >= Need By Date (return after need-by).
+       Else (NONRETURNABLE):
+       - Return Date is ignored (logged but not validated).
+   R7. Item Name non-empty string on every row.
+   R8. Requested Quantity is a positive integer or decimal > 0.
+
+   Resolution rules (run AFTER all validation passes):
+
+   Resolution 1 — Project: get_project_by_number(project_number) →
+   if None, error "Project number 'XYZ' not found."
+   Else: capture project_id, project description, warehouse_id.
+
+   Resolution 2 — Project Phase: get_project_phase(project_id) →
+   if None, error "No phase found for project 'XYZ'."
+   Else: capture phase_id, phase_name.
+
+   Resolution 3 — Department: get_department_id(user_dept) where
+   user_dept comes from CurrentUser. If None, error "Department
+   '<user_dept>' not found in SCM departments."
+
+   Resolution 4 — Per line item:
+   a. get_item_id_by_name(item_name) → if None, error "Item '<name>'
+      not found." Add to errors, continue to next item.
+   b. get_item_full_details(item_id) → if None, error "Item details
+      for '<name>' not retrievable." Continue.
+   c. uom_id from full_details.unitofmeasureid.
+   d. get_uom_name(uom_id) — for display only; if None, fallback "UNKNOWN".
+   e. get_latest_item_revision(item_id) → if None, defaults to 0.
+   f. get_item_lpp(item_id, warehouse_id=1) → if None, lpp_rate = 0.
+      If lpp_rate is 0, add a warning (not blocking) "LPP unavailable
+      for '<name>'; cost will be calculated as 0."
+   g. get_item_availability(item_id) — for display only; if None,
+      onhand_quantity = "unknown".
+   h. item_cost = lpp_rate × requested_quantity.
+
+   After all items resolved, compute:
+   - total_cost = SUM(item_cost) across all items.
+
+   Compute MRR number:
+   from app.services.mrr_helpers import next_mrr_number
+   (next_seq, mrr_no) = next_mrr_number()
+
+   Return structure:
+
+   If any errors:
+     {
+       "valid": False,
+       "errors": ["...", "..."],
+       "warnings": []
+     }
+
+   If valid:
+     {
+       "valid": True,
+       "errors": [],
+       "warnings": ["LPP unavailable for ...", ...],
+       "summary_for_user": "<friendly text representation>",
+       "header": {
+           "mrr_no": "DPE/MRR/12/26-27",
+           "next_seq": 12,
+           "warehouse_id": 1,
+           "requisition_type": "RETURNABLE",
+           "requestor_id": "<emp_no>",
+           "department_id": 6,
+           "department_name": "SDG",
+           "need_by_date": "2026-11-28",
+           "status": "ENTERED",
+           "project_id": 12001,
+           "project_number": "YEB1021",
+           "project_description": "cPCI system for Mark III",
+           "project_phase_id": 12001,
+           "phase_name": "PRODUCTION",
+           "req_transaction_type": "MATERIAL REQUISITION",
+           "supplier_id": 0,
+           "supplier_site_id": 0,
+           "description": "<user description>",
+           "comments": "<user comments>",
+           "total_cost": 5550.0
+       },
+       "lines": [
+           {
+               "item_id": 1001,
+               "item_name": "DP-RM-CAB-03890",
+               "item_revision_id": 19354,
+               "uom_id": 7,
+               "uom_name": "NUMBERS",
+               "requisition_qty": 5.0,
+               "lpp_rate": 150.0,
+               "item_cost": 750.0,
+               "available_quantity": 12,
+               "return_date": "2026-12-15"  # None if NONRETURNABLE
+           },
+           ...
+       ]
+     }
+
+   The summary_for_user field is a multi-line string formatted for
+   chat display. Format:
+
+   "**Material Requisition — Review Before Submit**\n\n"
+   "MRR Number: {mrr_no}\n"
+   "Requestor: emp {requestor_id}\n"
+   "Department: {department_name}\n"
+   "Project: {project_number} — {project_description}\n"
+   "Phase: {phase_name}\n"
+   "Requisition Type: {requisition_type}\n"
+   "Need by: {need_by_date}\n"
+   "Description: {description}\n"
+   "Comments: {comments}\n\n"
+   "**Line Items:**\n"
+   For each line:
+   "  {n}. {item_name} — UOM: {uom_name}\n"
+   "     Qty: {requisition_qty} | Available: {available_quantity}\n"
+   "     Unit Cost (LPP): ₹{lpp_rate:.2f} | Subtotal: ₹{item_cost:.2f}\n"
+   (If returnable) "     Return by: {return_date}\n"
+   "\n"
+   "**Total Cost: ₹{total_cost:,.2f}**\n"
+
+   Public function signature:
+
+   def validate_and_resolve_mrr_excel(
+       excel_data: list[dict],   # rows as dicts from _parse_excel
+       current_user: CurrentUser
+   ) -> dict:
+       """
+       Validates and resolves an MRR Excel upload.
+
+       Args:
+           excel_data: list of row dicts (from chat_controller._parse_excel
+                       output's "data" field).
+           current_user: the authenticated user.
+
+       Returns:
+           Validation result dict (see structure above).
+       """
+
+   Use the existing helper functions from:
+   - app.services.mariadb_queries (resolver helpers)
+   - app.services.mrr_helpers (next_mrr_number, etc.)
+   - app.models.dto_schemas (CurrentUser)
+
+   Validation should accumulate ALL errors before returning, not
+   short-circuit on first error. User wants to see all problems at
+   once, not fix one at a time.
+
+   But resolution short-circuits per item — if Item Name doesn't
+   resolve to an ITEMID, we don't proceed with its UOM/revision/LPP
+   resolution. Skip that item, accumulate the error, continue with
+   the next item.
+
+   No need to log to console — let exceptions propagate naturally
+   to whoever calls the function.
+
+4. CREATE TASK_4_6_REPORT.md with:
+   - INTENDED / ACTUAL footprint
+   - Full code of mrr_validator.py
+   - Changes to mariadb_queries.py (list of functions moved/added)
+   - Confirmation that oracle_queries.py is deleted
+   - Acceptance test results
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/*
+- app/controllers/* (we'll wire in Task 4.7)
+- app/routes/*
+- app/core/*
+- app/models/*
+- app/dao/*  (oracle.py stays untouched even though it's now unused;
+              Task 4.7 cleanup may remove it)
+- scripts/seed_dpah_tables.py
+- Any frontend code
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/services/oracle_queries.py (to migrate from)
+- app/services/mariadb_queries.py (to migrate to)
+- app/services/mrr_helpers.py (already complete, just to confirm)
+- app/dao/database.py (to confirm SessionLocal pattern)
+- app/models/dto_schemas.py (for CurrentUser shape)
+- app/controllers/chat_controller.py — the _parse_excel function
+  (look at its return shape; we consume that shape)
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/services/mariadb_queries.py (add 7 new functions)
+- Delete app/services/oracle_queries.py
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- app/services/mrr_validator.py
+- TASK_4_6_REPORT.md
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+Test from project root using Python shell:
+
+Test 1: Imports work, no syntax errors:
+  from app.services.mariadb_queries import (
+      get_item_id_by_name, get_item_full_details,
+      get_uom_name, get_latest_item_revision, get_item_lpp,
+      get_department_id, get_item_availability,
+      get_project_by_number, get_project_phase,
+      get_max_matrequisition_id, get_max_matrequisition_line_id,
+      get_max_mrr_sequence_for_fy
+  )
+  from app.services.mrr_validator import validate_and_resolve_mrr_excel
+
+Test 2: oracle_queries.py is gone:
+  import os
+  assert not os.path.exists("app/services/oracle_queries.py")
+
+Test 3: Validation rejects missing column.
+  Simulate excel_data:
+    [{"Project Number": "YEB1021", "Requisition Type": "RETURNABLE",
+      "Need By Date": "2026-11-28", "Description": "test", "Comments": "",
+      "Item Name": "X", "Requested Quantity": 1}]
+  (note: Return Date column missing)
+  Call validate_and_resolve_mrr_excel(data, mock_user) where
+  mock_user has emp_no="1065", dept="SDG".
+  Expected: result["valid"] == False
+            result["errors"] includes message about missing "Return Date".
+
+Test 4: Validation rejects inconsistent header.
+  excel_data has 2 rows with different "Project Number" values.
+  Expected: result["valid"] == False
+            result["errors"] includes message about header consistency.
+
+Test 5: Full happy path (depends on MariaDB tables existing — may
+  defer if SCM tables aren't yet replicated):
+  excel_data has 1 row with valid values for a real project number
+  and real item name in MariaDB.
+  Expected: result["valid"] == True
+            result["header"]["mrr_no"] starts with "DPE/MRR/"
+            result["lines"] has 1 entry with item_id resolved.
+            result["summary_for_user"] is a string.
+
+  If SCM tables not yet replicated to MariaDB, this test will fail at
+  resolution (item not found, project not found). That's expected.
+  Document the failure as "deferred until MariaDB tables ready."
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
