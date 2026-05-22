@@ -1,37 +1,169 @@
-def get_item_lpp(item_id: int, warehouse_id: int = 1) -> Optional[dict]:
+so i have got one finalized details for you these points i have consolidated with management regarding the coorect flow
+1.i will tell you exactly what user has to upload in excel sheet or through prompt and what we need to automatically fetch also
+2.in the below table
+Table: mrr_matrequisitionheader
+Columns:
+MATREQUISITIONID bigint(20) PK 
+MATREQUISITIONNO varchar(40) 
+WAREHOUSEID bigint(20) 
+REQUISITIONTYPE varchar(50) 
+REQUESTORID bigint(20) 
+REQUISITIONDATE datetime 
+DEPARTMENTID bigint(20) 
+NEEDBYDATE datetime 
+WHOCOLUMN varchar(100) 
+STATUS varchar(50) 
+PROJECTID bigint(20) 
+PROJECTPHASEID bigint(20) 
+REQTRANSACTIONTYPE varchar(50) 
+SUPPLIERID bigint(20) 
+SUPPLIERSITEID bigint(20) 
+DESCRIPTION varchar(250) 
+COMMENTS varchar(250) 
+VERIFICATION_STATUS varchar(50) 
+VERIFICATION_DATE datetime 
+APPROVAL_STATUS varchar(50) 
+APPROVAL_DATE datetime 
+ERP_APPROVAL_STATUS varchar(50) 
+ERP_APPROVAL_DATE datetime
+
+** MATREQUISITIONID[not by user] is the running number meaning if currently in table 12001 isn there automatically we need to make new request as 12002
+** MATREQUISITIONNO[not by user] logic you have already given below
+seq_result = db.execute(text("SELECT IFNULL(MAX(MATREQUISITIONID), 0) + 1 AS next_id FROM mrr_matrequisitionheader")).first()
+        next_id = seq_result.next_id if seq_result else 1
+        mrr_no = f"MRR/{next_id}/25-26"
+
+        result = db.execute(header_query, {
+            "mrrno": mrr_no,
+            "status": "ENTERED",
+            "total": total,
+            "proj": header_data.get("project_id", "N/A"),
+            "phase": header_data.get("phase_id", "N/A"),
+            "user": user_id,
+        })
+	** here one change needed for ex:DPE/MRR/11557/25-26 is there we need to calculate financial year automatically as 26-27 and also the next item also we need to fetch automatically from db and we need increment 1 to it.
+	
+** warehouseid[not by user] we need to fetch from scmwarehouse[oracle] currently only one warehouse is active which is warehouseid 1 that is dpe so with warehouseid 1 we need to fetch and get warehousename
+**	REQUISITIONTYPE user will enter returnable or non returnable
+** REQUISITIONDATE[not by user] is current todays date while creating we need to automatically do 
+** DEPARTMENTID already we are using 
+def get_department_id(department_name: str) -> Optional[int]:
+ 
+        session = get_oracle_session()
+        row = session.execute(
+            text("""
+                SELECT DEPARTMENTID
+                FROM scmdepartments
+                WHERE NAME = :name
+                FETCH FIRST 1 ROWS ONLY
+            """),
+            {"name": department_name},
+        ).first()
+        if row:
+            return row.DEPARTMENTID
+		
+		from here we need to fetch department , my suggestion is we have user department when he logs in right from there we will get departementid
+		
+**	NEEDBYDATE user will enter 
+** the user will enter PROJECTNUMBER from there we need to fetch PROJECTID and enter in PROJECTID column
+
+** COMMENTS also needed but not mandatory but the user might enter something
+
+Table: posproject[maria db]
+Columns:
+PROJECTID int(11) PK 
+WAREHOUSEID smallint(6) 
+PROJECTNUMBER varchar(20) 
+DESCRIPTION varchar(250) 
+COSTTYPEID smallint(6) 
+PROJECTSTARTDATE varchar(20) 
+PROJECTENDDATE varchar(20) 
+WHOCOLUMN varchar(100) 
+PRJ_MTL_COST_LKHS decimal(10,2) 
+DELIVERY_VALUE_CRORE decimal(10,2) 
+MTL_EST_COST_FROM_DEL_VAL_LAKHS decimal(10,2) 
+CUSTOMERNAME varchar(100) 
+ESTIMATED_MAN_HRS decimal(10,2) 
+TRAVEL_EXPENSES_L decimal(10,2) 
+PROJECT_CATEGORY varchar(45) 
+PM_NAME varchar(45) 
+DELIVERY_FY
+** for PROJECTPHASEID similiarly we have a child table
+Table: posprojectphases
+Columns:
+PROJECTPHASEID int(11) PK 
+PROJECTID int(11) 
+PHASENAME varchar(100) 
+PHASEDESCRIPTION varchar(200) 
+PHASESTARTDATE date 
+PHASEENDDATE date 
+WHOCOLUMN varchar(100) 
+PROGRAMNUMBER varchar(45)
+from here we need to get PROJECTPHASEID based on PROJECTID from above
+
+--- from here our main 1st table insertion is finished the next is the child table -------
+
+Table: mrr_matrequisitionlines
+Columns:
+MATREQUISITIONLINEID bigint(20) PK 
+MATREQUISITIONID bigint(20) 
+ITEMID bigint(20) 
+ITEMREVISIONID bigint(20) 
+UOMID bigint(20) 
+REQUISITIONQTY decimal(15,4) 
+ISSUEQTY decimal(15,4) 
+WHOCOLUMN varchar(100) 
+RETURNQUANTITY decimal(15,4) 
+STATUS varchar(25) 
+CLOSEREASON varchar(4000) 
+ITEMCOST decimal(15,4)
+
+1.** MATREQUISITIONLINEID this is  running number just like previous table  meaning if currently in table 12001 isn there automatically we need to make new request as 12002
+2.**MATREQUISITIONID this  is the above parent table header id becuase one header id can have multiple line items so from there we need to automatically insert
+
+3.** ITEMID[not by user]user will give item name only like DP-RM-CAB-03890 , from scmitems table we need to fetch it 
+
+4.**UOMID[not by user] in scmitems table we have UNITOFMEASUREID for each ITEMID so based on that we need to insert UOMID from scmunitofmeasures
+5.**REQUISITIONQTY in scmitemrevisions we have this id we need to fetch based on ITEMID
+6.** ISSUEQTY this we are fetching already with the help of 
+def get_item_availability(item_id: int) -> Optional[dict]:
+    """
+    Query SCMQUANTITYONHAND + scmitems for the item.
+    Returns {"item_id", "name", "onhand_quantity"} or None.
+    """
     session = None
     try:
         session = get_oracle_session()
-        row = session.execute(text("""
-            SELECT B.ITEMID as item_id, C.NAME as name,
-                   (B.PRICE * A.CONVERSIONRATE) as lpp_rate
-            FROM SCMUNITOFMEASURES UOM, POHEADERS A, POLINES B,
-                 SCMITEMS C, SCMCURRENCIES D, SCMSUPPLIERS SUP
-            WHERE UOM.UNITOFMEASUREID = B.UNITOFMEASUREID
-              AND SUP.SUPPLIERID = A.SUPPLIERID
-              AND A.POHEADERID = B.POHEADERID
-              AND B.STATUS = 'A'
-              AND B.WAREHOUSEID = :wh
-              AND C.WAREHOUSEID = B.WAREHOUSEID
-              AND A.CURRENCYID = D.CURRENCYID
-              AND B.ITEMID = C.ITEMID
-              AND B.ITEMID = :item_id
-              AND A.POHEADERID = (
-                  SELECT MAX(A2.POHEADERID)
-                  FROM POHEADERS A2, POLINES B2
-                  WHERE A2.POHEADERID = B2.POHEADERID
-                    AND B2.STATUS = 'A'
-                    AND B2.WAREHOUSEID = :wh
-                    AND B2.ITEMID = :item_id
-              )
-              AND ROWNUM = 1
-        """), {"item_id": item_id, "wh": warehouse_id}).first()
+        row = session.execute(
+            text("""
+                SELECT i.ITEMID as item_id,
+                       i.NAME as name,
+                       q.ONHANDQUANTITY as onhand_quantity
+                FROM SCMQUANTITYONHAND q
+                JOIN scmitems i ON i.ITEMID = q.ITEMID
+                WHERE q.ITEMID = :item_id
+                FETCH FIRST 1 ROWS ONLY
+            """),
+            {"item_id": item_id},
+        ).first()
         if row:
-            return {"item_id": row.item_id, "name": row.name, "lpp_rate": float(row.lpp_rate or 0)}
+            return {"item_id": row.item_id, "name": row.name, "onhand_quantity": row.onhand_quantity}
         return None
     except Exception as e:
-        logger.warning("get_item_lpp failed: %s", e)
+        logger.warning("get_item_availability failed for item_id=%s: %s", item_id, e)
         return None
     finally:
         if session:
             session.close()
+			
+			
+7.** the REQUISITIONQTY is given by user saying that i am asking this much quantity , this will be given by user		
+       
+	
+---------------------------------------------
+
+** so based on available quantity and user asked quantity we need to calculate the total cost. the total cost where to keep or insert i will tell you later. but first do these things.
+
+** with this detailed flow we need to make changes . we are almost there and here i have provide best flow for you so i think this will clarify most of the doubts.
+
+** so rest of the things we will do like when user uploads a excel with all these if something is missing means what to do send to user and validations and everything. 		
