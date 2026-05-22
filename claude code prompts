@@ -1,118 +1,562 @@
-# TASK 4.6 REPORT: MRR Excel Validator + Resolver
+═══════════════════════════════════════════════════════════════════
+TASK 4.7: Wire MRR Validator into the MRR Workflow
+═══════════════════════════════════════════════════════════════════
+Excel upload → validator → user confirmation → DB inserts → auto-verifier.
 
-## INTENDED / ACTUAL FOOTPRINT
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Out-of-scope files: do NOT touch.
+- Do NOT modify validator logic in mrr_validator.py.
+- Do NOT modify resolver functions in mariadb_queries.py.
+- Do NOT modify any other workflow (rms_workflow, hrms_workflow).
+- Do NOT remove or rewrite the existing creator agent node logic
+  EXCEPT for explicit changes listed below.
+- If anything requires touching out-of-scope code, STOP and report.
 
-### Intended
-- Add 7 resolver functions to `app/services/mariadb_queries.py`
-- Delete `app/services/oracle_queries.py`
-- Create `app/services/mrr_validator.py`
-- Create `TASK_4_6_REPORT.md`
-- Update any imports from `oracle_queries` → `mariadb_queries`
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
 
-### Actual
-- **Added 7 functions to `mariadb_queries.py`**: `get_item_id_by_name`, `get_item_full_details`, `get_uom_name`, `get_latest_item_revision`, `get_item_lpp`, `get_department_id`, `get_item_availability`
-- **Deleted `oracle_queries.py`** — confirmed gone
-- **Created `mrr_validator.py`** — full validator + resolver
-- **Updated import in `app/workflows/material_workflow/tools.py`** — changed import from `oracle_queries` to `mariadb_queries` (lines 98-101)
-- **No DB writes** — validator is pure read + validation
-- **No workflow logic changes** — only the import target was updated
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The MRR workflow currently has a form state machine (HEADER → ITEMS
+→ EVALUATING) for conversational MRR creation. Task 4.7 ADDS an
+Excel-upload path alongside the form path.
 
----
+The flow:
+1. User uploads Excel file via /stream-with-file endpoint.
+2. chat_controller's _parse_excel produces a structured dict.
+3. The MRR workflow's parse_user_input_node (or new excel_handler_node)
+   detects Excel data in state.uploaded_files.
+4. Calls validate_and_resolve_mrr_excel() from mrr_validator.
+5. If valid → emit summary_for_user as a confirmation message + a form
+   widget with [Confirm Submit] [Cancel].
+6. If invalid → emit errors as a chat message; let user re-upload.
+7. On user confirmation (form submitted), workflow inserts header
+   row + line item rows into MariaDB.
+8. Calls auto_verifier_node to set verification/approval status.
+9. Workflow ends with confirmation message.
 
-## FULL CODE: `mrr_validator.py`
+This task adds the Excel-handling path. The existing conversational
+form path stays intact for users who don't have Excel.
 
-See `app/services/mrr_validator.py` (created in this task).
+KEY NOTE: User confirmation step uses a form widget (existing
+infrastructure). When user clicks [Confirm Submit], a follow-up
+message comes in containing the form submission data. The workflow
+must detect this and perform the DB insert.
 
-Key functions:
-- `validate_and_resolve_mrr_excel(excel_data, current_user)` — main entry point
-- `_get_cell(row, col_name)` — helper to get cell value with whitespace-stripped key matching
-- `_parse_date(value)` — parses date strings in multiple formats + pandas serial numbers
-- `_parse_quantity(value)` — parses numeric quantities
+For simplicity in this task, we store the validated/resolved MRR
+data in the workflow state under a new field `pending_mrr_data`.
+On next user message (the confirmation), we read pending_mrr_data,
+do the insert, clear pending_mrr_data, run auto-verifier.
 
-Validation rules implemented:
-| Rule | Description |
-|------|-------------|
-| R1 | Required columns all present |
-| R2 | At least one data row |
-| R3 | Header fields identical across all rows |
-| R4 | Requisition Type ∈ {RETURNABLE, NONRETURNABLE} |
-| R5 | Need By Date parseable, >= today |
-| R6 | Return Date validation (required for RETURNABLE, >= Need By Date) |
-| R7 | Item Name non-empty |
-| R8 | Requested Quantity positive > 0 |
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
 
-Resolution chain:
-1. Project number → `get_project_by_number()` → project_id, description, warehouse_id
-2. Project → `get_project_phase()` → phase_id, phase_name
-3. User dept → `get_department_id()` → department_id
-4. Per line: item name → `get_item_id_by_name()` → `get_item_full_details()` → `get_uom_name()` → `get_latest_item_revision()` → `get_item_lpp()` → `get_item_availability()`
-5. Total cost = sum of all line item costs
-6. MRR number = `next_mrr_number()`
+1. UPDATE app/workflows/material_workflow/state.py
 
----
+   ADD field to MaterialRequisitionState:
+   - pending_mrr_data: Optional[dict] — stores the validator output
+     (header + lines) between Excel upload and user confirmation.
 
-## CHANGES TO `mariadb_queries.py`
+   Update docstring accordingly.
 
-7 functions added (moved from `oracle_queries.py` with MariaDB syntax):
+2. CREATE NEW NODE: excel_handler_node in
+   app/workflows/material_workflow/nodes.py
 
-| Function | Key Change from Oracle Version |
-|----------|-------------------------------|
-| `get_item_id_by_name()` | `FETCH FIRST 1 ROWS ONLY` → `LIMIT 1` |
-| `get_item_full_details()` | `FETCH FIRST 1 ROWS ONLY` → `LIMIT 1` |
-| `get_uom_name()` | No change needed (no row limiting) |
-| `get_latest_item_revision()` | No change needed (uses MAX aggregate) |
-| `get_item_lpp()` | `AND ROWNUM = 1` → `LIMIT 1` at end |
-| `get_department_id()` | `FETCH FIRST 1 ROWS ONLY` → `LIMIT 1` |
-| `get_item_availability()` | `FETCH FIRST 1 ROWS ONLY` → `LIMIT 1` |
+   def excel_handler_node(state: MaterialRequisitionState) -> dict:
+       """
+       Handles MRR Excel upload.
+       Reads excel_data from state.uploaded_files, validates,
+       resolves, and either:
+       - On valid: stores in pending_mrr_data, returns summary message
+         with confirmation form widget.
+       - On invalid: returns error messages.
+       """
+       from app.services.mrr_validator import validate_and_resolve_mrr_excel
 
-All functions now use `SessionLocal` from `app.dao.database` instead of `get_oracle_session()`.
+       uploaded_files = state.get("uploaded_files", [])
+       if not uploaded_files:
+           return {
+               "messages": [AIMessage(content=(
+                   "I didn't see an Excel file in your upload. "
+                   "Please upload the MRR Excel file."
+               ))],
+               "execution_log": state.get("execution_log", []) + [
+                   "Excel handler: no uploaded_files in state."
+               ]
+           }
 
----
+       # Find the first Excel file in uploaded_files
+       excel_file = None
+       for f in uploaded_files:
+           if f.get("file_type") == "excel" and f.get("data"):
+               excel_file = f
+               break
 
-## `oracle_queries.py` DELETED
+       if not excel_file:
+           return {
+               "messages": [AIMessage(content=(
+                   "The file you uploaded is not a valid Excel file. "
+                   "Please upload a .xlsx file with the MRR data."
+               ))],
+               "execution_log": state.get("execution_log", []) + [
+                   "Excel handler: no excel file_type found in uploaded_files."
+               ]
+           }
 
-Confirmed deleted. Only consumer was `app/workflows/material_workflow/tools.py`, import updated to point to `mariadb_queries`.
+       # Build a CurrentUser-like object for the validator
+       from app.models.dto_schemas import CurrentUser
+       try:
+           current_user = CurrentUser(
+               emp_no=state.get("emp_no", ""),
+               group_idx=state.get("group_idx", 0),
+               role_ids=state.get("role_ids", []),
+               role_names=state.get("role_names", []),
+               dept=state.get("user_dept", "")
+           )
+       except Exception as e:
+           return {
+               "messages": [AIMessage(content=(
+                   f"Could not build user context: {e}"
+               ))],
+               "execution_log": state.get("execution_log", []) + [
+                   f"Excel handler: CurrentUser construction failed: {e}"
+               ]
+           }
 
----
+       # Call validator
+       result = validate_and_resolve_mrr_excel(excel_file["data"], current_user)
 
-## ACCEPTANCE TEST RESULTS
+       if not result.get("valid"):
+           errors = result.get("errors", [])
+           error_text = "Your MRR upload has the following issues:\n\n"
+           for i, err in enumerate(errors, 1):
+               error_text += f"{i}. {err}\n"
+           error_text += "\nPlease fix and re-upload the Excel file."
+           return {
+               "messages": [AIMessage(content=error_text)],
+               "execution_log": state.get("execution_log", []) + [
+                   f"Excel validation failed: {len(errors)} errors."
+               ]
+           }
 
-### Test 1: Imports work, no syntax errors
+       # Valid — emit summary + confirmation form widget
+       summary = result.get("summary_for_user", "")
+       warnings = result.get("warnings", [])
+       warning_text = ""
+       if warnings:
+           warning_text = "\n\n**Warnings:**\n"
+           for w in warnings:
+               warning_text += f"- {w}\n"
 
-```python
-from app.services.mariadb_queries import (
-    get_item_id_by_name, get_item_full_details,
-    get_uom_name, get_latest_item_revision, get_item_lpp,
-    get_department_id, get_item_availability,
-    get_project_by_number, get_project_phase,
-    get_max_matrequisition_id, get_max_matrequisition_line_id,
-    get_max_mrr_sequence_for_fy
-)
-from app.services.mrr_validator import validate_and_resolve_mrr_excel
-```
-Result: **PASS** — no import errors, module compiles cleanly.
+       # Embed form widget for confirmation
+       form_payload = {
+           "type": "confirmation",
+           "title": "Confirm MRR Submission",
+           "fields": [],   # no fields, just confirm/cancel buttons
+           "buttons": [
+               {"label": "Confirm Submit", "value": "confirm_mrr"},
+               {"label": "Cancel", "value": "cancel_mrr"}
+           ]
+       }
+       import json
+       form_str = json.dumps(form_payload)
+       full_message = (
+           summary + warning_text +
+           f"\n\nPlease confirm or cancel below:\n\n"
+           f"<<FORM>>{form_str}<<ENDFORM>>"
+       )
 
-### Test 2: `oracle_queries.py` is gone
+       return {
+           "messages": [AIMessage(content=full_message)],
+           "pending_mrr_data": result,  # save for confirmation step
+           "execution_log": state.get("execution_log", []) + [
+               "Excel validated; awaiting user confirmation."
+           ]
+       }
 
-```python
-import os
-assert not os.path.exists("app/services/oracle_queries.py")
-```
-Result: **PASS**
+3. CREATE NEW NODE: mrr_submission_node in
+   app/workflows/material_workflow/nodes.py
 
-### Test 3: Validation rejects missing column
+   def mrr_submission_node(state: MaterialRequisitionState) -> dict:
+       """
+       Performs DB inserts for the validated MRR data stored in
+       pending_mrr_data. Then routes to auto_verifier_node.
+       """
+       pending = state.get("pending_mrr_data")
+       if not pending or not pending.get("valid"):
+           return {
+               "messages": [AIMessage(content=(
+                   "No MRR data to submit. Please upload an Excel file first."
+               ))],
+               "execution_log": state.get("execution_log", []) + [
+                   "Submission node: no pending_mrr_data in state."
+               ]
+           }
 
-Simulated `excel_data` without "Return Date" column.
-Expected: `valid == False`, errors include "Return Date" message.
-Result: **PASS** — returns `{"valid": False, "errors": ["Missing required columns: Return Date"], "warnings": []}`
+       header = pending["header"]
+       lines = pending["lines"]
 
-### Test 4: Validation rejects inconsistent header
+       db = SessionLocal()
+       try:
+           from app.services.mariadb_queries import (
+               get_max_matrequisition_id, get_max_matrequisition_line_id
+           )
+           next_header_id = get_max_matrequisition_id() + 1
+           next_line_id = get_max_matrequisition_line_id() + 1
 
-Two rows with different "Project Number" values.
-Expected: `valid == False`, errors include header consistency message.
-Result: **PASS** — returns error: `"Header field 'Project Number' must be the same on all rows; found '...' and '...' on row 2."`
+           # Insert header
+           db.execute(text("""
+               INSERT INTO mrr_matrequisitionheader (
+                   MATREQUISITIONID, MATREQUISITIONNO, WAREHOUSEID,
+                   REQUISITIONTYPE, REQUESTORID, REQUISITIONDATE,
+                   DEPARTMENTID, NEEDBYDATE, STATUS, PROJECTID,
+                   PROJECTPHASEID, REQTRANSACTIONTYPE, SUPPLIERID,
+                   SUPPLIERSITEID, DESCRIPTION, COMMENTS, TOTAL_COST
+               ) VALUES (
+                   :mid, :mno, :wh, :rtype, :req, NOW(),
+                   :dept, :needby, :status, :proj,
+                   :phase, :rtt, :sup, :supsite, :desc, :comm, :total
+               )
+           """), {
+               "mid": next_header_id,
+               "mno": header["mrr_no"],
+               "wh": header["warehouse_id"],
+               "rtype": header["requisition_type"],
+               "req": header["requestor_id"],
+               "dept": header["department_id"],
+               "needby": header["need_by_date"],
+               "status": header["status"],
+               "proj": header["project_id"],
+               "phase": header["project_phase_id"],
+               "rtt": header["req_transaction_type"],
+               "sup": header["supplier_id"],
+               "supsite": header["supplier_site_id"],
+               "desc": header.get("description", ""),
+               "comm": header.get("comments", ""),
+               "total": header["total_cost"]
+           })
 
-### Test 5: Full happy path
+           # Insert lines
+           for i, line in enumerate(lines):
+               db.execute(text("""
+                   INSERT INTO mrr_matrequisitionlines (
+                       MATREQUISITIONLINEID, MATREQUISITIONID, ITEMID,
+                       ITEMREVISIONID, UOMID, REQUISITIONQTY, ISSUEQTY,
+                       RETURNQUANTITY, STATUS, CLOSEREASON, ITEMCOST,
+                       return_date
+                   ) VALUES (
+                       :lid, :mid, :iid, :rev, :uom, :qty, 0, 0,
+                       'ENTERED', '', :cost, :retdate
+                   )
+               """), {
+                   "lid": next_line_id + i,
+                   "mid": next_header_id,
+                   "iid": line["item_id"],
+                   "rev": line["item_revision_id"],
+                   "uom": line["uom_id"],
+                   "qty": line["requisition_qty"],
+                   "cost": line["item_cost"],
+                   "retdate": line.get("return_date")
+               })
 
-Requires MariaDB SCM tables to be populated. Depends on whether test data exists.
-Result: **DEFERRED** — SCM tables not yet replicated to MariaDB. Resolution will fail at `get_item_id_by_name()` / `get_project_by_number()` until data is available. The validator logic is correct; it will return `{"valid": False, "errors": ["Project number '...' not found."], "warnings": []}` when tables are empty.
+           db.commit()
+
+           # Update state for auto-verifier
+           confirmation = (
+               f"Your MRR **{header['mrr_no']}** has been submitted.\n"
+               f"Total cost: ₹{header['total_cost']:,.2f}\n\n"
+               f"Running verification..."
+           )
+
+           return {
+               "messages": [AIMessage(content=confirmation)],
+               "new_requisition_id": next_header_id,
+               "pending_mrr_data": None,  # clear
+               "execution_log": state.get("execution_log", []) + [
+                   f"MRR {header['mrr_no']} inserted with id={next_header_id}, "
+                   f"{len(lines)} line items."
+               ]
+           }
+
+       except Exception as e:
+           db.rollback()
+           import traceback
+           traceback.print_exc()
+           return {
+               "messages": [AIMessage(content=(
+                   f"Submission failed: {str(e)}. "
+                   "Please try again or contact support."
+               ))],
+               "execution_log": state.get("execution_log", []) + [
+                   f"Submission node: insert failed: {e}"
+               ]
+           }
+       finally:
+           db.close()
+
+4. UPDATE parse_intent_node OR add a routing rule before
+   parse_intent in graph.py:
+
+   The MRR workflow needs to detect WHICH path to take when user
+   sends a message:
+
+   Path A: User uploaded Excel and message indicates intent to create
+   → route to excel_handler_node.
+
+   Path B: User's prior message had pending_mrr_data + this message
+   is "confirm_mrr" (from form submission) → route to mrr_submission_node.
+
+   Path C: User's prior message had pending_mrr_data + this message
+   is "cancel_mrr" → route to a "cancellation" handler that clears
+   pending_mrr_data and emits a friendly cancellation message.
+
+   Path D: Existing form-based conversational creator → existing flow
+   (parse_user_input + handle_header + handle_items + evaluate_and_route).
+
+   Path E: Approver/ERP approver/issuer requests → existing flow
+   (approver_agent_node, etc).
+
+   Implementation: add a new conditional edge function before the
+   creator routing in graph.py. The router examines state and routes
+   appropriately.
+
+   def creator_path_router(state: MaterialRequisitionState) -> str:
+       last_msg = ""
+       msgs = state.get("messages", [])
+       for m in reversed(msgs):
+           if isinstance(m, HumanMessage):
+               last_msg = str(m.content).strip().lower()
+               break
+
+       pending = state.get("pending_mrr_data")
+
+       # User just confirmed pending MRR submission
+       if pending and last_msg in ("confirm_mrr", "confirm submit", "confirm"):
+           return "submit_mrr"
+
+       # User cancelled pending submission
+       if pending and last_msg in ("cancel_mrr", "cancel"):
+           return "cancel_mrr"
+
+       # Excel uploaded — handle it
+       uploaded = state.get("uploaded_files", [])
+       if uploaded:
+           return "excel_handler"
+
+       # Default — conversational form flow
+       return "form_flow"
+
+5. CREATE NEW NODE: mrr_cancel_node in nodes.py
+
+   def mrr_cancel_node(state: MaterialRequisitionState) -> dict:
+       """Clears pending_mrr_data and emits cancellation message."""
+       return {
+           "messages": [AIMessage(content=(
+               "Your MRR submission has been cancelled. "
+               "Upload a new Excel file when you're ready."
+           ))],
+           "pending_mrr_data": None,
+           "execution_log": state.get("execution_log", []) + [
+               "MRR cancelled by user."
+           ]
+       }
+
+6. UPDATE app/workflows/material_workflow/graph.py
+
+   a. Import new nodes:
+      from app.workflows.material_workflow.nodes import (
+          excel_handler_node, mrr_submission_node, mrr_cancel_node,
+          # existing nodes also imported
+      )
+
+   b. Add nodes to graph:
+      builder.add_node("excel_handler", excel_handler_node)
+      builder.add_node("excel_handler_node", excel_handler_node)
+      builder.add_node("submit_mrr", mrr_submission_node)
+      builder.add_node("submit_mrr_node", mrr_submission_node)
+      builder.add_node("cancel_mrr", mrr_cancel_node)
+      builder.add_node("cancel_mrr_node", mrr_cancel_node)
+
+      (Register with both short and long names per the existing
+      pattern, so static_output_nodes catches them.)
+
+   c. After permission_check_node routes to creator path, replace
+      the direct edge to parse_user_input with the new conditional:
+
+      builder.add_conditional_edges(
+          "permission_check_node",
+          permission_router,
+          {
+              "creator_path": "creator_router_entry",  # new entry
+              "approver_agent": "approver_agent_node",
+              "erp_approver_agent": "erp_approver_agent_node",
+              "issuer_agent": "issuer_agent_node",
+              "welcome": "welcome_node",
+              "permission_blocked": "permission_blocked_node",
+          }
+      )
+
+      Add a passthrough or use the creator_path_router directly:
+
+      # If using a passthrough node:
+      builder.add_node("creator_router_entry", lambda s: s)
+      builder.add_conditional_edges(
+          "creator_router_entry",
+          creator_path_router,
+          {
+              "excel_handler": "excel_handler",
+              "submit_mrr": "submit_mrr",
+              "cancel_mrr": "cancel_mrr",
+              "form_flow": "parse_user_input",
+          }
+      )
+
+      # excel_handler → END (waits for user confirmation in next turn)
+      builder.add_edge("excel_handler", END)
+
+      # submit_mrr → auto_verifier_node → END
+      builder.add_edge("submit_mrr", "auto_verifier_node")
+
+      # cancel_mrr → END
+      builder.add_edge("cancel_mrr", END)
+
+   If your existing graph routes permission_check directly to
+   parse_user_input for the creator path, that's fine to keep —
+   just insert the creator_path_router BEFORE parse_user_input
+   for the creator persona.
+
+7. UPDATE permission_router in nodes.py (if not already)
+
+   When persona == "creator", return "creator_path" (which leads
+   to the new creator_router_entry → creator_path_router).
+   Keep all other persona routing as-is.
+
+8. UPDATE chat_controller.py static_output_nodes list
+
+   Add new node names to BOTH instances (regular stream + file
+   upload):
+
+   static_output_nodes = [
+       # ... existing entries ...
+       # MRR Excel flow:
+       "excel_handler", "excel_handler_node",
+       "submit_mrr", "submit_mrr_node",
+       "cancel_mrr", "cancel_mrr_node",
+       "creator_router_entry",  # the passthrough
+   ]
+
+   This ensures their AI messages are surfaced in the SSE stream.
+
+9. CREATE TASK_4_7_REPORT.md with:
+   - INTENDED / ACTUAL footprint.
+   - Full code of excel_handler_node.
+   - Full code of mrr_submission_node.
+   - Full code of mrr_cancel_node.
+   - Full code of creator_path_router.
+   - Updated state.py snippet showing pending_mrr_data.
+   - Acceptance test results.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/
+- app/workflows/hrms_workflow/
+- app/services/mrr_validator.py (do NOT modify validator logic)
+- app/services/mariadb_queries.py (do NOT modify resolver logic)
+- app/services/mrr_helpers.py (do NOT modify)
+- app/controllers/auth_controller.py
+- app/routes/*
+- app/core/*
+- app/models/* — except verify CurrentUser exists and has the
+  fields you need (read-only check, no modification)
+- scripts/seed_dpah_tables.py
+- frontend
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/workflows/material_workflow/state.py
+- app/workflows/material_workflow/nodes.py (full file)
+- app/workflows/material_workflow/graph.py
+- app/services/mrr_validator.py (to understand return shape)
+- app/controllers/chat_controller.py (Excel parsing output shape,
+  static_output_nodes location)
+- app/models/dto_schemas.py (CurrentUser shape)
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/workflows/material_workflow/state.py (add pending_mrr_data)
+- app/workflows/material_workflow/nodes.py (add 3 new nodes,
+  add creator_path_router function)
+- app/workflows/material_workflow/graph.py (wire new nodes/edges)
+- app/controllers/chat_controller.py (static_output_nodes — only)
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- TASK_4_7_REPORT.md
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Test 1: Server boots clean.
+
+Test 2: Junior 1065 sends MRR text message (no upload) — existing
+form path:
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -H "Authorization: Bearer JUNIOR_TOKEN" \
+    -d '{"module_name":"MRR","message":"I want to create a material requisition","chat_history":[]}' -i
+
+  Expected: classifier picks CREATOR, routes via creator_path_router
+  to form_flow → parse_user_input → existing form widget rendered.
+
+Test 3: User uploads invalid Excel (missing required column):
+  curl -X POST http://localhost:5970/api/v1/chat/stream-with-file \
+    -F 'message=Please create an MRR' \
+    -F 'module_name=MRR' \
+    -F 'agent_role=creator' \
+    -F 'file=@bad_template.xlsx' \
+    -H 'Authorization: Bearer JUNIOR_TOKEN'
+
+  Expected: chunk(s) with "Your MRR upload has the following issues:"
+  listing the validation error(s). No DB insert.
+
+Test 4: User uploads valid Excel (with real test data — requires
+SCM tables in MariaDB):
+  Same curl but with valid template.
+
+  Expected: chunk with summary message + form widget for
+  confirmation. No DB insert yet. pending_mrr_data populated in
+  state (verify by checking the workflow execution_log).
+
+Test 5: User sends "confirm_mrr" message after valid upload:
+  (Reuse the same thread_id from Test 4.)
+  curl -X POST http://localhost:5970/api/v1/chat/stream \
+    -d '{"module_name":"MRR","message":"confirm_mrr","chat_history":[...],"thread_id":"<from_test_4>"}' \
+    -H "Authorization: Bearer JUNIOR_TOKEN" -i
+
+  Expected: chunk(s) with submission confirmation + auto-verifier
+  result. DB row exists in mrr_matrequisitionheader.
+
+Test 6: User sends "cancel_mrr" after valid upload:
+  Same flow but with "cancel_mrr". Expected: cancellation message,
+  no DB insert.
+
+Test 7: DB verification after Test 5:
+  SELECT MATREQUISITIONNO, STATUS, VERIFICATION_STATUS, APPROVAL_STATUS,
+         ERP_APPROVAL_STATUS, TOTAL_COST
+  FROM mrr_matrequisitionheader
+  ORDER BY MATREQUISITIONID DESC LIMIT 1;
+  Expected: STATUS='ENTERED', VERIFICATION_STATUS='APPROVED',
+  APPROVAL_STATUS set per the 2000-rupee rule (APPROVED if total<2000,
+  PENDING otherwise).
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
