@@ -1,4 +1,782 @@
-# agent_id, agent_name, collection_id, is_active
-'22', 'MRR_GENERAL_CREATOR', '8', '1'
-'23', 'MRR_GENERAL_REVIEWER', '8', '1'
-'24', 'MRR_GENERAL_APPROVER', '8', '1'
+═══════════════════════════════════════════════════════════════════
+TASK 4.4: MRR Workflow Complete Rewrite
+═══════════════════════════════════════════════════════════════════
+  Phase A: Mechanical cleanup (classifier, collection_agents,
+           add_messages)
+  Phase B: Migrate SQL to mrr_ tables
+  Phase C: Oracle integration + cost calculation
+  Phase D: Multi-stage approval workflow + welcome endpoint
+═══════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT — READ FIRST
+───────────────────────────────────────────────────────────────────
+This is a four-phase task. Execute phases in order. After EACH
+phase:
+  1. Run that phase's acceptance test.
+  2. Confirm test passes BEFORE starting the next phase.
+  3. If a test fails, STOP and report. Do NOT proceed.
+
+If you encounter an error in a file under "Out of scope":
+  - Report and STOP.
+  - Do NOT modify out-of-scope files.
+  - Do NOT add, restore, or invent code beyond what is listed.
+  - Do NOT clean up imports or refactor unrelated code.
+
+If you find collection_agents or other fat-JWT patterns reappearing,
+STOP and report.
+
+Output INTENDED FOOTPRINT at start of each phase.
+Output `git diff --stat HEAD` (or file list) at end of each phase.
+
+───────────────────────────────────────────────────────────────────
+TASK CONTEXT
+───────────────────────────────────────────────────────────────────
+The MRR (Material Requisition Request) workflow handles:
+  - Creating requisitions (form-based, multi-step).
+  - Auto-verifying with deterministic logic (no LLM).
+  - Routing for manager approval (CTO/COO, manual).
+  - Routing for ERP approval (ERP HOD, manual).
+  - Notifying users of rejections.
+
+NEW MySQL tables (already created):
+  - mrr_matrequisitionheader — replaces matrequisitionheader.
+    New columns: VERIFICATION_STATUS/_DATE, APPROVAL_STATUS/_DATE,
+    ERP_APPROVAL_STATUS/_DATE, SUPPLIERID, SUPPLIERSITEID,
+    REQTRANSACTIONTYPE, COMMENTS.
+  - mrr_matrequisitionlines — replaces matrequisitionlines.
+    New columns: UOMID, ITEMREVISIONID, ISSUEQTY, RETURNQUANTITY,
+    CLOSEREASON. FK to mrr_matrequisitionheader.
+
+Oracle ERP database is now reachable via SQLAlchemy + oracledb.
+See test_erp.py for established connection pattern.
+
+Approver mapping (CONFIDENTIAL — these emp_nos are real):
+  MANAGER_APPROVERS = ["16", "06"]    # COO=16, CTO=06
+  ERP_APPROVERS     = ["531"]         # ERP HOD
+
+═══════════════════════════════════════════════════════════════════
+PHASE A — MECHANICAL CLEANUP
+═══════════════════════════════════════════════════════════════════
+
+Goal: bring MRR workflow up to the same architecture pattern as
+RMS (Task 4.2) and HRMS (Task 4.3):
+  - Four-field LLM intent classifier.
+  - Remove collection_agents from state.
+  - Use add_messages channel for the messages field.
+  - Defense-in-depth with soft correction.
+
+The MRR classifier returns the persona as one of:
+  CREATOR, APPROVER, ERP_APPROVER, ISSUER (uppercase)
+Not the standard CREATOR/REVIEWER/APPROVER. MRR has a non-standard
+persona model.
+
+A.1. CREATE app/workflows/material_workflow/intent.py
+     Mirror app/workflows/rms_workflow/intent.py but for MRR:
+
+     - MODULE_DOMAIN_DESCRIPTION for MRR:
+       """The MRR (Material Requisition Request) module handles
+       material/stock requisitions in the SCM domain.
+       Available collections:
+         - mrr_general: create material requisitions, view pending
+           approvals, approve at manager stage, approve at ERP
+           stage, issue stock (nominal).
+       Available personas:
+         - CREATOR: creates new material requisitions, requests
+           items by quantity.
+         - APPROVER: CTO/COO who approve manager-stage requisitions.
+         - ERP_APPROVER: ERP HOD who approves at ERP stage.
+         - ISSUER: store issuer who handles stock issuance (nominal,
+           not functionally implemented)."""
+
+     - Pydantic model MRRIntentClassification with same five fields:
+         domain, collection, persona, confidence, reasoning.
+       persona accepts "CREATOR" / "APPROVER" / "ERP_APPROVER" /
+       "ISSUER" / "".
+
+     - PydanticOutputParser + PromptTemplate, same pattern as RMS.
+
+     - classify_mrr_intent(user_message) — same logic as RMS.
+       Uses get_llm_non_streaming() from app.core.llm.
+
+     - keyword_fallback(user_message): default collection
+       "mrr_general", default persona "CREATOR". Returns LOW
+       confidence with reasoning "Keyword fallback used; LLM
+       classifier unavailable."
+
+     NOTE: If the existing material_workflow already has an
+     IntentClassification class (per Task 3.6 doc, MRR already
+     had a classifier — different schema), DELETE the old one
+     entirely and use the new four-field schema.
+
+A.2. UPDATE app/workflows/material_workflow/state.py
+     (file is named state.py and contains MaterialRequisitionState)
+
+     a. Add imports:
+        from typing import Annotated
+        from langgraph.graph.message import add_messages
+
+     b. REMOVE these fields from MaterialRequisitionState:
+        - collection_agents
+        - user_personas (if it exists)
+        Any other fat-JWT remnants.
+
+     c. ADD these fields:
+        - emp_no: str
+        - group_idx: int
+        - role_ids: List[int]
+        - role_names: List[str]
+        - selected_module: str
+        - classifier_confidence: str
+        - append_soft_correction: bool
+
+     d. CHANGE messages field from:
+        messages: list
+        to:
+        messages: Annotated[list, add_messages]
+
+     e. KEEP all other existing fields (current_step, form_state,
+        items, total_cost, routing_decision, has_permission,
+        execution_log, uploaded_files, denial_message, etc.).
+
+A.3. UPDATE app/workflows/material_workflow/nodes.py
+     OR app/workflows/material_workflow/graph.py
+     (wherever the existing intent_classifier_node lives — find it)
+
+     Replace the existing intent classification with the new pattern:
+
+     def parse_intent_node(state: MaterialRequisitionState) -> dict:
+         (same shape as RMS parse_intent_node, calling
+         classify_mrr_intent. lowercase the persona before storing.)
+
+     Replace the existing permission_check_node OR add one if missing:
+
+     def permission_check_node(state: MaterialRequisitionState) -> dict:
+         (Same shape as RMS permission_check_node. Builds
+         expected_agent_name = f"MRR_GENERAL_{persona.upper()}".
+         For personas APPROVER and ERP_APPROVER and ISSUER, skip
+         Gate 2 DB check — verify against hardcoded approver list
+         from approvers.py instead. This is handled in Phase D.
+         In Phase A, just do the standard DB check; we'll override
+         in Phase D for these special personas.)
+
+     Update permission_router to route the four MRR personas:
+       creator → creator_agent or creator form flow (existing).
+       approver → approver_agent (for manager stage).
+       erp_approver → erp_approver_agent (NEW — to be created Phase D).
+       issuer → issuer_agent_node (existing stub).
+       Otherwise → permission_blocked.
+
+     For all existing nodes that return messages with
+     "messages + [ai_message]" pattern, change to "messages": [...].
+
+     Remove ALL references to state.get("collection_agents", ...)
+     throughout nodes.py. Replace with emp_no/group_idx/role_ids
+     where genuinely needed. Delete dead branches that depended
+     on collection_agents.
+
+     Add the same _describe_assumed_action_mrr helper as RMS/HRMS
+     but adapted for MRR collections/personas:
+       def _describe_assumed_action_mrr(persona, collection):
+           if persona == "creator": return "create a material requisition"
+           if persona == "approver": return "approve a pending requisition"
+           if persona == "erp_approver": return "approve at the ERP stage"
+           if persona == "issuer": return "issue stock for a requisition"
+           return "do that"
+
+     Add soft correction logic to each agent node, same pattern
+     as RMS/HRMS.
+
+A.4. UPDATE app/workflows/material_workflow/graph.py if needed
+     (only if node names or routing structure broke; otherwise
+     leave alone).
+
+A.5. UPDATE app/workflows/material_workflow/prompts.py
+     Keep existing keyword data if it's used by keyword_fallback.
+     If anything became unused after this phase, delete it.
+     Do NOT delete the widget payloads (form HTML/JSON) used by
+     the form state machine.
+
+PHASE A ACCEPTANCE TEST:
+  Restart server. Send:
+    curl -X POST http://localhost:5970/api/v1/chat/stream \
+      -H "Authorization: Bearer <JUNIOR_TOKEN>" \
+      -d '{"module_name":"MRR","message":"I want to create a material requisition","chat_history":[]}'
+
+  Expected:
+    - HTTP 200, meta event, chunk(s) with response, [DONE].
+    - Server log shows: Intent classified: domain=IN_DOMAIN,
+      collection=mrr_general, persona=CREATOR, confidence=HIGH (or
+      MEDIUM/LOW).
+    - Permission grants (Junior has CREATOR access).
+    - Routes to existing form flow (or wherever the existing creator
+      logic lives).
+
+  ALSO TEST out-of-domain:
+    Message: "what is the weather"
+    Expected: chunk with "I can only help with MRR tasks..." redirect.
+
+  If both tests pass: PHASE A COMPLETE. Take a snapshot, continue
+  to Phase B.
+
+═══════════════════════════════════════════════════════════════════
+PHASE B — SQL MIGRATION
+═══════════════════════════════════════════════════════════════════
+
+Goal: every SQL reference to matrequisitionheader and
+matrequisitionlines (and any references in MRR code to old table
+names) becomes mrr_matrequisitionheader and mrr_matrequisitionlines.
+
+B.1. UPDATE app/workflows/material_workflow/mrr_tools.py
+
+     Search for "matrequisitionheader" (case-insensitive). Every
+     occurrence becomes "mrr_matrequisitionheader". Same for
+     matrequisitionlines → mrr_matrequisitionlines.
+
+     Update any SELECT/INSERT/UPDATE statements to include the new
+     columns from the new schema:
+       Header: VERIFICATION_STATUS, VERIFICATION_DATE,
+               APPROVAL_STATUS, APPROVAL_DATE,
+               ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE,
+               SUPPLIERID, SUPPLIERSITEID, REQTRANSACTIONTYPE,
+               COMMENTS.
+       Lines: UOMID, ITEMREVISIONID, ISSUEQTY, RETURNQUANTITY,
+              CLOSEREASON. (Plus FK to header.)
+
+     On INSERT into mrr_matrequisitionheader at MRR creation time,
+     populate:
+       STATUS = 'ENTERED'
+       VERIFICATION_STATUS = NULL (auto-verifier will set in Phase D)
+       APPROVAL_STATUS = NULL
+       ERP_APPROVAL_STATUS = NULL
+       REQTRANSACTIONTYPE = 'MATERIAL REQUISITION'
+       SUPPLIERID = 0
+       SUPPLIERSITEID = 0
+       REQUESTORID = <emp_no from state>
+       REQUISITIONDATE = NOW()
+       DEPARTMENTID = <fetched from Oracle in Phase C>
+                       (Phase B: hardcode to 1 as placeholder)
+       Rest as appropriate from form data.
+
+B.2. UPDATE app/workflows/material_workflow/tools.py
+     (if it contains SQL queries referencing the old table names)
+
+     Same find-and-replace pattern.
+
+B.3. UPDATE app/workflows/material_workflow/nodes.py
+     If any node has direct SQL with the old table names, update.
+
+B.4. SEARCH the rest of the codebase for accidental references:
+     grep -r "matrequisitionheader" app/
+     grep -r "matrequisitionlines" app/
+
+     If anything outside material_workflow uses the old names:
+     STOP and report. Do not modify out-of-scope files.
+
+PHASE B ACCEPTANCE TEST:
+  Restart server. Send a creator request that goes through to
+  form submission (you may need to test this manually via the
+  form widget rendered by the workflow). After the form is
+  submitted:
+    - Query MySQL: SELECT * FROM mrr_matrequisitionheader
+      ORDER BY MATREQUISITIONID DESC LIMIT 1;
+    - Confirm a new row exists.
+    - Confirm STATUS = 'ENTERED'.
+    - Confirm REQUESTORID matches the test user's emp_no.
+    - VERIFICATION_STATUS should be NULL (Phase D fills this).
+
+  Also confirm: no rows are being inserted into the old
+  matrequisitionheader table (verify with a query if you want).
+
+  If passed: PHASE B COMPLETE. Snapshot, continue to Phase C.
+
+═══════════════════════════════════════════════════════════════════
+PHASE C — ORACLE INTEGRATION
+═══════════════════════════════════════════════════════════════════
+
+C.1. UPDATE app/core/config.py
+
+     Add these settings:
+       ORACLE_HOST: str = ...
+       ORACLE_PORT: int = ...
+       ORACLE_SERVICE: str = ...
+       ORACLE_USER: str = ...
+       ORACLE_PASSWORD: str = ...
+
+     Default values may be empty; the human populates .env.
+
+C.2. ADD entries to .env (or .env.example if you don't have a real
+     .env to modify):
+       ORACLE_HOST=10.5.0.106
+       ORACLE_PORT=1521
+       ORACLE_SERVICE=ERP
+       ORACLE_USER=T28NOV25
+       ORACLE_PASSWORD=PRI_123
+
+     If unsure where .env lives, just update settings in config.py
+     and tell the human to add to their .env file.
+
+C.3. CREATE app/dao/oracle.py
+     New file. Sets up SQLAlchemy engine to Oracle:
+
+     ```python
+     from sqlalchemy import create_engine, text
+     from sqlalchemy.orm import sessionmaker
+     from app.core.config import settings
+
+     ORACLE_URL = (
+         f"oracle+oracledb://{settings.ORACLE_USER}:{settings.ORACLE_PASSWORD}"
+         f"@{settings.ORACLE_HOST}:{settings.ORACLE_PORT}"
+         f"/?service_name={settings.ORACLE_SERVICE}"
+     )
+
+     # Lazy-initialized engine (created on first use)
+     _oracle_engine = None
+
+     def get_oracle_engine():
+         global _oracle_engine
+         if _oracle_engine is None:
+             _oracle_engine = create_engine(ORACLE_URL, pool_pre_ping=True)
+         return _oracle_engine
+
+     def get_oracle_session():
+         engine = get_oracle_engine()
+         SessionLocal = sessionmaker(bind=engine)
+         return SessionLocal()
+     ```
+
+C.4. CREATE app/services/oracle_queries.py
+     New file. Helper functions wrapping the three queries:
+
+     get_item_availability(item_id: int) -> dict | None
+       Queries SCMQUANTITYONHAND + scmitems for the item.
+       Returns {"item_id", "name", "onhand_quantity"} or None.
+
+     get_item_lpp(item_id: int, warehouse_id: int = 1) -> dict | None
+       Queries the complex LPP JOIN.
+       Returns {"item_id", "name", "lpp_rate"} or None.
+
+     get_department_id(department_name: str) -> int | None
+       Queries scmdepartments by NAME.
+       Returns DEPARTMENTID or None.
+
+     Each function:
+       - Opens an Oracle session.
+       - Executes the parameterized query.
+       - Returns result or None.
+       - Wraps in try/except — on Oracle errors, log and return None
+         (gracefully degrade).
+       - Closes session in finally.
+
+     Use parameterized queries (text(...) with :param syntax)
+     NOT string interpolation, to prevent SQL injection. Use the
+     Oracle-style :name binding.
+
+C.5. UPDATE app/workflows/material_workflow/tools.py
+
+     The existing get_effective_item_availability() and
+     get_item_details_from_db() functions need to be updated.
+     Either:
+     - REPLACE their implementations to call the new oracle_queries
+       helpers, OR
+     - Keep them as thin wrappers that delegate to oracle_queries.
+
+     If the current implementations return mock data or hit MySQL
+     stubs, switch to Oracle for real data.
+
+     When the user adds an item to the requisition:
+       1. Call get_item_availability(item_id) — show user the
+          current stock.
+       2. Call get_item_lpp(item_id) — get the unit cost.
+       3. Compute item_cost = lpp_rate * quantity.
+       4. Set ITEMCOST in the line item state for later DB write.
+
+     If Oracle is unreachable, fall back to mock data with a console
+     warning (do NOT block the user; degrade gracefully).
+
+C.6. UPDATE the MRR creation flow node(s) that handle item entry:
+
+     When inserting line items into mrr_matrequisitionlines:
+       - ITEMCOST = lpp_rate * requisition_qty (computed before insert)
+       - UOMID = pulled from item details (if available)
+       - All other columns as appropriate.
+
+     Also: when inserting the header row, replace the hardcoded
+     DEPARTMENTID = 1 from Phase B with a call to:
+       get_department_id(user_dept)
+     where user_dept comes from state.
+
+PHASE C ACCEPTANCE TEST:
+  Test 1 — Oracle connection works:
+    Restart server. Check terminal for any errors loading
+    app.dao.oracle.
+
+  Test 2 — Query helpers work:
+    In a Python shell or via a small test endpoint, call:
+      from app.services.oracle_queries import get_item_availability
+      result = get_item_availability(<some_real_item_id>)
+    Confirm result is a dict with the expected keys, OR None if
+    the item doesn't exist.
+
+    Same for get_item_lpp and get_department_id.
+
+  Test 3 — Form-based MRR creation now computes ITEMCOST:
+    Go through the form flow (creator).
+    When line items are submitted, verify in DB:
+      SELECT ITEMCOST FROM mrr_matrequisitionlines
+      WHERE MATREQUISITIONID = <new_id>;
+    ITEMCOST should be non-zero (lpp_rate * qty).
+
+  If passed: PHASE C COMPLETE. Snapshot, continue to Phase D.
+
+═══════════════════════════════════════════════════════════════════
+PHASE D — MULTI-STAGE APPROVAL WORKFLOW
+═══════════════════════════════════════════════════════════════════
+
+D.1. CREATE app/workflows/material_workflow/approvers.py
+
+     Hardcoded approver lists:
+       MANAGER_APPROVERS = ["16", "06"]   # COO=16, CTO=06
+       ERP_APPROVERS     = ["531"]         # ERP HOD
+       ISSUERS           = []              # nominal, not implemented
+
+       def is_manager_approver(emp_no: str) -> bool:
+           return str(emp_no) in MANAGER_APPROVERS
+
+       def is_erp_approver(emp_no: str) -> bool:
+           return str(emp_no) in ERP_APPROVERS
+
+       def is_issuer(emp_no: str) -> bool:
+           return str(emp_no) in ISSUERS
+
+D.2. UPDATE permission_check_node in
+     app/workflows/material_workflow/nodes.py
+
+     For personas APPROVER and ERP_APPROVER and ISSUER:
+       Skip the standard DB-based check_agent_access call.
+       Instead, check the approver lists from approvers.py.
+
+       If persona == "approver" and not is_manager_approver(emp_no):
+         deny with message:
+           "Manager approval is restricted to the COO and CTO.
+           Please contact your administrator if you believe this
+           is an error."
+
+       If persona == "erp_approver" and not is_erp_approver(emp_no):
+         deny with message:
+           "ERP approval is restricted to the ERP HOD.
+           Please contact your administrator if you believe this
+           is an error."
+
+       If persona == "issuer" and not is_issuer(emp_no):
+         deny with a placeholder message:
+           "The store issuance feature is not yet active."
+
+     For persona == "creator":
+       Standard DB-based check (existing).
+
+D.3. CREATE NEW NODE: auto_verifier_node in nodes.py
+
+     def auto_verifier_node(state: MaterialRequisitionState) -> dict:
+         """
+         Auto-verification logic. Deterministic, no LLM.
+         Reads the new requisition's total cost. Routes based on
+         the 2000-rupee rule.
+         """
+         requisition_id = state.get("new_requisition_id")
+         if not requisition_id:
+             return {
+                 "messages": [AIMessage(content="No requisition to verify.")],
+                 "execution_log": state.get("execution_log", []) + ["Verifier: no requisition_id in state."]
+             }
+
+         db = SessionLocal()
+         try:
+             # Compute total cost
+             total_cost_row = db.execute(text("""
+                 SELECT COALESCE(SUM(ITEMCOST), 0) AS total
+                 FROM mrr_matrequisitionlines
+                 WHERE MATREQUISITIONID = :rid
+             """), {"rid": requisition_id}).first()
+             total_cost = float(total_cost_row.total or 0)
+
+             from datetime import datetime
+             now = datetime.now()
+
+             if total_cost < 2000:
+                 # Auto-approve manager stage, route to ERP
+                 db.execute(text("""
+                     UPDATE mrr_matrequisitionheader
+                     SET VERIFICATION_STATUS = 'APPROVED',
+                         VERIFICATION_DATE = :now,
+                         APPROVAL_STATUS = 'APPROVED',
+                         APPROVAL_DATE = :now,
+                         COMMENTS = 'Auto-approved by verifier (total < 2000).'
+                     WHERE MATREQUISITIONID = :rid
+                 """), {"now": now, "rid": requisition_id})
+                 db.commit()
+                 confirmation = (
+                     f"Your requisition (total cost: ₹{total_cost:.2f}) "
+                     f"was auto-approved and is now awaiting ERP approval."
+                 )
+             else:
+                 # Route to manager queue
+                 db.execute(text("""
+                     UPDATE mrr_matrequisitionheader
+                     SET VERIFICATION_STATUS = 'APPROVED',
+                         VERIFICATION_DATE = :now,
+                         APPROVAL_STATUS = 'PENDING'
+                     WHERE MATREQUISITIONID = :rid
+                 """), {"now": now, "rid": requisition_id})
+                 db.commit()
+                 confirmation = (
+                     f"Your requisition (total cost: ₹{total_cost:.2f}) "
+                     f"has been submitted for manager approval."
+                 )
+
+             return {
+                 "messages": [AIMessage(content=confirmation)],
+                 "execution_log": state.get("execution_log", []) + [
+                     f"Auto-verifier: total={total_cost}, "
+                     f"{'auto-approved' if total_cost < 2000 else 'pending manager'}."
+                 ]
+             }
+         finally:
+             db.close()
+
+     Wire auto_verifier_node into the graph at the end of the
+     existing creator form-submission flow. After the form is
+     submitted and the header+lines are inserted, route to
+     auto_verifier_node before END.
+
+D.4. CREATE/UPDATE approver_agent_node for manager approval flow:
+
+     When a CTO or COO opens the MRR chat:
+       - Welcome message (D.5 below) shows pending items.
+       - User says "approve requisition X" or "approve MRR/MRR/12345/25-26".
+       - Agent looks up the requisition, displays summary.
+       - User confirms approve OR reject (with comment).
+       - Workflow updates DB:
+         If approve: APPROVAL_STATUS = 'APPROVED', APPROVAL_DATE = now.
+         If reject:  APPROVAL_STATUS = 'REJECTED', STATUS = 'REJECTED',
+                     COMMENTS = <reason>.
+       - User is notified by message in chat.
+
+     The existing approver_agent_node logic (per Task 3.6 doc) had
+     SQL queries for the OLD table. Update those to use mrr_*
+     tables and the new column names.
+
+     If approver flow is multi-turn (agent asks for confirmation
+     before committing), preserve that pattern with the new logic.
+
+D.5. CREATE new node erp_approver_agent_node:
+
+     Similar to approver_agent_node but operates on requisitions
+     with APPROVAL_STATUS = 'APPROVED' AND ERP_APPROVAL_STATUS IS NULL.
+
+     On approve: ERP_APPROVAL_STATUS = 'APPROVED', ERP_APPROVAL_DATE = now,
+                 STATUS = 'RELEASED'.
+     On reject: ERP_APPROVAL_STATUS = 'REJECTED', STATUS = 'REJECTED',
+                COMMENTS = <reason>.
+
+D.6. CREATE new welcome endpoint:
+
+     ADD to app/routes/chat_route.py:
+       @router.get("/welcome")
+       async def chat_welcome(
+           module: str,
+           current_user: CurrentUser = Depends(get_current_user)
+       ):
+           if module.upper() == "MRR":
+               return await get_mrr_welcome_payload(current_user)
+           return {"module": module.upper(), "pending": [], "greeting": f"Welcome to {module}!"}
+
+     CREATE app/controllers/mrr_welcome_controller.py:
+
+       async def get_mrr_welcome_payload(user: CurrentUser) -> dict:
+           """
+           Returns:
+             {
+               "module": "MRR",
+               "greeting": "Welcome to MRR!",
+               "pending_for_user": [...],   # creator's own pending requisitions
+               "pending_approvals": [...],  # if user is manager approver
+               "pending_erp_approvals": [...]  # if user is ERP approver
+             }
+           """
+           from app.workflows.material_workflow.approvers import (
+               is_manager_approver, is_erp_approver
+           )
+           db = SessionLocal()
+           try:
+               payload = {
+                   "module": "MRR",
+                   "greeting": "Welcome to MRR!",
+                   "pending_for_user": [],
+                   "pending_approvals": [],
+                   "pending_erp_approvals": []
+               }
+
+               # User's own in-flight requisitions
+               own = db.execute(text("""
+                   SELECT MATREQUISITIONNO, STATUS, APPROVAL_STATUS,
+                          ERP_APPROVAL_STATUS, REQUISITIONDATE
+                   FROM mrr_matrequisitionheader
+                   WHERE REQUESTORID = :emp
+                     AND (STATUS != 'RELEASED' AND STATUS != 'REJECTED')
+                   ORDER BY REQUISITIONDATE DESC LIMIT 5
+               """), {"emp": user.emp_no}).fetchall()
+               payload["pending_for_user"] = [
+                   {"no": r.MATREQUISITIONNO, "status": r.STATUS, "approval": r.APPROVAL_STATUS,
+                    "erp_approval": r.ERP_APPROVAL_STATUS, "date": str(r.REQUISITIONDATE)}
+                   for r in own
+               ]
+
+               # Manager queue (only if user is in MANAGER_APPROVERS list)
+               if is_manager_approver(user.emp_no):
+                   mgr_pending = db.execute(text("""
+                       SELECT MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE
+                       FROM mrr_matrequisitionheader
+                       WHERE APPROVAL_STATUS = 'PENDING'
+                       ORDER BY REQUISITIONDATE ASC LIMIT 20
+                   """)).fetchall()
+                   payload["pending_approvals"] = [
+                       {"no": r.MATREQUISITIONNO, "requestor": r.REQUESTORID,
+                        "date": str(r.REQUISITIONDATE)}
+                       for r in mgr_pending
+                   ]
+
+               # ERP queue (only if user is in ERP_APPROVERS list)
+               if is_erp_approver(user.emp_no):
+                   erp_pending = db.execute(text("""
+                       SELECT MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE
+                       FROM mrr_matrequisitionheader
+                       WHERE APPROVAL_STATUS = 'APPROVED'
+                         AND (ERP_APPROVAL_STATUS IS NULL OR ERP_APPROVAL_STATUS = 'PENDING')
+                       ORDER BY REQUISITIONDATE ASC LIMIT 20
+                   """)).fetchall()
+                   payload["pending_erp_approvals"] = [
+                       {"no": r.MATREQUISITIONNO, "requestor": r.REQUESTORID,
+                        "date": str(r.REQUISITIONDATE)}
+                       for r in erp_pending
+                   ]
+
+               return payload
+           finally:
+               db.close()
+
+D.7. UPDATE chat_controller.py static_output_nodes list:
+     Add "auto_verifier_node", "auto_verifier", "erp_approver_agent",
+     "erp_approver_agent_node" to the list.
+
+D.8. UPDATE the MRR graph to include:
+     - auto_verifier_node (after creator form submission).
+     - erp_approver_agent / erp_approver_agent_node.
+     - Routing in permission_router so erp_approver persona →
+       erp_approver_agent.
+
+D.9. UPDATE dpah_agents seed to add new agent rows:
+     INSERT INTO dpah_agents (agent_name, collection_id, description, is_active)
+     SELECT 'MRR_GENERAL_VERIFIER', collection_id, 'Auto-verifier agent', 1
+     FROM dpah_collections WHERE collection_name = 'mrr_general';
+
+     INSERT INTO dpah_agents (agent_name, collection_id, description, is_active)
+     SELECT 'MRR_GENERAL_MANAGER_APPROVER', collection_id, 'Manager approver (CTO/COO)', 1
+     FROM dpah_collections WHERE collection_name = 'mrr_general';
+
+     INSERT INTO dpah_agents (agent_name, collection_id, description, is_active)
+     SELECT 'MRR_GENERAL_ERP_APPROVER', collection_id, 'ERP HOD approver', 1
+     FROM dpah_collections WHERE collection_name = 'mrr_general';
+
+     Add to scripts/seed_dpah_tables.py as idempotent INSERTs.
+
+PHASE D ACCEPTANCE TESTS:
+  Test 1 — Create cheap requisition (total < 2000):
+    Login as Junior 1065. Create MRR with line items totaling
+    < 2000 rupees. Submit. Verify in DB:
+      SELECT VERIFICATION_STATUS, APPROVAL_STATUS, ERP_APPROVAL_STATUS, COMMENTS
+      FROM mrr_matrequisitionheader
+      WHERE MATREQUISITIONID = <new_id>;
+    Expected: VERIFICATION_STATUS=APPROVED, APPROVAL_STATUS=APPROVED,
+    ERP_APPROVAL_STATUS=NULL, COMMENTS contains "Auto-approved".
+
+  Test 2 — Create expensive requisition (total >= 2000):
+    Same as above but with more expensive items.
+    Expected: VERIFICATION_STATUS=APPROVED, APPROVAL_STATUS=PENDING,
+    ERP_APPROVAL_STATUS=NULL.
+
+  Test 3 — Manager approves:
+    Login as CTO emp_no "06" (you'll need a real login or test
+    token for them; if not available, manually update a test user
+    to have emp_no=06 temporarily, OR test by API key bypass).
+    Send: "approve MRR/MRR/<number>/25-26" or similar.
+    Verify DB: APPROVAL_STATUS='APPROVED', APPROVAL_DATE set.
+
+  Test 4 — ERP approves:
+    Login as ERP HOD emp_no "531".
+    Send: "approve MRR/MRR/<number>/25-26".
+    Verify DB: ERP_APPROVAL_STATUS='APPROVED', STATUS='RELEASED'.
+
+  Test 5 — Welcome endpoint:
+    curl GET http://localhost:5970/api/v1/chat/welcome?module=MRR
+      with CTO token.
+    Expected: 200 with payload containing pending_approvals array.
+
+  Test 6 — Non-approver tries to approve:
+    Login as Junior 1065. Send: "approve MRR/MRR/<number>/25-26".
+    Expected: chunk with denial "Manager approval is restricted
+    to the COO and CTO".
+
+  If all 6 pass: PHASE D COMPLETE. TASK 4.4 COMPLETE.
+
+═══════════════════════════════════════════════════════════════════
+OUT OF SCOPE — DO NOT TOUCH
+═══════════════════════════════════════════════════════════════════
+- app/workflows/rms_workflow/  (Task 4.2)
+- app/workflows/hrms_workflow/ (Task 4.3)
+- app/controllers/auth_controller.py (except for nothing —
+  do NOT modify)
+- app/controllers/rag_controller.py
+- app/controllers/chat_controller.py (except: D.7 adds two node
+  names to the static_output_nodes list — that's the only change)
+- ARCHITECTURE_DECISIONS.md
+- FRONTEND_MIGRATION_SPEC.md (human will update separately)
+- main.py
+- The frontend
+- Any other workflow
+
+═══════════════════════════════════════════════════════════════════
+DELIVERABLES
+═══════════════════════════════════════════════════════════════════
+
+CREATE TASK_4_4_REPORT.md at project root with:
+  Phase A:
+    1. Footprint declared / actual.
+    2. Code of intent.py (full).
+    3. State changes (before/after).
+    4. List of nodes modified.
+    5. Acceptance test results (both tests).
+  Phase B:
+    6. List of files modified.
+    7. List of SQL statements migrated (sample sufficient).
+    8. Acceptance test result (sample DB query output).
+  Phase C:
+    9. Code of app/dao/oracle.py (full).
+    10. Code of app/services/oracle_queries.py (full).
+    11. config.py changes.
+    12. Acceptance test results (Tests 1, 2, 3).
+  Phase D:
+    13. Code of app/workflows/material_workflow/approvers.py (full).
+    14. Code of auto_verifier_node (full).
+    15. Code of mrr_welcome_controller.py (full).
+    16. List of graph edges added/modified.
+    17. Seed SQL added to scripts/seed_dpah_tables.py.
+    18. Acceptance test results (all 6 tests).
+  Overall:
+    19. Any deviations.
+    20. Any items deferred to be noted (e.g., things that broke
+        but you couldn't fix without violating scope).
+
+═══════════════════════════════════════════════════════════════════
+END OF TASK 4.4 SPEC
+═══════════════════════════════════════════════════════════════════
