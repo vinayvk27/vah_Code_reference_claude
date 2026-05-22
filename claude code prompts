@@ -1,281 +1,39 @@
-═══════════════════════════════════════════════════════════════════
-TASK 4.5: MRR Data Resolution Layer
-═══════════════════════════════════════════════════════════════════
-Pure utility functions for resolving MRR data from Oracle and MariaDB.
-NO workflow changes. NO DB writes. NO Excel parsing.
-
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Out-of-scope files: do NOT touch.
-- Do NOT modify any workflow code.
-- Do NOT modify chat_controller, routes, or auth.
-- Do NOT add features beyond the resolver functions below.
-- If anything seems to require touching out-of-scope code, STOP and report.
-
-Output INTENDED FOOTPRINT at start.
-Output `git diff --stat HEAD` at end.
-
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-The MRR workflow needs to convert user-friendly inputs (project number,
-item name, department name) into internal IDs by querying Oracle and
-MariaDB. This task creates ONLY the data-resolution helper functions.
-The MRR workflow will use these in Task 4.7.
-
-Existing files (out of scope for changes here):
-- app/dao/oracle.py — Oracle SQLAlchemy engine. Already exists.
-- app/services/oracle_queries.py — has get_item_availability,
-  get_item_lpp, get_department_id. Already exists.
-
-This task EXTENDS oracle_queries.py with new helpers, and CREATES a
-new file app/services/mariadb_queries.py for MariaDB lookups.
-
-───────────────────────────────────────────────────────────────────
-SCOPE
-───────────────────────────────────────────────────────────────────
-
-1. UPDATE app/services/oracle_queries.py
-
-   a. REWRITE get_item_lpp() with the correct full JOIN query.
-      Replace the existing simplified version with:
-
-      def get_item_lpp(item_id: int, warehouse_id: int = 1) -> Optional[dict]:
-          session = None
-          try:
-              session = get_oracle_session()
-              row = session.execute(text("""
-                  SELECT B.ITEMID as item_id, C.NAME as name,
-                         (B.PRICE * A.CONVERSIONRATE) as lpp_rate
-                  FROM SCMUNITOFMEASURES UOM, POHEADERS A, POLINES B,
-                       SCMITEMS C, SCMCURRENCIES D, SCMSUPPLIERS SUP
-                  WHERE UOM.UNITOFMEASUREID = B.UNITOFMEASUREID
-                    AND SUP.SUPPLIERID = A.SUPPLIERID
-                    AND A.POHEADERID = B.POHEADERID
-                    AND B.STATUS = 'A'
-                    AND B.WAREHOUSEID = :wh
-                    AND C.WAREHOUSEID = B.WAREHOUSEID
-                    AND A.CURRENCYID = D.CURRENCYID
-                    AND B.ITEMID = C.ITEMID
-                    AND B.ITEMID = :item_id
-                    AND A.POHEADERID = (
-                        SELECT MAX(A2.POHEADERID)
-                        FROM POHEADERS A2, POLINES B2
-                        WHERE A2.POHEADERID = B2.POHEADERID
-                          AND B2.STATUS = 'A'
-                          AND B2.WAREHOUSEID = :wh
-                          AND B2.ITEMID = :item_id
-                    )
-                    AND ROWNUM = 1
-              """), {"item_id": item_id, "wh": warehouse_id}).first()
-              if row:
-                  return {"item_id": row.item_id, "name": row.name,
-                          "lpp_rate": float(row.lpp_rate or 0)}
-              return None
-          except Exception as e:
-              logger.warning("get_item_lpp failed for item_id=%s: %s", item_id, e)
-              return None
-          finally:
-              if session: session.close()
-
-   b. ADD get_item_id_by_name(item_name: str) -> Optional[int]:
-      Query Oracle scmitems WHERE NAME = :name. Return ITEMID or None.
-      Case-insensitive match (use UPPER(NAME) = UPPER(:name)).
-      Logs warning and returns None on error.
-
-   c. ADD get_item_full_details(item_id: int) -> Optional[dict]:
-      Query Oracle scmitems for full item info. Return:
-      {"item_id", "name", "unitofmeasureid"}
-      Or None if not found.
-
-   d. ADD get_uom_name(uom_id: int) -> Optional[str]:
-      Query Oracle scmunitofmeasures WHERE UNITOFMEASUREID = :id.
-      Return the UOM name string (e.g., "NUMBERS", "METERS") or None.
-      Used for display in the user verification summary.
-
-   e. ADD get_latest_item_revision(item_id: int) -> Optional[int]:
-      Query Oracle scmitemrevisions WHERE ITEMID = :item_id
-      ORDER BY (some recency indicator — likely ITEMREVISIONID DESC
-      since higher IDs = newer). Return ITEMREVISIONID or None.
-      If you cannot determine the correct revision column, return the
-      MAX(ITEMREVISIONID) for that ITEMID — that's the safest default.
-
-   Keep existing functions unchanged.
-
-2. CREATE app/services/mariadb_queries.py
-
-   New file with MariaDB query helpers. Use SessionLocal from
-   app.dao.database (the existing MariaDB session factory).
-
-   Functions:
-
-   a. get_project_by_number(project_number: str) -> Optional[dict]:
-      Query posproject WHERE PROJECTNUMBER = :pn. Return:
-      {"project_id", "project_number", "description", "warehouse_id"}
-      Or None if not found.
-
-   b. get_project_phase(project_id: int) -> Optional[dict]:
-      Query posprojectphases WHERE PROJECTID = :pid ORDER BY
-      PROJECTPHASEID ASC FETCH FIRST 1 ROW. Return:
-      {"phase_id", "project_id", "phase_name", "phase_description"}
-      Or None.
-      Note: posprojectphases is MariaDB. Use MariaDB LIMIT 1 syntax,
-      not Oracle FETCH FIRST.
-
-   c. get_max_matrequisition_id() -> int:
-      Query mrr_matrequisitionheader: SELECT IFNULL(MAX(MATREQUISITIONID), 0).
-      Return the integer.
-
-   d. get_max_matrequisition_line_id() -> int:
-      Query mrr_matrequisitionlines: SELECT IFNULL(MAX(MATREQUISITIONLINEID), 0).
-      Return the integer.
-
-   e. get_max_mrr_sequence_for_fy(fy_string: str) -> int:
-      Query mrr_matrequisitionheader for MATREQUISITIONNO values
-      matching DPE/MRR/%/<fy_string>. Extract the sequence number
-      (the middle integer in DPE/MRR/{seq}/{fy}), return MAX or 0.
-
-      SQL approach (MariaDB):
-        SELECT MATREQUISITIONNO
-        FROM mrr_matrequisitionheader
-        WHERE MATREQUISITIONNO LIKE :pattern
-
-      where pattern = f'DPE/MRR/%/{fy_string}'.
-      Then in Python, parse each NO with split('/'), extract the
-      sequence (third token), convert to int, return MAX. Return 0
-      if no rows match.
-
-   f. get_existing_mrr_numbers_count() -> int:
-      For diagnostics. Returns total row count in mrr_matrequisitionheader.
-
-   All functions wrap DB operations in try/except. Log warnings and
-   return None (or 0 for counters) on errors. Close sessions in finally.
-
-3. CREATE app/services/mrr_helpers.py
-
-   Small utility functions specific to MRR:
-
-   a. current_financial_year() -> str:
-      Returns the current Indian financial year as a string like
-      "25-26". Indian FY runs April 1 to March 31.
-
-      Logic:
-        from datetime import datetime
-        now = datetime.now()
-        if now.month >= 4:  # April onwards = new FY
-            fy_start = now.year
-        else:
-            fy_start = now.year - 1
-        return f"{str(fy_start)[2:]}-{str(fy_start + 1)[2:]}"
-
-      Example: in May 2026 → "26-27". In Jan 2026 → "25-26".
-
-   b. build_mrr_number(seq: int, fy: str) -> str:
-      Returns f"DPE/MRR/{seq}/{fy}".
-
-   c. next_mrr_number() -> tuple[int, str]:
-      Combines:
-        - fy = current_financial_year()
-        - last_seq = mariadb_queries.get_max_mrr_sequence_for_fy(fy)
-        - next_seq = last_seq + 1
-      Returns (next_seq, build_mrr_number(next_seq, fy)).
-
-      Example return: (1, "DPE/MRR/1/26-27") if FY just rolled over.
-
-4. CREATE TASK_4_5_REPORT.md with:
-   - INTENDED FOOTPRINT and ACTUAL FOOTPRINT.
-   - Full code of each new function in oracle_queries.py.
-   - Full code of mariadb_queries.py.
-   - Full code of mrr_helpers.py.
-   - Acceptance test results (see below).
-   - Any deviations.
-
-───────────────────────────────────────────────────────────────────
-OUT OF SCOPE — DO NOT TOUCH
-───────────────────────────────────────────────────────────────────
-- app/workflows/* (all of it)
-- app/controllers/* (all of it)
-- app/routes/* (all of it)
-- app/core/*
-- app/models/*
-- app/dao/oracle.py — already correct, no changes needed
-- app/dao/database.py — already correct
-- scripts/seed_dpah_tables.py
-- Any frontend code
-- .env file (already populated by human)
-- config.py (Oracle settings already in place)
-
-───────────────────────────────────────────────────────────────────
-FILES TO READ FIRST
-───────────────────────────────────────────────────────────────────
-- app/services/oracle_queries.py — to extend
-- app/dao/oracle.py — to understand session pattern
-- app/dao/database.py — to understand MariaDB SessionLocal pattern
-
-───────────────────────────────────────────────────────────────────
-FILES TO MODIFY
-───────────────────────────────────────────────────────────────────
-- app/services/oracle_queries.py
-
-───────────────────────────────────────────────────────────────────
-FILES TO CREATE
-───────────────────────────────────────────────────────────────────
-- app/services/mariadb_queries.py
-- app/services/mrr_helpers.py
-- TASK_4_5_REPORT.md
-
-───────────────────────────────────────────────────────────────────
-ACCEPTANCE TESTS (HUMAN VERIFIES)
-───────────────────────────────────────────────────────────────────
-Test in a Python shell from project root:
-
-Test 1: Imports work, no syntax errors:
-  from app.services.oracle_queries import (
-      get_item_id_by_name, get_item_full_details,
-      get_uom_name, get_latest_item_revision, get_item_lpp
-  )
-  from app.services.mariadb_queries import (
-      get_project_by_number, get_project_phase,
-      get_max_matrequisition_id, get_max_matrequisition_line_id,
-      get_max_mrr_sequence_for_fy
-  )
-  from app.services.mrr_helpers import (
-      current_financial_year, build_mrr_number, next_mrr_number
-  )
-
-Test 2: Financial year computation:
-  print(current_financial_year())   # expect "26-27" (current is May 2026)
-  print(build_mrr_number(1, "26-27"))  # expect "DPE/MRR/1/26-27"
-
-Test 3: Project lookup (use any real project number from posproject):
-  result = get_project_by_number("YEB1021")
-  # expect a dict with project_id, project_number, description
-  # If no such project: returns None.
-
-Test 4: Project phase:
-  if project:
-      phase = get_project_phase(project["project_id"])
-      # expect a dict with phase_id, phase_name
-
-Test 5: Item lookup by name (use any real item):
-  item_id = get_item_id_by_name("DP-RM-CAB-03890")  # or any real item NAME
-  # expect an integer if exists, None otherwise
-
-Test 6: MRR sequence number computation:
-  fy = current_financial_year()
-  max_seq = get_max_mrr_sequence_for_fy(fy)
-  print(f"Last seq in FY {fy}: {max_seq}")
-  next_seq, mrr_no = next_mrr_number()
-  print(f"Next MRR: {mrr_no}")
-
-Test 7: Existing max IDs:
-  print(get_max_matrequisition_id())
-  print(get_max_matrequisition_line_id())
-
-If all tests pass without exceptions (return values may be None for
-data that doesn't exist, that's fine), task is complete.
-
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+Sheet 1: "Header" (one row of data)
+Column name in Excel
+User enters?
+Example value
+Notes
+Project Number
+Yes
+YEB1021
+Resolves to PROJECTID from posproject
+Requisition Type
+Yes
+NONRETURNABLE
+Either RETURNABLE or NONRETURNABLE
+Need By Date
+Yes
+28-11-2026
+DD-MM-YYYY format
+Description
+Yes (optional)
+Spare parts for Q4 maintenance
+Free text
+Comments
+Yes (optional)
+Urgent — needed before audit
+Free text
+That's five columns. Everything else (MRR number, warehouse, department, dates, IDs, statuses) is auto-computed by the system.
+Sheet 2: "Items" (one row per line item, can have many rows)
+Column name in Excel
+User enters?
+Example value
+Notes
+Item Name
+Yes
+DP-RM-CAB-03890
+Resolves to ITEMID from scmitems
+Requested Quantity
+Yes
+5
+Integer
