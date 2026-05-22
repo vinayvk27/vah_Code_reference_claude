@@ -1,2 +1,4 @@
 import oracledb
 oracledb.init_oracle_client(lib_dir=r"C:\instantclient_12_1")
+
+python -c "import oracledb; oracledb.init_oracle_client(lib_dir=r'C:\instantclient_12_1'); conn = oracledb.connect(user='T28NOV25', password='PRI_123', dsn='10.5.0.106:1521/ERP'); print(conn.version); conn.close()"
