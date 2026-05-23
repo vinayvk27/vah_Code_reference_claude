@@ -1,5 +1,43 @@
-print(f"[DIAG-MRR] parse_intent_node entered. emp_no={state.get('emp_no')}")
+three statements added 
 
-print(f"[DIAG-MRR] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}, collection={state.get('selected_collection')}")
 
-print(f"[DIAG-MRR] permission_blocked_node entered. denial_message={state.get('denial_message')!r}")
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>C:/ml_env_311/Scripts/python.exe d:/dev/agentic_ai/dpah_backend_v1/main.py
+d:\dev\agentic_ai\dpah_backend_v1\main.py:18: DeprecationWarning:
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+  @app.on_event("startup")
+INFO:     Started server process [20564]
+INFO:     Waiting for application startup.
+[Startup] RMS timesheet is now DB-backed - no pre-loading required
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
+User context built for: 16 (Vijay Ananth K)
+
+=== DEBUG: Resolved context for emp_no 16 ===
+  group_idx = 16
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:65217 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 16 (Vijay Ananth K)
+
+=== DEBUG: Resolved context for emp_no 16 ===
+  group_idx = 16
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:65218 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:65253 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=16
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=approver, collection=mrr_general
