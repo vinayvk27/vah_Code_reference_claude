@@ -1,18 +1,1 @@
-static_output_nodes = [
-                    # MRR static-output nodes (no LLM streaming):
-                    "handle_header", "handle_items", "evaluate_and_route",
-                    "welcome_node", "issuer_agent_node",
-                    "auto_verifier_node", "auto_verifier",
-                    "mrr_approver_agent", "mrr_approver_agent_node",
-                    "mrr_erp_approver_agent", "mrr_erp_approver_agent_node",
-                    # MRR Excel upload path (Task 4.7):
-                    "excel_handler", "excel_handler_node",
-                    "submit_mrr", "submit_mrr_node",
-                    "cancel_mrr", "cancel_mrr_node",
-                    "creator_router_entry",
-                    # Permission-blocked from RMS/HRMS/MRR (no LLM call):
-                    "permission_blocked", "permission_blocked_node",
-                    # NOTE: agent nodes (creator/reviewer/approver) intentionally
-                    # excluded — they stream via on_chat_model_stream, adding them
-                    # here causes duplicated output.
-                ]
+print(f"[DIAG-RMS] <node_name> entered. emp_no={state.get('emp_no')}")
