@@ -1,35 +1,123 @@
-Hi! What can I help you with?
-approve worklog 47
-I
-🤖
+═══════════════════════════════════════════════════════════════════
+TASK 4.7.3: Fix HRMS + MRR agent node collection checks
+═══════════════════════════════════════════════════════════════════
 
-Approved worklog 47.
-show my tasks
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/hrms_workflow/nodes.py AND
+  app/workflows/material_workflow/nodes.py.
+- Do NOT modify rms_workflow, controllers, routes, models,
+  or services.
+- Do NOT modify agent node logic except for the specific
+  condition change listed below.
+- If anything requires touching out-of-scope code, STOP and report.
 
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
 
-Hi! What can I help you with?
-log 4 hours today
-A
-🤖
-To log 4 hours for today, I need a few more details to create the task assignment:
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Same bug pattern as Task 4.7.2 (which fixed RMS). The intent
+classifier sets selected_collection to lowercase prefixed values
+("hrms_leave_data", "hrms_salarydata", "mrr_general"). But agent
+nodes have legacy condition `if selected_collection == "HRMS":`
+(or "MRR") at the top of their LLM-binding logic, which is now
+always false. Execution falls into the else: branch that sets
+full_text = "" and returns silently — empty stream.
 
-1. **Resource ID**: Which employee is logging this time? (Your ID is 1065, or another?)
-2. **Project ID**: Which project is this for?
-3. **Product ID**: Which product is associated with this task?
-4. **Task Index**: Which task number/activity?
-5. **Activity Index**: Which activity within the task?
-6. **End Date**: Is this just for today (2026-05-22), or a date range?
+This task applies the same fix pattern from Task 4.7.2 to both
+HRMS and MRR agent nodes, and adds diagnostic prints.
 
-Please provide these details so I can create the 4-hour time entry.To log 4 hours today, I need a bit more information. Please provide:
-1. **Project ID**
-2. **Product ID**
-3. **Task Index** (or Task ID if you know it, otherwise the index number)
-4. **Activity Index**
+───────────────────────────────────────────────────────────────────
+SCOPE — HRMS
+───────────────────────────────────────────────────────────────────
 
-Or, if you want to log this against an **existing task**, please tell me which task ID to update.
+In app/workflows/hrms_workflow/nodes.py:
 
-For example: "Log 4 hours on Task #1" or "Log 4 hours for Project 1, Product 1, Task Index 1, Activity Index 1".
+In EACH of creator_agent_node, reviewer_agent_node,
+approver_agent_node:
 
-*Note: Based on the current system constraints, I can only **create** new task assignments or **list** existing tasks. If you need to update the hours of an existing task (e.g., from 0 to 4), the system typically handles this via a UI update or a specific "update task" tool which is not currently listed in my available tools. However, I can create a **new** task entry for 4 hours today if you provide the details.*
+Find the line that says:
+    if selected_collection == "HRMS":
 
-Let me know how you'd like to proceed!
+Change to:
+    if selected_collection and selected_collection.lower().startswith("hrms_"):
+
+Then add this print at the very start of each function (just
+after the docstring, BEFORE any other code):
+
+    print(
+        f"[DIAG-HRMS] <function_name> entered. "
+        f"emp_no={state.get('emp_no')}, "
+        f"selected_collection={state.get('selected_collection')!r}, "
+        f"selected_agent_role={state.get('selected_agent_role')!r}, "
+        f"will_enter_hrms_branch={bool(state.get('selected_collection', '').lower().startswith('hrms_'))}",
+        flush=True
+    )
+
+Replace <function_name> with the actual function name.
+If a DIAG print already exists at the top, replace it with this one.
+
+───────────────────────────────────────────────────────────────────
+SCOPE — MRR
+───────────────────────────────────────────────────────────────────
+
+In app/workflows/material_workflow/nodes.py:
+
+The MRR creator agent (whichever function holds the creator's LLM
+binding — likely creator_agent_node, or possibly inside an existing
+form/processing node) has the same legacy check. Find any condition
+that looks like:
+    if selected_collection == "MRR":
+
+Change to:
+    if selected_collection and selected_collection.lower().startswith("mrr_"):
+
+This pattern may exist in more than one MRR node — find all
+occurrences in nodes.py and apply the same fix. If no such
+condition exists in a given function, do not modify that function.
+
+For MRR's approver_agent_node and erp_approver_agent_node — these
+do DB queries directly without LLM streaming. They have NO
+selected_collection check. Do NOT modify them.
+
+If you find a `creator_agent_node` or similar that does have the
+condition, add this print just after its docstring (before any
+other code), parallel to the HRMS version:
+
+    print(
+        f"[DIAG-MRR] <function_name> entered. "
+        f"emp_no={state.get('emp_no')}, "
+        f"selected_collection={state.get('selected_collection')!r}, "
+        f"selected_agent_role={state.get('selected_agent_role')!r}, "
+        f"will_enter_mrr_branch={bool(state.get('selected_collection', '').lower().startswith('mrr_'))}",
+        flush=True
+    )
+
+Existing DIAG prints in approver_agent_node /
+erp_approver_agent_node from Task 4.7.1 stay as-is — do not
+touch them.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/ (Task 4.7.2 already fixed it)
+- All controllers, routes, models, services
+- All other workflow files (state.py, graph.py, intent.py, etc.)
+- Everything else
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_4_7_3_REPORT.md with:
+- INTENDED / ACTUAL footprint.
+- For HRMS: list of all three functions modified with before/after
+  of the condition and confirmation DIAG print is added.
+- For MRR: list of all functions where the legacy condition was
+  found and changed, with before/after.
+- For MRR: list of functions where you found NO legacy condition
+  and therefore made no changes.
+- Confirmation that no other logic was modified.
+- Any deviations.
