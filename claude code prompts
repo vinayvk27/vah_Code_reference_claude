@@ -1,1 +1,5 @@
+# agent_id, agent_name, department, is_active
+'22', 'MRR_GENERAL_CREATOR', NULL, '1'
+'23', 'MRR_GENERAL_REVIEWER', NULL, '1'
+'24', 'MRR_GENERAL_APPROVER', NULL, '1'
 12:12:56	INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by) SELECT roles.role_id, groups.group_idx, a.agent_id, 'system' FROM dpah_agents a CROSS JOIN (SELECT 7 AS role_id UNION SELECT 8 UNION SELECT 9) roles CROSS JOIN (     SELECT DISTINCT group_idx     FROM dpah_module_usergroups     WHERE module_id = (SELECT module_id FROM dpah_modules WHERE module_name = 'MRR') ) groups WHERE a.agent_name = 'MRR_GENERAL_CREATOR'	203 row(s) affected, 1 warning(s): 1062 Duplicate entry '9-3-22' for key 'PRIMARY' Records: 204  Duplicates: 1  Warnings: 1	0.032 sec
