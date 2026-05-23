@@ -1,5 +1,4 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.services.mariadb_queries import resolve_item_from_partno, get_item_lpp, get_item_uomid, get_item_id_by_name; row = resolve_item_from_partno('DP-RM-CAB-03390'); print('resolve_item_from_partno:', row); item_id = row['item_id'] if row else None; print('get_item_lpp:', get_item_lpp(item_id) if item_id else None); print('get_item_uomid:', get_item_uomid(item_id) if item_id else None); print('get_item_id_by_name:', get_item_id_by_name('DP-RM-CAB-03390'))"
-resolve_item_from_partno: None
-get_item_lpp: None       
-get_item_uomid: None     
-get_item_id_by_name: None
+# DP_PART_NO, MANUFACTURE, DESCRIPTION, QOH, PRICE, ITEMID, REVISIONLEVEL, ITEMREVISIONID, WAREHOUSE, UOM, TOTAL_DEMAND, TOTAL_SUPPLY, BIN_QTY
+'DP-RM-CSY-22632', 'OTP-244114-01-ETUO', 'CSY FireFly 10.3125Gbps 8x OM3 MM 50/125µm 850nm Flat Ribbon Optical Fiber, End A ETUO 4TX+4RX Electrical-Optical Transceiver with Flat Heat Sink, End B MT38999 CF-599011-01S Square Flange Circular Connector Shell 11 Single Cavity 12F MT Male Olive Drab Cadmium Polarization N, with Black Loose Jacket and Boot, Overall 35cm, -40C to 85C.', NULL, '185000.00', '136019', 'XCXX', '254680', '1', 'NOS', NULL, NULL, '0'
+
+2nd query resulted empty
