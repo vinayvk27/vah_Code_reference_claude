@@ -1,12 +1,15 @@
-Per module, positive cases:
-Junior 1065 in RMS — log hours, view tasks (creator/reviewer paths).
-Senior 1731 in RMS — approve worklogs (approver path).
-Junior 1065 in HRMS — apply for leave (now reviewer access exists), view leave balance.
-Senior 1731 in HRMS — approve leaves.
-Junior 1065 in MRR — create a requisition.
-COO/CTO (16, 06) in MRR — see pending approvals (currently empty, but message is correct).
-ERP HOD (531) in MRR — see ERP-stage approvals (also currently empty).
-Per module, negative cases:
-Junior tries APPROVER actions → denied with friendly message.
-Any user asks out-of-scope ("what's the weather", "tell me a joke") → friendly redirect.
-User without module access tries to chat in that module → 403 / "you don't have access."
+MariaDB queries:
+
+LPP query:
+
+select LPP_VALUE_UNITPRICE_INR from SCMITEMS WHERE ITEMID = 146271 AND WAREHOUSEID = 1;
+
+
+QOH query and table format:
+
+select QOH from com_search WHERE DP_PART_NO = 'DP-RM-CAB-03390';
+
+DP_PART_NO 	MANUFACTURE 	DESCRIPTION 	QOH 	PRICE 	ITEMID 	REVISIONLEVEL 	ITEMREVISIONID 	WAREHOUSE 	UOM 	TOTAL_DEMAND 	TOTAL_SUPPLY 	BIN_QTY
+DP-RM-CAB-03390 	PTFE-1C-24-C1936-OD 1.48 mm-U-5 SPC 1-Micron 	CAB GP 1Core MS 24AWG 19/0.13 mm 1u-SPC 1000V PTFE GREEN 	104.7 	11.5 	7609 	XCXX 	7881 	1 	MTR 	NULL 	NULL 	49.9
+
+
