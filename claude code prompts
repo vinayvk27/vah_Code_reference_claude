@@ -1,7 +1,37 @@
-'user_role_id', 'bigint(20)', 'NO', 'PRI', NULL, 'auto_increment'
-'emp_id', 'varchar(50)', 'NO', 'MUL', NULL, ''
-'role_id', 'int(11)', 'NO', 'MUL', NULL, ''
-'assigned_by', 'varchar(50)', 'YES', '', NULL, ''
-'assigned_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', ''
-'valid_until', 'timestamp', 'YES', '', NULL, ''
-'is_active', 'tinyint(1)', 'NO', '', '1', ''
+-- 1. Grant all role IDs (Junior/Mid/Senior) across all groups with MRR module access
+--    the ability to invoke MRR_GENERAL_CREATOR.
+INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT roles.role_id, groups.group_idx, a.agent_id, 'system'
+FROM dpah_agents a
+CROSS JOIN (SELECT 7 AS role_id UNION SELECT 8 UNION SELECT 9) roles
+CROSS JOIN (
+    SELECT DISTINCT group_idx
+    FROM dpah_module_usergroups
+    WHERE module_id = (SELECT module_id FROM dpah_modules WHERE module_name = 'MRR')
+) groups
+WHERE a.agent_name = 'MRR_GENERAL_CREATOR';
+
+
+-- 2. Verify all required MRR agents exist (this is a SELECT only, no insert).
+SELECT agent_id, agent_name, department, is_active
+FROM dpah_agents
+WHERE agent_name LIKE 'MRR_%'
+ORDER BY agent_id;
+-- Expected: at least MRR_GENERAL_CREATOR, plus VERIFIER, MANAGER_APPROVER, ERP_APPROVER
+-- if Task 4.4 seed has been run.
+-- If VERIFIER/MANAGER_APPROVER/ERP_APPROVER missing, run:
+--     python scripts/seed_dpah_tables.py
+
+
+-- 3. Add CTO, COO, ERP HOD as Senior users (so they have role/group identity
+--    for JWT generation).
+INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
+VALUES
+  ('16', 9, 'system'),    -- COO
+  ('06', 9, 'system'),    -- CTO
+  ('531', 9, 'system');   -- ERP HOD
+
+
+-- 4. Verify CTO/COO/ERP HOD exist in resources with their actual group/dept.
+SELECT EmpNo, EmpName, GroupIDx, Dept FROM resources WHERE EmpNo IN ('06', '16', '531');
+-- Expected: COO/PRJ/16, CTO/HDD/30, ERP HOD/EAG/32
