@@ -1,4 +1,129 @@
+Hi! What can I help you with?
+hi
+A
+🤖
+I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?
+
+i want to create a material requistion
+A
+🤖
+{"project_id": "", "phase_id": "", "warehouse": "DPE", "requisition_type": "Returnable", "need_by_date": "", "remarks": "", "has_minimum_data": false, Please fill out the project details or just type them to me:
+
+"items": []}
+what is the weather today
+A
+🤖
+I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?
+
 # agent_id, agent_name, department, is_active
 '22', 'MRR_GENERAL_CREATOR', NULL, '1'
 '23', 'MRR_GENERAL_REVIEWER', NULL, '1'
 '24', 'MRR_GENERAL_APPROVER', NULL, '1'
+
+
+Hi! What can I help you with?
+show me pending approvals
+V
+🤖
+⚠️ You don't have access to this module. Please contact your administrator.
+
+
+
+def permission_check_node(state: MaterialRequisitionState) -> dict:
+    """
+    Node 2: Check user permissions.
+    OUT_OF_DOMAIN requests short-circuit with a denial message.
+    For IN_DOMAIN, looks up agent in DB and checks access.
+    """
+    from app.controllers.auth_controller import AuthController
+
+    parsed_intent = state.get("parsed_intent", "")
+    selected_agent_role = state.get("selected_agent_role", "")
+    selected_collection = state.get("selected_collection", "")
+    emp_no = state.get("emp_no", "")
+    group_idx = state.get("group_idx", 0)
+    role_ids = state.get("role_ids", [])
+
+    execution_log = state.get("execution_log", [])
+
+    # OUT_OF_DOMAIN short-circuits
+    if parsed_intent == "OUT_OF_DOMAIN":
+        execution_log.append("Out-of-domain request; routing to blocked node.")
+        return {
+            "has_permission": False,
+            "denial_message": (
+                "I can only help with MRR tasks like creating material "
+                "requisitions, approving requests, and issuing stock. "
+                "Could you rephrase your request?"
+            ),
+            "execution_log": execution_log
+        }
+
+    # IN_DOMAIN: look up agent in DB and check access
+    if not selected_collection or not selected_agent_role:
+        execution_log.append("Classifier returned incomplete result; denying.")
+        return {
+            "has_permission": False,
+            "denial_message": (
+                "I wasn't able to understand your request. "
+                "Could you rephrase it?"
+            ),
+            "execution_log": execution_log
+        }
+
+    # Build the expected agent_name following the convention:
+    # {MODULE}_{COLLECTION_SUFFIX}_{PERSONA}
+    collection_suffix = selected_collection.upper().replace("MRR_", "")
+    expected_agent_name = f"MRR_{collection_suffix}_{selected_agent_role.upper()}"
+
+    # Look up the agent by name first to get its agent_id
+    db = SessionLocal()
+    try:
+        from app.models.db_schema import Agent
+        agent_row = db.query(Agent).filter(
+            Agent.agent_name == expected_agent_name,
+            Agent.is_active == 1
+        ).first()
+
+        if not agent_row:
+            execution_log.append(f"Agent {expected_agent_name} not found in DB.")
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    f"The {selected_agent_role} role for {selected_collection} "
+                    f"is not available."
+                ),
+                "execution_log": execution_log
+            }
+
+        # Check access via Gate 2
+        agent_or_none = AuthController.check_agent_access(
+            emp_no=emp_no,
+            group_idx=group_idx,
+            role_ids=role_ids,
+            agent_id=agent_row.agent_id,
+            db=db
+        )
+
+        if agent_or_none is None:
+            execution_log.append(
+                f"Permission DENIED: user lacks {expected_agent_name}."
+            )
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    f"You don't have {selected_agent_role.lower()} access to "
+                    f"{selected_collection.replace('_', ' ')}. "
+                    f"Please contact your administrator if you need this permission."
+                ),
+                "execution_log": execution_log
+            }
+
+        execution_log.append(f"Permission GRANTED: {expected_agent_name}")
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+    finally:
+        db.close()
