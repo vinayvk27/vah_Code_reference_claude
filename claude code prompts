@@ -1,123 +1,48 @@
-═══════════════════════════════════════════════════════════════════
-TASK 4.7.3: Fix HRMS + MRR agent node collection checks
-═══════════════════════════════════════════════════════════════════
+# TASK 4.7.3 REPORT: Fix HRMS + MRR agent node collection checks
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/hrms_workflow/nodes.py AND
-  app/workflows/material_workflow/nodes.py.
-- Do NOT modify rms_workflow, controllers, routes, models,
-  or services.
-- Do NOT modify agent node logic except for the specific
-  condition change listed below.
-- If anything requires touching out-of-scope code, STOP and report.
+## INTENDED / ACTUAL FOOTPRINT
 
-Output INTENDED FOOTPRINT at start.
-Output `git diff --stat HEAD` at end.
+- **Intended:** Modify `app/workflows/hrms_workflow/nodes.py` and `app/workflows/material_workflow/nodes.py` to change `selected_collection == "HRMS"` / `selected_collection == "MRR"` conditions.
+- **Actual:** Neither file contains the legacy conditions `selected_collection == "HRMS"` or `selected_collection == "MRR"`. **No files were modified.**
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-Same bug pattern as Task 4.7.2 (which fixed RMS). The intent
-classifier sets selected_collection to lowercase prefixed values
-("hrms_leave_data", "hrms_salarydata", "mrr_general"). But agent
-nodes have legacy condition `if selected_collection == "HRMS":`
-(or "MRR") at the top of their LLM-binding logic, which is now
-always false. Execution falls into the else: branch that sets
-full_text = "" and returns silently — empty stream.
+## HRMS FINDINGS
 
-This task applies the same fix pattern from Task 4.7.2 to both
-HRMS and MRR agent nodes, and adds diagnostic prints.
+### `creator_agent_node` (line 289)
+- **No legacy condition found.** The function has no `if selected_collection == "HRMS":` guard. The LLM binding logic runs unconditionally.
 
-───────────────────────────────────────────────────────────────────
-SCOPE — HRMS
-───────────────────────────────────────────────────────────────────
+### `reviewer_agent_node` (line 419)
+- **No legacy condition found.** Same as above — no collection check.
 
-In app/workflows/hrms_workflow/nodes.py:
+### `approver_agent_node` (line 590)
+- **No legacy condition found.** Same as above — no collection check.
 
-In EACH of creator_agent_node, reviewer_agent_node,
-approver_agent_node:
+## MRR FINDINGS
 
-Find the line that says:
-    if selected_collection == "HRMS":
+### Functions examined in `material_workflow/nodes.py`:
 
-Change to:
-    if selected_collection and selected_collection.lower().startswith("hrms_"):
+| Function | Legacy condition found? | Notes |
+|---|---|---|
+| `creator_agent_node` | Does not exist | No such function in this file |
+| `approver_agent_node` | No | Direct DB query, no LLM streaming, no collection check |
+| `erp_approver_agent_node` | No | Direct DB query, no LLM streaming, no collection check |
+| `issuer_agent_node` | No | Simple DB/user-check, no collection check |
+| `evaluate_and_route` | No | Direct DB insert, no collection check |
+| `auto_verifier_node` | No | Direct DB query, no collection check |
+| `handle_header` | No | Uses LLM extractors but not via `selected_collection` guard |
+| `handle_items` | No | Direct item extraction, no collection check |
+| `excel_handler_node` | No | Direct DB resolution, no collection check |
+| `mrr_submission_node` | No | Direct DB inserts, no collection check |
+| All other nodes | No | None contain `selected_collection == "MRR"` or `selected_collection ==` |
 
-Then add this print at the very start of each function (just
-after the docstring, BEFORE any other code):
+## DEVIATIONS
 
-    print(
-        f"[DIAG-HRMS] <function_name> entered. "
-        f"emp_no={state.get('emp_no')}, "
-        f"selected_collection={state.get('selected_collection')!r}, "
-        f"selected_agent_role={state.get('selected_agent_role')!r}, "
-        f"will_enter_hrms_branch={bool(state.get('selected_collection', '').lower().startswith('hrms_'))}",
-        flush=True
-    )
+- The assumed bug pattern from Task 4.7.2 (legacy `== "HRMS"` / `== "MRR"` guards) does not exist in these two workflow files.
+- HRMS agent nodes have always run unconditionally (they don't gate on `selected_collection`).
+- MRR agent nodes also lack any `selected_collection` equality check — they operate via direct DB queries or sub-workflows.
+- No DIAG print statements were added because there was no condition to change and the task specified adding them only alongside condition changes.
 
-Replace <function_name> with the actual function name.
-If a DIAG print already exists at the top, replace it with this one.
+## CONFIRMATION
 
-───────────────────────────────────────────────────────────────────
-SCOPE — MRR
-───────────────────────────────────────────────────────────────────
-
-In app/workflows/material_workflow/nodes.py:
-
-The MRR creator agent (whichever function holds the creator's LLM
-binding — likely creator_agent_node, or possibly inside an existing
-form/processing node) has the same legacy check. Find any condition
-that looks like:
-    if selected_collection == "MRR":
-
-Change to:
-    if selected_collection and selected_collection.lower().startswith("mrr_"):
-
-This pattern may exist in more than one MRR node — find all
-occurrences in nodes.py and apply the same fix. If no such
-condition exists in a given function, do not modify that function.
-
-For MRR's approver_agent_node and erp_approver_agent_node — these
-do DB queries directly without LLM streaming. They have NO
-selected_collection check. Do NOT modify them.
-
-If you find a `creator_agent_node` or similar that does have the
-condition, add this print just after its docstring (before any
-other code), parallel to the HRMS version:
-
-    print(
-        f"[DIAG-MRR] <function_name> entered. "
-        f"emp_no={state.get('emp_no')}, "
-        f"selected_collection={state.get('selected_collection')!r}, "
-        f"selected_agent_role={state.get('selected_agent_role')!r}, "
-        f"will_enter_mrr_branch={bool(state.get('selected_collection', '').lower().startswith('mrr_'))}",
-        flush=True
-    )
-
-Existing DIAG prints in approver_agent_node /
-erp_approver_agent_node from Task 4.7.1 stay as-is — do not
-touch them.
-
-───────────────────────────────────────────────────────────────────
-OUT OF SCOPE — DO NOT TOUCH
-───────────────────────────────────────────────────────────────────
-- app/workflows/rms_workflow/ (Task 4.7.2 already fixed it)
-- All controllers, routes, models, services
-- All other workflow files (state.py, graph.py, intent.py, etc.)
-- Everything else
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_4_7_3_REPORT.md with:
-- INTENDED / ACTUAL footprint.
-- For HRMS: list of all three functions modified with before/after
-  of the condition and confirmation DIAG print is added.
-- For MRR: list of all functions where the legacy condition was
-  found and changed, with before/after.
-- For MRR: list of functions where you found NO legacy condition
-  and therefore made no changes.
-- Confirmation that no other logic was modified.
-- Any deviations.
+- No files were modified.
+- No other logic was touched.
+- RMS workflow (Task 4.7.2) remains the only set of files that required this fix.
