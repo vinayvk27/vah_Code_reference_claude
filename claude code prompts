@@ -1,14 +1,290 @@
-# Field, Type, Null, Key, Default, Extra
-'MATREQUISITIONLINEID', 'bigint(20)', 'NO', 'PRI', NULL, ''
-'MATREQUISITIONID', 'bigint(20)', 'YES', 'MUL', NULL, ''
-'ITEMID', 'bigint(20)', 'YES', '', NULL, ''
-'ITEMREVISIONID', 'bigint(20)', 'YES', '', NULL, ''
-'UOMID', 'bigint(20)', 'YES', '', NULL, ''
-'REQUISITIONQTY', 'decimal(15,4)', 'YES', '', NULL, ''
-'ISSUEQTY', 'decimal(15,4)', 'YES', '', NULL, ''
-'WHOCOLUMN', 'varchar(100)', 'YES', '', NULL, ''
-'RETURNQUANTITY', 'decimal(15,4)', 'YES', '', NULL, ''
-'STATUS', 'varchar(25)', 'YES', '', NULL, ''
-'CLOSEREASON', 'varchar(4000)', 'YES', '', NULL, ''
-'ITEMCOST', 'decimal(15,4)', 'YES', '', NULL, ''
-'RETURN_DATE', 'datetime', 'YES', '', NULL, ''
+═══════════════════════════════════════════════════════════════════
+TASK 4.8: Refactor MRR resolvers for new MariaDB schema
+═══════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch the files listed.
+- Do NOT modify RMS, HRMS workflows.
+- Do NOT modify auth, routes, models.
+- Do NOT remove diagnostic prints already in place.
+- If anything requires touching out-of-scope code, STOP and report.
+
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The DBAs replicated Oracle ERP data to MariaDB via consolidated
+queries, NOT individual tables. Available MariaDB tables now:
+
+1. SCMITEMS — has LPP_VALUE_UNITPRICE_INR, UNITOFMEASUREID per
+   (ITEMID, WAREHOUSEID). Use WAREHOUSEID=1 (numeric) for filters.
+2. com_search — denormalized lookup view by DP_PART_NO. Contains
+   ITEMID, ITEMREVISIONID, UOM (string), QOH (varchar), PRICE, etc.
+   Filter by WAREHOUSE='1' (string) for the active DPE warehouse.
+
+Tables NO LONGER available in MariaDB:
+- SCMQUANTITYONHAND
+- SCMITEMREVISIONS
+- SCMUNITOFMEASURES
+- SCMDEPARTMENTS
+- POHEADERS, POLINES, SCMCURRENCIES, SCMSUPPLIERS
+
+Schema changes already made by DBA:
+- mrr_matrequisitionheader.DEPARTMENTID (bigint) replaced by
+  DEPARTMENT (varchar(50)). Stores user's dept string directly
+  (e.g., "SDG", "PRJ", "EAG"). No lookup needed.
+
+Per-line resolution chain (the new approach):
+1. com_search lookup by DP_PART_NO → ITEMID, ITEMREVISIONID, UOM
+   string, QOH string.
+2. SCMITEMS lookup by ITEMID+WAREHOUSEID=1 → LPP_VALUE_UNITPRICE_INR,
+   UNITOFMEASUREID (numeric, for storage).
+3. Compute item_cost = lpp * requisition_qty.
+
+QOH from com_search is varchar(20). Parse to float in Python with
+try/except. On parse failure, treat as "unknown" (don't crash).
+
+WAREHOUSE in com_search is varchar — store as the string "1".
+WAREHOUSEID in SCMITEMS is numeric — use integer 1.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. UPDATE app/services/mariadb_queries.py
+
+   REMOVE these functions entirely (no longer have backing tables):
+   - get_item_full_details
+   - get_uom_name
+   - get_latest_item_revision
+   - get_item_availability (in old form)
+   - get_department_id (no longer needed; dept stored as string)
+
+   KEEP these functions unchanged:
+   - get_project_by_number
+   - get_project_phase
+   - get_max_matrequisition_id
+   - get_max_matrequisition_line_id
+   - get_max_mrr_sequence_for_fy
+   - get_existing_mrr_numbers_count
+
+   ADD these new functions:
+
+   a. resolve_item_from_partno(dp_part_no: str) -> Optional[dict]:
+      Single lookup against com_search. Returns:
+        {
+          "item_id": int,
+          "item_revision_id": int,
+          "uom_name": str,         # display string like "MTR"
+          "qoh": float | None,     # parsed QOH; None if not parseable
+          "price_inr": float | None,  # com_search.PRICE
+          "description": str       # com_search.DESCRIPTION for display
+        }
+      Or None if no match.
+
+      SQL:
+        SELECT ITEMID, ITEMREVISIONID, UOM, QOH, PRICE, DESCRIPTION
+        FROM com_search
+        WHERE DP_PART_NO = :pn AND WAREHOUSE = '1'
+        LIMIT 1
+
+      Parse QOH safely:
+        try:
+            qoh = float(row.QOH) if row.QOH else None
+        except (ValueError, TypeError):
+            qoh = None
+
+   b. get_item_lpp(item_id: int) -> Optional[float]:
+      Replace existing get_item_lpp entirely. Simple lookup:
+        SELECT LPP_VALUE_UNITPRICE_INR
+        FROM SCMITEMS
+        WHERE ITEMID = :item_id AND WAREHOUSEID = 1
+        LIMIT 1
+      Return float or None.
+
+   c. get_item_uomid(item_id: int) -> Optional[int]:
+      Get the numeric UNITOFMEASUREID for storage in
+      mrr_matrequisitionlines.UOMID:
+        SELECT UNITOFMEASUREID FROM SCMITEMS
+        WHERE ITEMID = :item_id AND WAREHOUSEID = 1
+        LIMIT 1
+      Return int or None.
+
+   d. get_item_id_by_name(item_name: str) -> Optional[int]:
+      Keep this function (other code might use it). Update to use
+      com_search instead of removed scmitems table:
+        SELECT ITEMID FROM com_search
+        WHERE DP_PART_NO = :name AND WAREHOUSE = '1'
+        LIMIT 1
+      Return ITEMID or None.
+
+   All new functions:
+   - Use SessionLocal from app.dao.database.
+   - Wrap in try/except. Log warnings on error; return None.
+   - Close session in finally.
+
+2. UPDATE app/services/mrr_validator.py
+
+   Update the per-line resolution block to use the new resolvers.
+   The OLD per-line block called multiple functions
+   (get_item_id_by_name, get_item_full_details, get_uom_name,
+   get_latest_item_revision, get_item_lpp, get_item_availability).
+   Replace with:
+
+     # Per-line resolution (new):
+     row = resolve_item_from_partno(item_name)
+     if row is None:
+         errors.append(f"Item '{item_name}' not found.")
+         continue  # skip this line
+
+     item_id = row["item_id"]
+     item_revision_id = row["item_revision_id"]
+     uom_name = row["uom_name"]
+     qoh = row["qoh"]
+
+     # Get numeric UOMID and LPP from SCMITEMS:
+     uom_id = get_item_uomid(item_id)
+     if uom_id is None:
+         warnings.append(f"UOMID not found for item '{item_name}'; using 0.")
+         uom_id = 0
+
+     lpp_rate = get_item_lpp(item_id)
+     if lpp_rate is None or lpp_rate == 0:
+         warnings.append(f"LPP unavailable for '{item_name}'; cost calculated as 0.")
+         lpp_rate = 0.0
+
+     item_cost = lpp_rate * requested_quantity
+
+     # Build line dict for state (used by submission_node later):
+     line = {
+         "item_id": item_id,
+         "item_name": item_name,
+         "item_revision_id": item_revision_id,
+         "uom_id": uom_id,
+         "uom_name": uom_name,
+         "requisition_qty": requested_quantity,
+         "lpp_rate": float(lpp_rate),
+         "item_cost": item_cost,
+         "available_quantity": qoh if qoh is not None else "unknown",
+         "return_date": return_date_for_this_row,  # or None
+     }
+     lines.append(line)
+
+   Remove the old department resolution call. Replace with:
+
+     # Department stored as string directly (schema change):
+     department = current_user.dept  # e.g., "SDG", "PRJ"
+
+   Update the header dict construction:
+     header = {
+         ...
+         "department": department,   # CHANGED: was "department_id" + "department_name"
+         ...
+     }
+
+   (Note: keep "warehouse_id": 1 in header — it's still numeric in
+   mrr_matrequisitionheader.WAREHOUSEID column.)
+
+   Update the summary_for_user formatting block:
+   Change "Department: {department_name}" line to
+   "Department: {department}".
+
+3. UPDATE app/workflows/material_workflow/nodes.py
+
+   In mrr_submission_node, update the header INSERT statement:
+
+   CHANGE column name from DEPARTMENTID to DEPARTMENT (string column).
+   CHANGE the bind parameter from header["department_id"] to
+   header["department"].
+
+   Before (sample of the INSERT):
+     INSERT INTO mrr_matrequisitionheader (
+         ..., DEPARTMENTID, NEEDBYDATE, ...
+     ) VALUES (
+         ..., :dept, :needby, ...
+     )
+   bind:  "dept": header["department_id"],
+
+   After:
+     INSERT INTO mrr_matrequisitionheader (
+         ..., DEPARTMENT, NEEDBYDATE, ...
+     ) VALUES (
+         ..., :dept, :needby, ...
+     )
+   bind:  "dept": header["department"],
+
+   All other column writes stay unchanged.
+
+   In approver_agent_node and erp_approver_agent_node, find any
+   SELECT statement against mrr_matrequisitionheader that selects
+   DEPARTMENTID. Change to DEPARTMENT. If they don't select it,
+   no change needed.
+
+4. CREATE TASK_4_8_REPORT.md with:
+   - INTENDED / ACTUAL footprint.
+   - Full code of the new functions in mariadb_queries.py:
+     resolve_item_from_partno, get_item_lpp (new version),
+     get_item_uomid, updated get_item_id_by_name.
+   - List of functions REMOVED from mariadb_queries.py.
+   - Show the updated per-line resolution block in mrr_validator.py
+     (with line numbers approximate).
+   - Show before/after of the header INSERT in mrr_submission_node.
+   - Confirmation of no out-of-scope file changes.
+   - Any deviations.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/
+- app/workflows/hrms_workflow/
+- app/dao/* (oracle.py is dead code; leave it)
+- app/core/*
+- app/models/*
+- app/controllers/*
+- app/routes/*
+- scripts/seed_dpah_tables.py
+- frontend
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS
+───────────────────────────────────────────────────────────────────
+
+Test 1: Server boots clean.
+
+Test 2: Resolver functions work via Python shell:
+
+  from app.services.mariadb_queries import resolve_item_from_partno, get_item_lpp, get_item_uomid
+
+  # Use a real DP_PART_NO from com_search:
+  row = resolve_item_from_partno("DP-RM-CAB-03390")
+  print(row)
+  # Expected: dict with item_id, item_revision_id, uom_name="MTR", qoh, etc.
+
+  lpp = get_item_lpp(row["item_id"])
+  print(lpp)
+  # Expected: float (LPP_VALUE_UNITPRICE_INR from SCMITEMS)
+
+  uomid = get_item_uomid(row["item_id"])
+  print(uomid)
+  # Expected: int (UNITOFMEASUREID from SCMITEMS)
+
+Test 3: Validator runs end-to-end with real data:
+  Create a small test_mrr.xlsx with real PROJECTNUMBER and real
+  DP_PART_NO. Upload via curl to /stream-with-file with module=MRR.
+
+  Expected: validator returns valid=True with header.department
+  as the user's dept string, and lines populated with resolved
+  data.
+
+Test 4: Full submission via UI:
+  Junior 1065 uploads valid test_mrr.xlsx. Sends "confirm_mrr".
+  Verify in DB:
+    SELECT MATREQUISITIONNO, DEPARTMENT, TOTAL_COST
+    FROM mrr_matrequisitionheader
+    ORDER BY MATREQUISITIONID DESC LIMIT 1;
+  Expected: row exists with DEPARTMENT='SDG' (or whatever 1065's
+  dept is), TOTAL_COST = sum of line LPPs * quantities.
