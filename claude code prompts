@@ -1,82 +1,174 @@
+@staticmethod
+    async def stream_chat_with_file(
+        db: Session,
+        user: dict,
+        raw_token: str,
+        request_data: dict
+    ):
+        module_name = (request_data.get("module_name") or "RMS").upper()
+        agent_role = request_data.get("agent_role") or None
+        user_msg_text = request_data.get("message", "")
+        thread_id = request_data.get("thread_id")
+        uploaded_files = request_data.get("uploaded_files", [])
 
-Why Python is failing where PHP succeeds — the technical explanation:
-The issue isn't PHP version (5.6 vs 8.4). It's the process architecture of whatever PHP binary is running on your machine.
-When PHP loads the OCI8 extension, it loads oci.dll from C:\instantclient_12_1. For that to work, the PHP process and oci.dll must be the same architecture — both 32-bit or both 64-bit. This is a fundamental rule of Windows DLL loading; it's not a Python rule or a PHP rule. It's an operating system rule.
-Your C:\instantclient_12_1\oci.dll is 32-bit (file size 641 KB; 64-bit version is typically 2+ MB). So whichever PHP loads it successfully — 5.6 or 8.4 — that PHP process is also 32-bit.
-Your Python in C:\ml_env_311 is 64-bit. A 64-bit process cannot load a 32-bit DLL. The OS prevents it at the kernel level. This is the DPI-1047 error.
-Concrete way to prove this to your team:
-Ask them to run this command in the same Windows session where their PHP works:
-Code
-or
-Code
-or whatever the PHP process name is.
-The output will show an architecture column. It will say x86 (which means 32-bit). Both their PHP 5.6 and 8.4 must be 32-bit binaries — that's why both connect.
-If they want even more concrete proof: have them run a PHP one-liner:
-Code
-This prints the architecture of the running PHP. If it's 32, they're running 32-bit PHP. If 64, then there's something else going on that needs deeper investigation.
-This isn't a Python failing or PHP succeeding — it's that 32-bit processes can use the 32-bit oci.dll, 64-bit processes cannot. No exceptions.
-The honest constraint situation:
-You said:
-Can't install software.
-No internet on this server.
-Oracle is not under your control.
-That's a real lockdown. Let me think through what's still possible.
-Option 1 — Get a 64-bit Instant Client onto the machine via your PHP team.
-The 64-bit Instant Client zip is an Oracle download, but it doesn't need to be installed. It's just files in a folder. If your PHP team or any colleague has internet access on another machine:
-Have them download instantclient-basiclite-windows.x64-21.x.zip (~50 MB) from oracle.com/database/technologies/instant-client/winx64-64-downloads.html.
-Copy the zip to a USB drive or send via internal network share.
-Unzip to C:\instantclient_21_x_64 on your dev server.
-Update app/dao/oracle.py to point at that folder.
-You're not installing anything — just unzipping a folder you already have permission to write to (C: writable for your user is normal). This is not the same as software installation. Software installation requires admin to write to Program Files, modify registry, install services. Unzipping a folder requires nothing.
-If your IT department considers "unzipping a Oracle-provided zip file" as software installation, then strictly speaking, you'd need to ask them. But functionally, this is the cleanest solution.
-Option 2 — Have PHP do the Oracle queries on Python's behalf.
-Your PHP works. So do this:
-Write a small PHP script that:
-Receives a request (e.g., via a simple PHP file served by your Apache).
-Takes an item ID or item name as parameter.
-Runs the Oracle query.
-Returns JSON.
-From Python, call this PHP endpoint via requests.get(). Python doesn't need Oracle at all — it just makes HTTP calls to your PHP server, which talks to Oracle.
-This is the PHP-proxy approach I mentioned earlier as Option C. It's ugly but functionally complete.
+        if any(bad_word in user_msg_text.lower() for bad_word in ChatController.FORBIDDEN_INBOUND):
+            yield json.dumps({"error": "SECURITY FLAG: Message blocked by Inbound Guardrail."})
+            return
 
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
 
+        yield json.dumps({"type": "meta", "thread_id": thread_id})
 
+        if module_name == "HRMS":
+            graph = ChatController.get_hrms_graph()
+        elif module_name in ["SCM", "MRR"]:
+            graph = ChatController.get_mrr_graph()
+        else:
+            graph = ChatController.get_rms_graph()
 
+        user_dept = user.get("dept", "Operations")
 
-Tables needed in MariaDB (replicated from Oracle ERP):
+        config = {"configurable": {"thread_id": thread_id}}
 
-1. scmitems
-   Columns used: ITEMID, NAME, UNITOFMEASUREID, WAREHOUSEID
+        initial_state = {
+            "user_id": user["emp_no"],
+            "emp_no": user["emp_no"],
+            "group_idx": user.get("group_idx", 0),
+            "role_ids": user.get("role_ids", []),
+            "role_names": user.get("role_names", []),
+            "selected_module": module_name,
+            "user_info": user,
+            "user_dept": user_dept,
+            "selected_collection": module_name,
+            "selected_agent_role": agent_role,
+            "parsed_intent": "",
+            "classifier_confidence": "",
+            "append_soft_correction": False,
+            "has_permission": False,
+            "messages": [],
+            "execution_log": [],
+            "uploaded_files": uploaded_files
+        }
 
-2. scmunitofmeasures
-   Columns used: UNITOFMEASUREID, UNITOFMEASURE
+        from langchain_core.messages import HumanMessage, AIMessage
+        chat_history = request_data.get("chat_history") or []
+        if chat_history:
+            chat_history = chat_history[-10:]
+            for msg in chat_history:
+                role = (msg.get("role") or "").lower()
+                content = msg.get("content") or ""
+                if not content:
+                    continue
+                if role == "user":
+                    initial_state["messages"].append(HumanMessage(content=content))
+                elif role == "assistant":
+                    initial_state["messages"].append(AIMessage(content=content))
 
-3. scmitemrevisions
-   Columns used: ITEMREVISIONID, ITEMID
+        initial_state["messages"].append(HumanMessage(content=user_msg_text))
 
-4. scmdepartments
-   Columns used: DEPARTMENTID, NAME
+        full_response = ""
+        pending_buffer = ""
+        in_action = False
 
-5. SCMQUANTITYONHAND
-   Columns used: ITEMID, ONHANDQUANTITY
+        async for event in graph.astream_events(initial_state, config=config, version="v1"):
+            event_kind = event.get("event")
 
-6. POHEADERS
-   Columns used: POHEADERID, SUPPLIERID, CURRENCYID, CONVERSIONRATE
+            if event_kind == "on_chat_model_stream":
+                chunk_text = event["data"]["chunk"].content or ""
+                if not chunk_text:
+                    continue
+                pending_buffer += chunk_text
 
-7. POLINES
-   Columns used: POHEADERID, ITEMID, UNITOFMEASUREID, PRICE, STATUS, WAREHOUSEID
+                while "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
+                    form_spec, remaining = extract_form_spec(pending_buffer)
+                    if form_spec is None:
+                        break  
+                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                    pending_buffer = remaining
 
-8. SCMUNITOFMEASURES (same as #2, joined via different alias in LPP)
+                while pending_buffer:
+                    if not in_action:
+                        start_idx = pending_buffer.find("<<ACTION")
+                        if start_idx == -1:
+                            tail_check = pending_buffer[-12:]
+                            if "<<FORM" in tail_check or "<<ENDF" in tail_check:
+                                break
+                            if len(pending_buffer) > 12:
+                                safe_chunk = pending_buffer[:-12]
+                                pending_buffer = pending_buffer[-12:]
+                                full_response += safe_chunk
+                                yield json.dumps({"type": "chunk", "text": safe_chunk})
+                            break
+                        else:
+                            before = pending_buffer[:start_idx]
+                            pending_buffer = pending_buffer[start_idx:]
+                            if before:
+                                full_response += before
+                                yield json.dumps({"type": "chunk", "text": before})
+                            in_action = True
+                    else:
+                        end_idx = pending_buffer.find("<<END>>")
+                        if end_idx == -1:
+                            break
+                        else:
+                            pending_buffer = pending_buffer[end_idx + len("<<END>>"):]
+                            in_action = False
+                            
+            elif event_kind == "on_chain_end":
+                output = event.get("data", {}).get("output")
+                node_name = event.get("name")
+                
+                static_output_nodes = [
+                    # MRR static-output nodes (no LLM streaming):
+                    "handle_header", "handle_items", "evaluate_and_route",
+                    "welcome_node", "issuer_agent_node",
+                    "auto_verifier_node", "auto_verifier",
+                    "erp_approver_agent", "erp_approver_agent_node",
+                    # MRR Excel upload path (Task 4.7):
+                    "excel_handler", "excel_handler_node",
+                    "submit_mrr", "submit_mrr_node",
+                    "cancel_mrr", "cancel_mrr_node",
+                    "creator_router_entry",
+                    # Permission-blocked from RMS/HRMS/MRR (no LLM call):
+                    "permission_blocked", "permission_blocked_node",
+                    # NOTE: agent nodes (creator/reviewer/approver) intentionally
+                    # excluded — they stream via on_chat_model_stream, adding them
+                    # here causes duplicated output.
+                ]
+                
+                if node_name in static_output_nodes and isinstance(output, dict) and "messages" in output:
+                    for msg in output["messages"]:
+                        if hasattr(msg, "content") and isinstance(msg.content, str):
+                            content = msg.content
+                            
+                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
+                                before_form = content.split("<<FORM>>")[0]
+                                if before_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
+                                
+                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
+                                try:
+                                    form_spec = json.loads(form_str)
+                                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                                except Exception as e:
+                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
+                                
+                                after_form = content.split("<<ENDFORM>>")[1]
+                                if after_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
+                            else:
+                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
 
-9. SCMITEMS (same as #1, joined via different alias in LPP)
+        if pending_buffer and not in_action:
+            if "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
+                form_spec, remaining = extract_form_spec(pending_buffer)
+                if form_spec is not None:
+                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                    pending_buffer = remaining
+            if pending_buffer:
+                full_response += pending_buffer
+                yield json.dumps({"type": "chunk", "text": pending_buffer})
 
-10. SCMCURRENCIES
-    Columns used: CURRENCYID
-
-11. SCMSUPPLIERS
-    Columns used: SUPPLIERID
-
-12. scmwarehouse
-    Columns used: WAREHOUSEID, NAME (or warehouse name column)
-    Note: currently we hardcode warehouse_id=1, but if you want to
-    fetch the warehouse name for display, this table is needed.
+        if any(bad_word in full_response.lower() for bad_word in ChatController.FORBIDDEN_OUTBOUND):
+            full_response = "[REDACTED BY DPAH GUARDRAIL: Confidential Information Detected]"
