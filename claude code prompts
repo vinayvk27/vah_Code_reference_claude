@@ -1,14 +1,5 @@
-from app.services.mariadb_queries import (
-    resolve_item_from_partno, get_item_lpp, get_item_uomid, get_item_id_by_name
-)
-
-# Use the real DP_PART_NO you showed me earlier:
-row = resolve_item_from_partno("DP-RM-CAB-03390")
-print("resolve_item_from_partno:", row)
-
-if row:
-    item_id = row["item_id"]
-    print("get_item_lpp:", get_item_lpp(item_id))
-    print("get_item_uomid:", get_item_uomid(item_id))
-
-print("get_item_id_by_name:", get_item_id_by_name("DP-RM-CAB-03390"))
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.services.mariadb_queries import resolve_item_from_partno, get_item_lpp, get_item_uomid, get_item_id_by_name; row = resolve_item_from_partno('DP-RM-CAB-03390'); print('resolve_item_from_partno:', row); item_id = row['item_id'] if row else None; print('get_item_lpp:', get_item_lpp(item_id) if item_id else None); print('get_item_uomid:', get_item_uomid(item_id) if item_id else None); print('get_item_id_by_name:', get_item_id_by_name('DP-RM-CAB-03390'))"
+resolve_item_from_partno: None
+get_item_lpp: None       
+get_item_uomid: None     
+get_item_id_by_name: None
