@@ -1,4 +1,12 @@
-INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-SELECT 7, 1, a.agent_id, 'system'
-FROM dpah_agents a
-WHERE a.agent_name IN ('HRMS_LEAVE_DATA_REVIEWER', 'HRMS_SALARYDATA_REVIEWER');
+Per module, positive cases:
+Junior 1065 in RMS — log hours, view tasks (creator/reviewer paths).
+Senior 1731 in RMS — approve worklogs (approver path).
+Junior 1065 in HRMS — apply for leave (now reviewer access exists), view leave balance.
+Senior 1731 in HRMS — approve leaves.
+Junior 1065 in MRR — create a requisition.
+COO/CTO (16, 06) in MRR — see pending approvals (currently empty, but message is correct).
+ERP HOD (531) in MRR — see ERP-stage approvals (also currently empty).
+Per module, negative cases:
+Junior tries APPROVER actions → denied with friendly message.
+Any user asks out-of-scope ("what's the weather", "tell me a joke") → friendly redirect.
+User without module access tries to chat in that module → 403 / "you don't have access."
