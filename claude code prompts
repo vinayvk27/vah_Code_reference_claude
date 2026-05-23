@@ -5,3 +5,16 @@ P
 
 "items": []}
 ok i randomly tried on negative case in 531 login but this is coming i think it shouldnt come right because those manager and erp hod cannot create right?
+** also remember for any workflow currently we are testing the internt and rbac only whether for creator the intent is classifyig as creator and aprrover same and filler like that both positive and negative cases should pass.
+then if for every module passed means then we can test the actual workflow peacefully.
+and also i have one big doubt from starting till now.we are mapping collections like rms_timesheet and rms_project plan. earlier since i dont have module i am directly calling collections to users.
+but now the doubt is for suppose if a group is mapped to rms and inside rms collection means , one employee will ask create a task so for that if it needs to use 2 sql tables means how it is done. like this for all modules 
+we are not mapping sql tables to collections. are we? then how the data leakage is managed. first main thing is finishing the doubt that i asked we will discuss in detail at workflow testing. but for now just tell me in simple
+
+
+by the by your tests results
+=== END DEBUG ===
+INFO:     10.5.1.58:50739 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:50794 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] <parse_intent_node> entered. emp_no=1731
+[DIAG-RMS] <permission_blocked_node> entered. emp_no=1731
