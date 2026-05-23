@@ -1,1 +1,7 @@
-print(f"[DIAG-RMS] <node_name> entered. emp_no={state.get('emp_no')}")
+i need to create a material request
+P
+🤖
+{"project_id": "", "phase_id": "", "warehouse": "DPE", "requisition_type": "Returnable", "need_by_date": "", "remarks": "", "has_minimum_data": false, Please fill out the project details or just type them to me:
+
+"items": []}
+ok i randomly tried on negative case in 531 login but this is coming i think it shouldnt come right because those manager and erp hod cannot create right?
