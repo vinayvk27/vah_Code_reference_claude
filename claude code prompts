@@ -1,3 +1,255 @@
-print(f"[DIAG-RMS] approver_agent_node about to call LLM. messages_count={len(message_list)}, system_prompt_len={len(system_prompt) if 'system_prompt' in dir() else 'N/A'}", flush=True)
+async def approver_agent_node(state: RMSState) -> dict:
+    """
+    Node 3c: Approver Agent - Handles final approval/rejection.
+    Uses RAG for context and LLM for intelligent response generation.
+    For RMS collection, also supports timesheet tools (read + approve).
+    Appends an AI message to the messages list.
+    """
+    print(f"[DIAG-RMS] approver_agent_node entered. emp_no={state.get('emp_no')}", flush=True)
+    messages = state.get("messages", [])
+    selected_collection = state.get("selected_collection", "")
+    parsed_intent = state.get("parsed_intent", "")
+    user_dept = state.get("user_dept", "")
+    user_id = state.get("user_id", "")
 
-print(f"[DIAG-RMS] approver_agent_node done. full_text_len={len(full_text)}", flush=True)
+    # Get domain context for the user's query
+    last_user_message = messages[-1].content if messages else ""
+    domain_context = RAGController.retrieve_context(last_user_message, user_dept, selected_collection)
+
+    # Initialize LLM
+    llm = get_llm()
+
+    # Build user context for tools
+    user_context = {
+        "sub": user_id,
+        "user_id": user_id,
+        "persona": "approver",
+        "dept": user_dept
+    }
+
+    # For RMS collection, bind timesheet tools (approve for approver)
+    if selected_collection == "RMS":
+        from app.workflows.rms_workflow.rms_tools import (
+            tool_list_pending_approvals,
+            tool_approve_worklog
+        )
+        from app.models.db_schema import Agent
+
+        # Get user info for identity injection
+        user_emp_id = user_id
+        user_name = user_context.get('name') or 'the current user'
+
+        # Fetch user's grade from Resource table
+        user_grade = None
+        db_snap = SessionLocal()
+        try:
+            resource = db_snap.query(Resource).filter(Resource.Emp_no == user_emp_id).first()
+            if resource:
+                user_grade = resource.Grade
+                user_context['grade'] = user_grade
+        finally:
+            db_snap.close()
+
+        # Pre-fetch data snapshot for the LLM (DB-backed)
+        db_snap = SessionLocal()
+        try:
+            snapshot_data = timesheet_store.list_worklogs(db_snap)
+        finally:
+            db_snap.close()
+
+        snapshot_lines = [str(r) for r in snapshot_data[:30]]
+        snapshot_block = "\n".join(snapshot_lines) if snapshot_lines else "(no data)"
+
+        # Get the persona-specific prompt from the database
+        db_session = SessionLocal()
+        try:
+            agent_row = db_session.query(Agent).filter(
+                Agent.agent_name == "RMS_APPROVER"
+            ).first()
+            base_prompt = agent_row.system_prompt if agent_row else ""
+        finally:
+            db_session.close()
+
+        # Build uploaded files context for bulk processing
+        uploaded_files = state.get("uploaded_files") or []
+        files_context = ""
+        if uploaded_files:
+            files_block = []
+            for f in uploaded_files:
+                files_block.append(
+                    f"File: {f.get('filename', 'unknown')} ({f.get('file_type', 'unknown')}, {f.get('row_count', 0)} rows)"
+                )
+                preview = f.get("preview", []) or []
+                for row in preview[:3]:
+                    files_block.append(f"  - {row}")
+                if len(preview) > 3:
+                    files_block.append(f"  ... and {len(preview) - 3} more rows")
+                files_block.append("")
+            files_context = "\n".join(files_block)
+
+        system_prompt = (
+            f"{base_prompt}\n\n"
+            f"=== CURRENT USER CONTEXT ===\n"
+            f"Employee ID: {user_emp_id}\n"
+            f"Employee Name: {user_name}\n"
+            f"Department: {user_dept}\n"
+            f"Grade: {user_grade or 'N/A'}\n"
+            f"Persona: APPROVER\n\n"
+            f"=== UPLOADED FILE DATA (FOR BULK APPROVAL) ===\n"
+            f"If the user has uploaded a file with worklogs to approve, you will see it listed below.\n"
+            f"When the user asks to process bulk approvals from a file, use tool_approve_worklog for each row.\n\n"
+        )
+
+        if uploaded_files:
+            system_prompt += f"Uploaded Files:\n{files_context}\n"
+        else:
+            system_prompt += "No files uploaded.\n\n"
+
+        system_prompt += (
+            f"=== CONVERSATION HISTORY IS AUTHORITATIVE ===\n"
+            f"Recent messages between you and the user are included in this conversation. The DATA SNAPSHOT below is fetched at the start of THIS request — it does NOT include actions you took earlier in this same conversation.\n"
+            f"When the user asks 'what did I just approve', 'what was that entry', or anything referring to recent activity:\n"
+            f"  - FIRST check the conversation history for tool actions you confirmed in earlier turns.\n"
+            f"  - If you confirmed approving/rejecting in an earlier message, reference that confirmation directly.\n"
+            f"  - Do NOT say 'nothing was approved' if the conversation history shows you previously confirmed an action.\n\n"
+            f"=== HOW TO PERFORM ACTIONS (CRITICAL) ===\n"
+            f"Your platform does NOT support normal tool calling. You MUST use a special protocol.\n\n"
+            f"Format: <<ACTION>>{{\"tool\": \"<name>\", \"args\": {{...}}}}<<END>>\n\n"
+            f"Available tools for APPROVER:\n"
+            f"- tool_list_pending_approvals: list worklogs awaiting approval\n"
+            f"- tool_approve_worklog: approve or reject a worklog\n"
+            f"  args: {{\"worklog_log_idx\": <int>, \"decision\": \"APPROVED\"|\"REJECTED\", \"remarks\": \"<string>\"}}\n\n"
+            f"RULES:\n"
+            f"1. When user says 'approve worklog X' or 'reject worklog X', IMMEDIATELY emit the <<ACTION>>...<<END>> block.\n"
+            f"2. Do NOT ask for confirmation — execute the decision.\n"
+            f"3. After the block, briefly explain the decision rationale (1-2 sentences).\n"
+            f"4. For READ queries, just reference the data snapshot — no action block.\n\n"
+            f"Example: User says 'Approve worklog 7'\n"
+            f"Reply:\n"
+            f"<<ACTION>>{{\"tool\": \"tool_approve_worklog\", \"args\": {{\"worklog_log_idx\": 7, \"decision\": \"APPROVED\", \"remarks\": \"Approved\"}}}}<<END>>\n"
+            f"Approved — hours match planned values and all required fields are present.\n\n"
+            f"=== CURRENT DATA SNAPSHOT (read-only reference) ===\n"
+            f"This is the latest worklog state. You MAY reference these entries directly:\n"
+            f"{snapshot_block}\n\n"
+            f"=== DOMAIN CONTEXT ===\n{domain_context}"
+        )
+
+        @tool
+        def list_pending_approvals() -> str:
+            """List worklogs awaiting approval."""
+            return tool_list_pending_approvals(user_context)
+
+        @tool
+        def approve_worklog(worklog_log_idx: int, decision: str, remarks: str) -> str:
+            """Approve or reject a worklog.
+            decision must be 'APPROVED' or 'REJECTED'."""
+            return tool_approve_worklog(worklog_log_idx, decision, remarks, user_context)
+
+        llm_with_tools = llm.bind_tools([list_pending_approvals, approve_worklog])
+
+        # Pass the full conversation history (system prompt + all prior messages from state)
+        message_list = [SystemMessage(content=system_prompt)] + list(messages)
+
+        response = await llm_with_tools.ainvoke(message_list)
+
+        # Parse <<ACTION>> markers
+        actions = extract_actions(response.content or "")
+
+        if actions:
+            execution_results = []
+            for action in actions:
+                tool_name = action["tool"]
+                tool_args = action["args"]
+                try:
+                    if tool_name == "tool_list_pending_approvals":
+                        result = list_pending_approvals.invoke(tool_args)
+                    elif tool_name == "tool_approve_worklog":
+                        result = approve_worklog.invoke(tool_args)
+                    else:
+                        result = f"Unknown tool: {tool_name}"
+                    execution_results.append(f"[Tool result for {tool_name}]\n{result}")
+                except PermissionError as pe:
+                    execution_results.append(f"[Permission denied for {tool_name}: {pe}]")
+                except Exception as e:
+                    execution_results.append(f"[Error in {tool_name}: {e}]")
+
+            # Strip the action markers from the original content
+            # The LLM's confirmation message is sufficient; don't append execution_results
+            clean_content = strip_actions(response.content)
+            full_text = clean_content.strip()
+
+        elif hasattr(response, 'tool_calls') and response.tool_calls:
+            tool_results = []
+            for tc in response.tool_calls:
+                tool_name = tc['name']
+                tool_args = tc['args']
+                tool_id = tc['id']
+
+                try:
+                    if tool_name == 'list_pending_approvals':
+                        result = list_pending_approvals.invoke(tool_args)
+                    elif tool_name == 'approve_worklog':
+                        result = approve_worklog.invoke(tool_args)
+                    else:
+                        result = f"Unknown tool: {tool_name}"
+
+                    tool_results.append(ToolMessage(content=str(result), tool_call_id=tool_id))
+                except PermissionError as pe:
+                    tool_results.append(ToolMessage(content=f"Permission denied: {str(pe)}", tool_call_id=tool_id))
+                except Exception as e:
+                    tool_results.append(ToolMessage(content=f"Error: {str(e)}", tool_call_id=tool_id))
+
+            message_list.extend(tool_results)
+            final_response = await llm.ainvoke(message_list)
+            full_text = final_response.content if hasattr(final_response, 'content') else str(final_response)
+        else:
+            chunks = []
+            print(
+                f"[DIAG-RMS] approver_agent_node about to call LLM. "
+                f"messages_count={len(message_list)}, "
+                f"system_prompt_len={len(system_prompt) if 'system_prompt' in locals() else 'N/A'}",
+                flush=True
+            )
+            async for chunk in llm.astream(message_list):
+                piece = chunk.content if hasattr(chunk, "content") else ""
+                if piece:
+                    chunks.append(piece)
+            full_text = "".join(chunks)
+            print(
+                f"[DIAG-RMS] approver_agent_node done. full_text_len={len(full_text)}",
+                flush=True
+            )
+    else:
+        # Non-RMS collection — unreachable in RMS workflow; skip
+        full_text = ""
+
+    # Soft correction append
+    if state.get("append_soft_correction", False):
+        soft_correction = (
+            f" (I assumed you wanted to "
+            f"{_describe_assumed_action(state.get('selected_agent_role', ''), state.get('selected_collection', ''))}. "
+            f"Let me know if you meant something else.)"
+        )
+        full_text += soft_correction
+
+    execution_log = state.get("execution_log", []) + [
+        f"Approver agent executed for {selected_collection}",
+        f"RAG context retrieved for dept: {user_dept}"
+    ]
+
+    return {
+        "messages": [AIMessage(content=full_text)],
+        "execution_log": execution_log
+    }
+
+** Nothing printed apart from this
+
+=== END DEBUG ===
+INFO:     10.5.1.58:56384 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:56383 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:56421 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=1731
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=approver
+[DIAG-RMS] approver_agent_node entered. emp_no=1731
+
+** also i dont know why this much time is taking for debug becasue still plenty of work is there give a task to claude to include debugs or print if it confirms inserted i will do testing and let u know results, think about this
