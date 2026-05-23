@@ -1,42 +1,247 @@
-def approver_agent_node(state: MaterialRequisitionState) -> dict:
-    """Fetches pending requests for manager approval (CTO/COO)."""
-    print(f"[DIAG-MRR] approver_agent_node entered. emp_no={state.get('emp_no')}")
-    emp_no = state.get("emp_no", "")
+═══════════════════════════════════════════════════════════════════
+TASK 4.7.1: Rename MRR approver nodes + fix approver_agent_node
+═══════════════════════════════════════════════════════════════════
+Small surgical fix: rename MRR's approver_agent_node to mrr_approver_agent_node
+(and erp_approver_agent_node to mrr_erp_approver_agent_node) so they don't
+collide with RMS/HRMS node names in chat_controller's static_output_nodes
+filter. Also fix a SQL column name bug.
 
-    from app.workflows.material_workflow.approvers import is_manager_approver
-    if not is_manager_approver(emp_no):
-        return {
-            "messages": [AIMessage(content="Manager approval is restricted to the COO and CTO. Please contact your administrator if you believe this is an error.")],
-            "execution_log": state.get("execution_log", []) + ["Non-approver blocked from manager approval"]
-        }
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Out-of-scope files: do NOT touch.
+- Do NOT modify RMS workflow, HRMS workflow, validator, resolvers, or auth.
+- Do NOT modify ANY logic inside the approver functions beyond
+  what's explicitly listed below.
+- Do NOT remove diagnostic prints if present — they're temporary.
+- If anything requires touching out-of-scope code, STOP and report.
 
-    db = SessionLocal()
-    try:
-        query = text("""
-            SELECT MATREQUISITIONID, MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE,
-                   TOTALCOST, APPROVAL_STATUS, STATUS
-            FROM mrr_matrequisitionheader
-            WHERE APPROVAL_STATUS = 'PENDING'
-            ORDER BY REQUISITIONDATE ASC
-        """)
-        results = db.execute(query).mappings().all()
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
 
-        if not results:
-            return {"messages": [AIMessage(content="You have no pending manager approvals at this time.")]}
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+MRR's approver_agent_node does direct DB queries (no LLM streaming)
+and emits its response as an AIMessage via on_chain_end. The SSE
+controller's static_output_nodes filter must include the node's name
+for the message to reach the user.
 
-        response_text = "### Pending Manager Approvals\n\n"
-        response_text += "| Req ID | MRR No | Requestor | Total Cost | Status | Date |\n"
-        response_text += "|---|---|---|---|---|---|\n"
+But RMS and HRMS also have approver_agent_node nodes — these use LLM
+streaming and must NOT be in static_output_nodes (would cause
+duplicate output).
 
-        for r in results:
-            date_str = r['REQUISITIONDATE'].strftime('%Y-%m-%d') if r['REQUISITIONDATE'] else 'N/A'
-            response_text += f"| {r.MATREQUISITIONID} | {r.MATREQUISITIONNO} | {r.REQUESTORID} | \u20b9{r.TOTALCOST} | {r.APPROVAL_STATUS} | {date_str} |\n"
+The fix: rename MRR's approver nodes to unique names so the filter
+can include only MRR's names without affecting RMS/HRMS.
 
-        response_text += "\n*To approve a request, tell me: 'Approve requisition MRR/<id>/25-26'*"
+Additionally: approver_agent_node has a SQL bug — it queries
+TOTALCOST but the actual column is TOTAL_COST. Fix as part of this
+task.
 
-        return {"messages": [AIMessage(content=response_text)]}
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
 
-    except Exception as e:
-        return {"messages": [AIMessage(content=f"Error fetching pending requests: {str(e)}")]}
-    finally:
-        db.close()
+1. UPDATE app/workflows/material_workflow/nodes.py
+
+   a. Replace the entire body of approver_agent_node with this:
+
+      def approver_agent_node(state: MaterialRequisitionState) -> dict:
+          """Fetches pending requests for manager approval (CTO/COO).
+          
+          MRR-specific node — does direct DB query, no LLM streaming.
+          Registered in graph.py under names 'mrr_approver_agent' and
+          'mrr_approver_agent_node' to avoid collision with RMS/HRMS.
+          """
+          print(f"[DIAG-MRR] approver_agent_node entered. emp_no={state.get('emp_no')}")
+          emp_no = state.get("emp_no", "")
+
+          from app.workflows.material_workflow.approvers import is_manager_approver
+          if not is_manager_approver(emp_no):
+              return {
+                  "messages": [AIMessage(content="Manager approval is restricted to the COO and CTO. Please contact your administrator if you believe this is an error.")],
+                  "execution_log": state.get("execution_log", []) + ["Non-approver blocked from manager approval"]
+              }
+
+          db = SessionLocal()
+          try:
+              query = text("""
+                  SELECT MATREQUISITIONID, MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE,
+                         TOTAL_COST, APPROVAL_STATUS, STATUS
+                  FROM mrr_matrequisitionheader
+                  WHERE APPROVAL_STATUS = 'PENDING'
+                  ORDER BY REQUISITIONDATE ASC
+              """)
+              results = db.execute(query).mappings().all()
+
+              if not results:
+                  return {
+                      "messages": [AIMessage(content="You have no pending manager approvals at this time.")],
+                      "execution_log": state.get("execution_log", []) + ["Approver: no pending requests."]
+                  }
+
+              response_text = "### Pending Manager Approvals\n\n"
+              response_text += "| Req ID | MRR No | Requestor | Total Cost | Status | Date |\n"
+              response_text += "|---|---|---|---|---|---|\n"
+
+              for r in results:
+                  date_str = r['REQUISITIONDATE'].strftime('%Y-%m-%d') if r['REQUISITIONDATE'] else 'N/A'
+                  response_text += f"| {r['MATREQUISITIONID']} | {r['MATREQUISITIONNO']} | {r['REQUESTORID']} | \u20b9{r['TOTAL_COST']} | {r['APPROVAL_STATUS']} | {date_str} |\n"
+
+              response_text += "\n*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*"
+
+              return {
+                  "messages": [AIMessage(content=response_text)],
+                  "execution_log": state.get("execution_log", []) + [f"Approver: returned {len(results)} pending requests."]
+              }
+
+          except Exception as e:
+              import traceback
+              traceback.print_exc()
+              return {
+                  "messages": [AIMessage(content=f"Error fetching pending requests: {str(e)}")],
+                  "execution_log": state.get("execution_log", []) + [f"Approver: exception {e}"]
+              }
+          finally:
+              db.close()
+
+   b. Inspect erp_approver_agent_node. If it also uses TOTALCOST,
+      change to TOTAL_COST. If it has the same RowMapping
+      attribute-access pattern, switch to dict-style access. Do NOT
+      change its core logic — only the SQL column name and
+      RowMapping access pattern.
+
+      Do NOT rename the function itself. Only the changes above.
+
+2. UPDATE app/workflows/material_workflow/graph.py
+
+   Currently registers approver_agent_node under names
+   "approver_agent" and "approver_agent_node".
+   Currently registers erp_approver_agent_node under names
+   "erp_approver_agent" and "erp_approver_agent_node".
+
+   CHANGE these registrations to use MRR-prefixed names:
+   - "approver_agent" → "mrr_approver_agent"
+   - "approver_agent_node" → "mrr_approver_agent_node"
+   - "erp_approver_agent" → "mrr_erp_approver_agent"
+   - "erp_approver_agent_node" → "mrr_erp_approver_agent_node"
+
+   UPDATE any conditional edges that previously routed to
+   "approver_agent" / "approver_agent_node" / "erp_approver_agent" /
+   "erp_approver_agent_node" — update those routing keys to use
+   the new mrr_-prefixed names.
+
+   IMPORTANT: also update permission_router (in nodes.py) — its
+   return values for these two paths must match the new names.
+   Specifically:
+   - Change return "approver_agent" → return "mrr_approver_agent"
+   - Change return "erp_approver_agent" → return "mrr_erp_approver_agent"
+   
+   Search the entire material_workflow folder for any reference to
+   "approver_agent" or "erp_approver_agent" (both with and without
+   _node suffix) and update each to the new names.
+
+3. UPDATE app/controllers/chat_controller.py
+
+   In BOTH instances of static_output_nodes (in
+   stream_chat_with_orchestrator and stream_chat_with_file), ADD
+   these four names:
+
+   "mrr_approver_agent", "mrr_approver_agent_node",
+   "mrr_erp_approver_agent", "mrr_erp_approver_agent_node",
+
+   Place them under the existing "MRR static-output nodes" comment.
+   Do NOT add the old plain names ("approver_agent", etc) — those
+   are used by RMS/HRMS and must NOT be in this list.
+
+4. CREATE TASK_4_7_1_REPORT.md at project root with:
+   - INTENDED / ACTUAL footprint
+   - The new approver_agent_node code (full)
+   - The new erp_approver_agent_node code (full, even if minimal changes)
+   - List of every rename location (which file, which line approximately,
+     what changed)
+   - Confirmation that RMS/HRMS workflows are untouched
+   - Confirmation that approver_agent (the bare name without mrr_ prefix)
+     does NOT appear in chat_controller.py's static_output_nodes
+   - Any deviations
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- app/workflows/rms_workflow/ (entire folder)
+- app/workflows/hrms_workflow/ (entire folder)
+- app/services/* (validator, resolvers, helpers)
+- app/dao/*
+- app/core/*
+- app/models/*
+- app/controllers/auth_controller.py
+- app/controllers/mrr_welcome_controller.py
+- app/routes/*
+- scripts/seed_dpah_tables.py
+- frontend
+
+───────────────────────────────────────────────────────────────────
+FILES TO READ FIRST
+───────────────────────────────────────────────────────────────────
+- app/workflows/material_workflow/nodes.py (full file — to find
+  approver_agent_node, erp_approver_agent_node, permission_router)
+- app/workflows/material_workflow/graph.py (full file — to find all
+  references to old names)
+- app/controllers/chat_controller.py (only the two static_output_nodes
+  lists)
+
+───────────────────────────────────────────────────────────────────
+FILES TO MODIFY
+───────────────────────────────────────────────────────────────────
+- app/workflows/material_workflow/nodes.py
+- app/workflows/material_workflow/graph.py
+- app/controllers/chat_controller.py
+
+───────────────────────────────────────────────────────────────────
+FILES TO CREATE
+───────────────────────────────────────────────────────────────────
+- TASK_4_7_1_REPORT.md
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Test 1: Server boots clean. No import errors.
+
+Test 2: Login as COO (Vijay, emp_no 16). Confirm access_tree
+        contains MRR.
+
+Test 3: Send "show me pending approvals" to MRR as COO.
+        Expected:
+        - Server log shows [DIAG-MRR] parse_intent_node entered.
+        - Server log shows [DIAG-MRR] permission_check_node entered.
+          parsed_intent=IN_DOMAIN, persona=approver
+        - Server log shows [DIAG-MRR] approver_agent_node entered.
+          emp_no=16
+        - Chat response contains "You have no pending manager
+          approvals at this time." (no error, no empty stream)
+
+Test 4: Login as Junior 1065. Send "show pending approvals" to MRR.
+        Expected:
+        - Classifier picks APPROVER.
+        - permission_check_node denies (Junior not in MANAGER_APPROVERS).
+        - Chat response contains the polite manager-approval denial.
+
+Test 5: Login as ERP HOD (emp_no 531). Send "show ERP approvals" to MRR.
+        Expected:
+        - Classifier picks ERP_APPROVER.
+        - permission_check_node grants (531 in ERP_APPROVERS).
+        - Routes to mrr_erp_approver_agent_node.
+        - Chat response contains either a list of approvals OR
+          "no pending ERP approvals" message (no empty stream).
+
+Test 6: RMS approval flow still works.
+        Login as Senior 1731. Send "approve worklog 47" to RMS.
+        Expected:
+        - Classifier picks APPROVER.
+        - RMS routes to its OWN approver_agent (not renamed).
+        - Chat response streams normally (no duplicate output).
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
