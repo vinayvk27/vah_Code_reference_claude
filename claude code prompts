@@ -1,41 +1,37 @@
-# Field, Type, Null, Key, Default, Extra
-'MATREQUISITIONID', 'bigint(20)', 'NO', 'PRI', NULL, ''
-'MATREQUISITIONNO', 'varchar(40)', 'YES', '', NULL, ''
-'WAREHOUSEID', 'bigint(20)', 'YES', '', NULL, ''
-'REQUISITIONTYPE', 'varchar(50)', 'YES', '', NULL, ''
-'REQUESTORID', 'bigint(20)', 'YES', '', NULL, ''
-'REQUISITIONDATE', 'datetime', 'YES', '', NULL, ''
-'DEPARTMENTID', 'bigint(20)', 'YES', '', NULL, ''
-'NEEDBYDATE', 'datetime', 'YES', '', NULL, ''
-'WHOCOLUMN', 'varchar(100)', 'YES', '', NULL, ''
-'STATUS', 'varchar(50)', 'YES', '', NULL, ''
-'PROJECTID', 'bigint(20)', 'YES', '', NULL, ''
-'PROJECTPHASEID', 'bigint(20)', 'YES', '', NULL, ''
-'REQTRANSACTIONTYPE', 'varchar(50)', 'YES', '', NULL, ''
-'SUPPLIERID', 'bigint(20)', 'YES', '', NULL, ''
-'SUPPLIERSITEID', 'bigint(20)', 'YES', '', NULL, ''
-'DESCRIPTION', 'varchar(250)', 'YES', '', NULL, ''
-'COMMENTS', 'varchar(250)', 'YES', '', NULL, ''
-'VERIFICATION_STATUS', 'varchar(50)', 'YES', '', NULL, ''
-'VERIFICATION_DATE', 'datetime', 'YES', '', NULL, ''
-'APPROVAL_STATUS', 'varchar(50)', 'YES', '', NULL, ''
-'APPROVAL_DATE', 'datetime', 'YES', '', NULL, ''
-'ERP_APPROVAL_STATUS', 'varchar(50)', 'YES', '', NULL, ''
-'ERP_APPROVAL_DATE', 'datetime', 'YES', '', NULL, ''
-'TOTAL_COST', 'int(11)', 'YES', '', NULL, ''
+Tables needed in MariaDB (replicated from Oracle ERP):
 
+1. scmitems
+   Columns used: ITEMID, NAME, UNITOFMEASUREID, WAREHOUSEID
 
+2. scmunitofmeasures
+   Columns used: UNITOFMEASUREID, UNITOFMEASURE
 
-# Field, Type, Null, Key, Default, Extra
-'MATREQUISITIONLINEID', 'bigint(20)', 'NO', 'PRI', NULL, ''
-'MATREQUISITIONID', 'bigint(20)', 'YES', 'MUL', NULL, ''
-'ITEMID', 'bigint(20)', 'YES', '', NULL, ''
-'ITEMREVISIONID', 'bigint(20)', 'YES', '', NULL, ''
-'UOMID', 'bigint(20)', 'YES', '', NULL, ''
-'REQUISITIONQTY', 'decimal(15,4)', 'YES', '', NULL, ''
-'ISSUEQTY', 'decimal(15,4)', 'YES', '', NULL, ''
-'WHOCOLUMN', 'varchar(100)', 'YES', '', NULL, ''
-'RETURNQUANTITY', 'decimal(15,4)', 'YES', '', NULL, ''
-'STATUS', 'varchar(25)', 'YES', '', NULL, ''
-'CLOSEREASON', 'varchar(4000)', 'YES', '', NULL, ''
-'ITEMCOST', 'decimal(15,4)', 'YES', '', NULL, ''
+3. scmitemrevisions
+   Columns used: ITEMREVISIONID, ITEMID
+
+4. scmdepartments
+   Columns used: DEPARTMENTID, NAME
+
+5. SCMQUANTITYONHAND
+   Columns used: ITEMID, ONHANDQUANTITY
+
+6. POHEADERS
+   Columns used: POHEADERID, SUPPLIERID, CURRENCYID, CONVERSIONRATE
+
+7. POLINES
+   Columns used: POHEADERID, ITEMID, UNITOFMEASUREID, PRICE, STATUS, WAREHOUSEID
+
+8. SCMUNITOFMEASURES (same as #2, joined via different alias in LPP)
+
+9. SCMITEMS (same as #1, joined via different alias in LPP)
+
+10. SCMCURRENCIES
+    Columns used: CURRENCYID
+
+11. SCMSUPPLIERS
+    Columns used: SUPPLIERID
+
+12. scmwarehouse
+    Columns used: WAREHOUSEID, NAME (or warehouse name column)
+    Note: currently we hardcode warehouse_id=1, but if you want to
+    fetch the warehouse name for display, this table is needed.
