@@ -1,4 +1,7 @@
-python -c "from app.services.mariadb_queries import resolve_item_from_partno, get_item_lpp, get_item_uomid; row = resolve_item_from_partno('DP-RM-CSY-22632'); print('resolve:', row); print('lpp:', get_item_lpp(row['item_id']) if row else None); print('uomid:', get_item_uomid(row['item_id']) if row else None)"
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>python -c "from app.services.mariadb_queries import resolve_item_from_partno, get_item_lpp, get_item_uomid; row = resolve_item_from_partno('DP-RM-CSY-22632'); print('resolve:', row); print('lpp:', get_item_lpp(row['item_id']) if row else None); print('uomid:', get_item_uomid(row['item_id']) if row else None)"
+resolve: {'item_id': 136019, 'item_revision_id': 254680, 'uom_name': 'NOS', 'qoh': None, 'price_inr': 185000.0, 'description': 'CSY FireFly 10.3125Gbps 8x OM3 MM 50/125µm 850nm Flat Ribbon Optical Fiber, End A ETUO 4TX+4RX Electrical-Optical Transceiver with Flat Heat Sink, End B MT38999 CF-599011-01S Square Flange Circular Connector Shell 11 Single Cavity 12F MT Male Olive Drab Cadmium Polarization N, with Black Loose Jacket and Boot, Overall 35cm, -40C to 85C.'}
+lpp: None  
+uomid: None
 
-SELECT COUNT(*) FROM SCMITEMS;
-SELECT COUNT(DISTINCT ITEMID) FROM com_search;
+96852
+1
