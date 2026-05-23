@@ -1,24 +1,37 @@
-INSERT IGNORE INTO dpah_module_usergroups (module_id, group_id)
-SELECT m.module_id, DISTINCT r.GroupIDx
-FROM dpah_modules m
-CROSS JOIN resources r
-WHERE m.module_name = 'MRR' AND r.GroupIDx IS NOT NULL;
+'role_id', 'int(11)', 'NO', 'PRI', NULL, ''
+'group_id', 'int(11)', 'NO', 'PRI', NULL, ''
+'agent_id', 'int(11)', 'NO', 'PRI', NULL, ''
+'granted_by', 'varchar(50)', 'YES', '', NULL, ''
+'granted_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', ''
 
--- Junior (7), Mid (8), Senior (9) in every group can invoke MRR_GENERAL_CREATOR.
-INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id)
-SELECT roles.role_id, groups.group_id, a.agent_id
-FROM dpah_agents a
-CROSS JOIN (SELECT 7 AS role_id UNION SELECT 8 UNION SELECT 9) roles
-CROSS JOIN (SELECT DISTINCT group_id FROM dpah_module_usergroups WHERE module_id = (SELECT module_id FROM dpah_modules WHERE module_name = 'MRR')) groups
-WHERE a.agent_name = 'MRR_GENERAL_CREATOR';
 
--- Run seed script first to add MRR_GENERAL_VERIFIER, MRR_GENERAL_MANAGER_APPROVER, MRR_GENERAL_ERP_APPROVER
--- (python scripts/seed_dpah_tables.py)
--- Then verify:
-SELECT agent_id, agent_name FROM dpah_agents WHERE agent_name LIKE 'MRR_%';
+'agent_id', 'int(11)', 'NO', 'PRI', NULL, 'auto_increment'
+'agent_name', 'varchar(100)', 'NO', 'UNI', NULL, ''
+'collection_id', 'int(11)', 'NO', 'MUL', NULL, ''
+'department', 'varchar(100)', 'YES', 'MUL', NULL, ''
+'description', 'text', 'YES', '', NULL, ''
+'system_prompt', 'text', 'YES', '', NULL, ''
+'allowed_tools', 'longtext', 'YES', '', NULL, ''
+'model_name', 'varchar(100)', 'YES', '', NULL, ''
+'is_active', 'tinyint(1)', 'NO', '', '1', ''
+'created_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', ''
+'updated_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', 'on update CURRENT_TIMESTAMP'
 
-INSERT IGNORE INTO dpah_user_roles (emp_no, role_id, group_idx)
-VALUES
-  ('16', 9, 16),    -- COO, Senior, group 16 (PRJ)
-  ('06', 9, 30),    -- CTO, Senior, group 30 (HDD)
-  ('531', 9, 32);   -- ERP HOD, Senior, group 32
+'agent_id', 'int(11)', 'NO', 'PRI', NULL, 'auto_increment'
+'agent_name', 'varchar(100)', 'NO', 'UNI', NULL, ''
+'collection_id', 'int(11)', 'NO', 'MUL', NULL, ''
+'department', 'varchar(100)', 'YES', 'MUL', NULL, ''
+'description', 'text', 'YES', '', NULL, ''
+'system_prompt', 'text', 'YES', '', NULL, ''
+'allowed_tools', 'longtext', 'YES', '', NULL, ''
+'model_name', 'varchar(100)', 'YES', '', NULL, ''
+'is_active', 'tinyint(1)', 'NO', '', '1', ''
+'created_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', ''
+'updated_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', 'on update CURRENT_TIMESTAMP'
+
+'module_group_id', 'int(11)', 'NO', 'PRI', NULL, 'auto_increment'
+'module_id', 'int(11)', 'NO', 'MUL', NULL, ''
+'group_idx', 'int(11)', 'NO', '', NULL, ''
+'is_active', 'tinyint(1)', 'NO', '', '1', ''
+'assigned_by', 'varchar(50)', 'NO', '', NULL, ''
+'assigned_at', 'timestamp', 'NO', '', 'CURRENT_TIMESTAMP', ''
