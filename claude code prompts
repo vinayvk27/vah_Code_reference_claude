@@ -1,1 +1,3 @@
 print(f"[DIAG-RMS] approver_agent_node about to call LLM. messages_count={len(message_list)}, system_prompt_len={len(system_prompt) if 'system_prompt' in dir() else 'N/A'}", flush=True)
+
+print(f"[DIAG-RMS] approver_agent_node done. full_text_len={len(full_text)}", flush=True)
