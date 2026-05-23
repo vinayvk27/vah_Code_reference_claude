@@ -1,168 +1,41 @@
-def permission_check_node(state: MaterialRequisitionState) -> dict:
-    """
-    Node 2: Check user permissions.
-    OUT_OF_DOMAIN requests short-circuit with a denial message.
-    For IN_DOMAIN CREATOR persona, looks up agent in DB and checks Gate 2.
-    For APPROVER, ERP_APPROVER, ISSUER personas, authority is by emp_no
-    (hardcoded in approvers.py), not by role/group mapping.
-    """
-    from app.controllers.auth_controller import AuthController
-    from app.workflows.material_workflow.approvers import (
-        is_manager_approver, is_erp_approver, is_issuer
-    )
+INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
+User context built for: 16 (Vijay Ananth K)
 
-    parsed_intent = state.get("parsed_intent", "")
-    selected_agent_role = state.get("selected_agent_role", "")
-    selected_collection = state.get("selected_collection", "")
-    emp_no = state.get("emp_no", "")
-    group_idx = state.get("group_idx", 0)
-    role_ids = state.get("role_ids", [])
+=== DEBUG: Resolved context for emp_no 16 ===
+  group_idx = 16
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:63649 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 16 (Vijay Ananth K)
 
-    execution_log = state.get("execution_log", [])
+=== DEBUG: Resolved context for emp_no 16 ===
+  group_idx = 16
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:63650 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 16 (Vijay Ananth K)
 
-    # OUT_OF_DOMAIN short-circuits
-    if parsed_intent == "OUT_OF_DOMAIN":
-        execution_log.append("Out-of-domain request; routing to blocked node.")
-        return {
-            "has_permission": False,
-            "denial_message": (
-                "I can only help with MRR tasks like creating material "
-                "requisitions, approving requests, and issuing stock. "
-                "Could you rephrase your request?"
-            ),
-            "execution_log": execution_log
-        }
+=== DEBUG: Resolved context for emp_no 16 ===
+  group_idx = 16
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:63651 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:63685 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+data: {"type": "meta", "thread_id": "7626ce42-7a0c-48f2-82f4-46c030245016"}
 
-    # IN_DOMAIN: validate classifier output
-    if not selected_collection or not selected_agent_role:
-        execution_log.append("Classifier returned incomplete result; denying.")
-        return {
-            "has_permission": False,
-            "denial_message": (
-                "I wasn't able to understand your request. "
-                "Could you rephrase it?"
-            ),
-            "execution_log": execution_log
-        }
-
-    # APPROVER, ERP_APPROVER, ISSUER: bypass Gate 2 DB check.
-    # Authority for these is by emp_no, not by role/group mapping.
-    if selected_agent_role == "approver":
-        if not is_manager_approver(emp_no):
-            execution_log.append(
-                f"Approver denied: emp_no {emp_no} not in MANAGER_APPROVERS list."
-            )
-            return {
-                "has_permission": False,
-                "denial_message": (
-                    "Manager approval is restricted to the COO and CTO. "
-                    "If you believe this is an error, contact your administrator."
-                ),
-                "execution_log": execution_log
-            }
-        execution_log.append(
-            f"Approver granted (by approvers.py list): emp_no {emp_no}"
-        )
-        return {
-            "has_permission": True,
-            "denial_message": None,
-            "execution_log": execution_log
-        }
-
-    if selected_agent_role == "erp_approver":
-        if not is_erp_approver(emp_no):
-            execution_log.append(
-                f"ERP approver denied: emp_no {emp_no} not in ERP_APPROVERS list."
-            )
-            return {
-                "has_permission": False,
-                "denial_message": (
-                    "ERP approval is restricted to the ERP HOD. "
-                    "If you believe this is an error, contact your administrator."
-                ),
-                "execution_log": execution_log
-            }
-        execution_log.append(
-            f"ERP approver granted (by approvers.py list): emp_no {emp_no}"
-        )
-        return {
-            "has_permission": True,
-            "denial_message": None,
-            "execution_log": execution_log
-        }
-
-    if selected_agent_role == "issuer":
-        if not is_issuer(emp_no):
-            execution_log.append(
-                f"Issuer denied: emp_no {emp_no} not in ISSUERS list."
-            )
-            return {
-                "has_permission": False,
-                "denial_message": (
-                    "The store issuance feature is not yet active."
-                ),
-                "execution_log": execution_log
-            }
-        execution_log.append(
-            f"Issuer granted (by approvers.py list): emp_no {emp_no}"
-        )
-        return {
-            "has_permission": True,
-            "denial_message": None,
-            "execution_log": execution_log
-        }
-
-    # CREATOR persona: standard Gate 2 DB check.
-    # Build expected_agent_name: {MODULE}_{COLLECTION_SUFFIX}_{PERSONA}
-    collection_suffix = selected_collection.upper().replace("MRR_", "")
-    expected_agent_name = f"MRR_{collection_suffix}_{selected_agent_role.upper()}"
-
-    db = SessionLocal()
-    try:
-        from app.models.db_schema import Agent
-        agent_row = db.query(Agent).filter(
-            Agent.agent_name == expected_agent_name,
-            Agent.is_active == 1
-        ).first()
-
-        if not agent_row:
-            execution_log.append(f"Agent {expected_agent_name} not found in DB.")
-            return {
-                "has_permission": False,
-                "denial_message": (
-                    f"The {selected_agent_role} role for {selected_collection} "
-                    f"is not available."
-                ),
-                "execution_log": execution_log
-            }
-
-        agent_or_none = AuthController.check_agent_access(
-            emp_no=emp_no,
-            group_idx=group_idx,
-            role_ids=role_ids,
-            agent_id=agent_row.agent_id,
-            db=db
-        )
-
-        if agent_or_none is None:
-            execution_log.append(
-                f"Permission DENIED: user lacks {expected_agent_name}."
-            )
-            return {
-                "has_permission": False,
-                "denial_message": (
-                    f"You don't have {selected_agent_role.lower()} access to "
-                    f"{selected_collection.replace('_', ' ')}. "
-                    f"Please contact your administrator if you need this permission."
-                ),
-                "execution_log": execution_log
-            }
-
-        execution_log.append(f"Permission GRANTED: {expected_agent_name}")
-        return {
-            "has_permission": True,
-            "denial_message": None,
-            "execution_log": execution_log
-        }
-    finally:
-        db.close()
+data: [DONE]
