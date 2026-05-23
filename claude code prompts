@@ -1,87 +1,35 @@
-═══════════════════════════════════════════════════════════════════
-TASK 4.7.2: Fix RMS agent node collection check + add diagnostics
-═══════════════════════════════════════════════════════════════════
+Hi! What can I help you with?
+approve worklog 47
+I
+🤖
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/rms_workflow/nodes.py.
-- Do NOT modify any other workflow, controller, route, model, or service.
-- Do NOT modify the agent node logic except for the specific
-  condition change listed below.
-- If anything requires touching out-of-scope code, STOP and report.
+Approved worklog 47.
+show my tasks
 
-Output INTENDED FOOTPRINT at start.
-Output `git diff --stat HEAD` at end.
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-After Task 4.2 rewrote the RMS intent classifier, selected_collection
-in state holds values like "rms_timesheet" and "rms_projectplan"
-(lowercase with prefix). But the three agent nodes
-(creator_agent_node, reviewer_agent_node, approver_agent_node)
-still have legacy condition `if selected_collection == "RMS":` at
-the top of their LLM-binding logic.
+Hi! What can I help you with?
+log 4 hours today
+A
+🤖
+To log 4 hours for today, I need a few more details to create the task assignment:
 
-This condition is now ALWAYS false. Execution falls into the
-`else:` branch which sets `full_text = ""` and returns silently.
-Empty stream to user.
+1. **Resource ID**: Which employee is logging this time? (Your ID is 1065, or another?)
+2. **Project ID**: Which project is this for?
+3. **Product ID**: Which product is associated with this task?
+4. **Task Index**: Which task number/activity?
+5. **Activity Index**: Which activity within the task?
+6. **End Date**: Is this just for today (2026-05-22), or a date range?
 
-This task changes the condition to match the new classifier output
-and adds diagnostic prints to make the next round of testing easier.
+Please provide these details so I can create the 4-hour time entry.To log 4 hours today, I need a bit more information. Please provide:
+1. **Project ID**
+2. **Product ID**
+3. **Task Index** (or Task ID if you know it, otherwise the index number)
+4. **Activity Index**
 
-───────────────────────────────────────────────────────────────────
-SCOPE
-───────────────────────────────────────────────────────────────────
+Or, if you want to log this against an **existing task**, please tell me which task ID to update.
 
-In app/workflows/rms_workflow/nodes.py:
+For example: "Log 4 hours on Task #1" or "Log 4 hours for Project 1, Product 1, Task Index 1, Activity Index 1".
 
-In EACH of these three functions: creator_agent_node,
-reviewer_agent_node, approver_agent_node:
+*Note: Based on the current system constraints, I can only **create** new task assignments or **list** existing tasks. If you need to update the hours of an existing task (e.g., from 0 to 4), the system typically handles this via a UI update or a specific "update task" tool which is not currently listed in my available tools. However, I can create a **new** task entry for 4 hours today if you provide the details.*
 
-Find the line that says:
-    if selected_collection == "RMS":
-
-Change it to:
-    if selected_collection and selected_collection.lower().startswith("rms_"):
-
-This makes the condition true for "rms_timesheet" and "rms_projectplan"
-(the values the new classifier produces).
-
-Also in each of the three agent node functions, add this print
-statement immediately after the function signature / docstring,
-BEFORE any other logic:
-
-    print(
-        f"[DIAG-RMS] <function_name> entered. "
-        f"emp_no={state.get('emp_no')}, "
-        f"selected_collection={state.get('selected_collection')!r}, "
-        f"selected_agent_role={state.get('selected_agent_role')!r}, "
-        f"will_enter_rms_branch={bool(state.get('selected_collection', '').lower().startswith('rms_'))}",
-        flush=True
-    )
-
-Replace <function_name> with the actual function name (e.g.,
-creator_agent_node, reviewer_agent_node, approver_agent_node).
-
-If approver_agent_node already has a print at the top (from
-previous diagnostic), REPLACE that print with this new more
-informative one. Do NOT keep two prints.
-
-Do NOT add any other changes. Do NOT modify branch internals.
-Do NOT touch the `else:` branch.
-
-───────────────────────────────────────────────────────────────────
-OUT OF SCOPE — DO NOT TOUCH
-───────────────────────────────────────────────────────────────────
-Everything except app/workflows/rms_workflow/nodes.py.
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_4_7_2_REPORT.md with:
-- INTENDED / ACTUAL footprint.
-- Before/after of the condition change in all 3 functions.
-- The 3 new DIAG print lines added (one per function).
-- Confirmation that no other logic was modified.
+Let me know how you'd like to proceed!
