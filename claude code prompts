@@ -1,3 +1,42 @@
-print(f"[DIAG-MRR] approver_agent_node entered. emp_no={state.get('emp_no')}")
+def approver_agent_node(state: MaterialRequisitionState) -> dict:
+    """Fetches pending requests for manager approval (CTO/COO)."""
+    print(f"[DIAG-MRR] approver_agent_node entered. emp_no={state.get('emp_no')}")
+    emp_no = state.get("emp_no", "")
 
-print(f"[DIAG-MRR] creator_path_router entered. persona={state.get('selected_agent_role')}")
+    from app.workflows.material_workflow.approvers import is_manager_approver
+    if not is_manager_approver(emp_no):
+        return {
+            "messages": [AIMessage(content="Manager approval is restricted to the COO and CTO. Please contact your administrator if you believe this is an error.")],
+            "execution_log": state.get("execution_log", []) + ["Non-approver blocked from manager approval"]
+        }
+
+    db = SessionLocal()
+    try:
+        query = text("""
+            SELECT MATREQUISITIONID, MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE,
+                   TOTALCOST, APPROVAL_STATUS, STATUS
+            FROM mrr_matrequisitionheader
+            WHERE APPROVAL_STATUS = 'PENDING'
+            ORDER BY REQUISITIONDATE ASC
+        """)
+        results = db.execute(query).mappings().all()
+
+        if not results:
+            return {"messages": [AIMessage(content="You have no pending manager approvals at this time.")]}
+
+        response_text = "### Pending Manager Approvals\n\n"
+        response_text += "| Req ID | MRR No | Requestor | Total Cost | Status | Date |\n"
+        response_text += "|---|---|---|---|---|---|\n"
+
+        for r in results:
+            date_str = r['REQUISITIONDATE'].strftime('%Y-%m-%d') if r['REQUISITIONDATE'] else 'N/A'
+            response_text += f"| {r.MATREQUISITIONID} | {r.MATREQUISITIONNO} | {r.REQUESTORID} | \u20b9{r.TOTALCOST} | {r.APPROVAL_STATUS} | {date_str} |\n"
+
+        response_text += "\n*To approve a request, tell me: 'Approve requisition MRR/<id>/25-26'*"
+
+        return {"messages": [AIMessage(content=response_text)]}
+
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"Error fetching pending requests: {str(e)}")]}
+    finally:
+        db.close()
