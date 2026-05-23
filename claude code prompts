@@ -1,4 +1,9 @@
-# DP_PART_NO, MANUFACTURE, DESCRIPTION, QOH, PRICE, ITEMID, REVISIONLEVEL, ITEMREVISIONID, WAREHOUSE, UOM, TOTAL_DEMAND, TOTAL_SUPPLY, BIN_QTY
-'DP-RM-CSY-22632', 'OTP-244114-01-ETUO', 'CSY FireFly 10.3125Gbps 8x OM3 MM 50/125µm 850nm Flat Ribbon Optical Fiber, End A ETUO 4TX+4RX Electrical-Optical Transceiver with Flat Heat Sink, End B MT38999 CF-599011-01S Square Flange Circular Connector Shell 11 Single Cavity 12F MT Male Olive Drab Cadmium Polarization N, with Black Loose Jacket and Boot, Overall 35cm, -40C to 85C.', NULL, '185000.00', '136019', 'XCXX', '254680', '1', 'NOS', NULL, NULL, '0'
+from app.dao.database import SessionLocal
+from sqlalchemy import text
 
-2nd query resulted empty
+session = SessionLocal()
+row = session.execute(text("SELECT ITEMID, ITEMREVISIONID, UOM, QOH, PRICE, DESCRIPTION FROM com_search WHERE DP_PART_NO = 'DP-RM-CSY-22632' AND WAREHOUSE = '1' LIMIT 1")).first()
+print("ROW:", row)
+print("QOH:", repr(row.QOH) if row else "no row")
+print("PRICE:", repr(row.PRICE) if row else "no row")
+session.close()
