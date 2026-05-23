@@ -1,9 +1,4 @@
-from app.dao.database import SessionLocal
-from sqlalchemy import text
-
-session = SessionLocal()
-row = session.execute(text("SELECT ITEMID, ITEMREVISIONID, UOM, QOH, PRICE, DESCRIPTION FROM com_search WHERE DP_PART_NO = 'DP-RM-CSY-22632' AND WAREHOUSE = '1' LIMIT 1")).first()
-print("ROW:", row)
-print("QOH:", repr(row.QOH) if row else "no row")
-print("PRICE:", repr(row.PRICE) if row else "no row")
-session.close()
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.dao.database import SessionLocal; from sqlalchemy import text; session = SessionLocal(); row = session.execute(text('SELECT ITEMID, ITEMREVISIONID, UOM, QOH, PRICE, DESCRIPTION FROM com_search WHERE DP_PART_NO = \"DP-RM-CSY-22632\" AND WAREHOUSE = \"1\" LIMIT 1')).first(); print('ROW:', row); print('QOH:', repr(row.QOH) if row else 'no row'); print('PRICE:', repr(row.PRICE) if row else 'no row'); session.close()"
+ROW: (136019, 254680, 'NOS', None, Decimal('185000.00'), 'CSY FireFly 10.3125Gbps 8x OM3 MM 50/125µm 850nm Flat Ribbon Optical Fiber, End A ETUO 4TX+4RX Electrical-Optical Transceiver with Flat Heat Sink, En ... (40 characters truncated) ... Circular Connector Shell 11 Single Cavity 12F MT Male Olive Drab Cadmium Polarization N, with Black Loose Jacket and Boot, Overall 35cm, -40C to 85C.')
+QOH: None
+PRICE: Decimal('185000.00')
