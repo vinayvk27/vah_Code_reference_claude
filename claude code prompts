@@ -1,10 +1,1 @@
-=== END DEBUG ===
-INFO:     10.5.1.58:53887 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:53912 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=1731
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=approver
-[DIAG-RMS] approver_agent_node entered. emp_no=1731
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: HDD)
-
-this time i pasted correctly
+print(f"[DIAG-RMS] approver_agent_node about to call LLM. messages_count={len(message_list)}, system_prompt_len={len(system_prompt) if 'system_prompt' in dir() else 'N/A'}", flush=True)
