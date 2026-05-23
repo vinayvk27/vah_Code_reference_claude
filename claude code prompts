@@ -1,41 +1,5 @@
-INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
-User context built for: 16 (Vijay Ananth K)
+print(f"[DIAG-MRR] parse_intent_node entered. emp_no={state.get('emp_no')}")
 
-=== DEBUG: Resolved context for emp_no 16 ===
-  group_idx = 16
-  role_ids = [9]
-  visible_module_ids = {5}
-  intersection_module_ids = {5}
-  modules in access_tree = 1
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63649 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-User context built for: 16 (Vijay Ananth K)
+print(f"[DIAG-MRR] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}, collection={state.get('selected_collection')}")
 
-=== DEBUG: Resolved context for emp_no 16 ===
-  group_idx = 16
-  role_ids = [9]
-  visible_module_ids = {5}
-  intersection_module_ids = {5}
-  modules in access_tree = 1
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63650 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 16 (Vijay Ananth K)
-
-=== DEBUG: Resolved context for emp_no 16 ===
-  group_idx = 16
-  role_ids = [9]
-  visible_module_ids = {5}
-  intersection_module_ids = {5}
-  modules in access_tree = 1
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:63651 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:63685 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-data: {"type": "meta", "thread_id": "7626ce42-7a0c-48f2-82f4-46c030245016"}
-
-data: [DONE]
+print(f"[DIAG-MRR] permission_blocked_node entered. denial_message={state.get('denial_message')!r}")
