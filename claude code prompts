@@ -1,5 +1,7 @@
-SELECT a.agent_id, a.agent_name, raa.role_id, raa.group_id
-FROM dpah_agents a
-LEFT JOIN dpah_role_agent_access raa
-  ON raa.agent_id = a.agent_id
-WHERE a.agent_name = 'RMS_TIMESHEET_APPROVER';
+print(f"[DIAG-RMS] parse_intent_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+print(f"[DIAG-RMS] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}", flush=True)
+
+print(f"[DIAG-RMS] permission_blocked_node entered. denial_message={state.get('denial_message')!r}", flush=True)
+
+print(f"[DIAG-RMS] approver_agent_node entered. emp_no={state.get('emp_no')}", flush=True)
