@@ -1,5 +1,58 @@
-SELECT mug.module_id, m.module_name, mug.group_idx
-FROM dpah_module_usergroups mug
-JOIN dpah_modules m ON m.module_id = mug.module_id
-WHERE m.module_name = 'MRR'
-  AND mug.group_idx = 16;
+# APPROVER, ERP_APPROVER, ISSUER personas: bypass Gate 2 DB check.
+    # Authority for these is by emp_no, not by role/group mapping.
+    from app.workflows.material_workflow.approvers import (
+        is_manager_approver, is_erp_approver, is_issuer
+    )
+
+    if selected_agent_role == "approver":
+        if not is_manager_approver(emp_no):
+            execution_log.append(f"Approver denied: emp_no {emp_no} not in MANAGER_APPROVERS list.")
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    "Manager approval is restricted to the COO and CTO. "
+                    "If you believe this is an error, contact your administrator."
+                ),
+                "execution_log": execution_log
+            }
+        execution_log.append(f"Approver granted (by approvers.py list): emp_no {emp_no}")
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+
+    if selected_agent_role == "erp_approver":
+        if not is_erp_approver(emp_no):
+            execution_log.append(f"ERP approver denied: emp_no {emp_no} not in ERP_APPROVERS list.")
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    "ERP approval is restricted to the ERP HOD. "
+                    "If you believe this is an error, contact your administrator."
+                ),
+                "execution_log": execution_log
+            }
+        execution_log.append(f"ERP approver granted (by approvers.py list): emp_no {emp_no}")
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+
+    if selected_agent_role == "issuer":
+        if not is_issuer(emp_no):
+            execution_log.append(f"Issuer denied: emp_no {emp_no} not in ISSUERS list.")
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    "The store issuance feature is not yet active."
+                ),
+                "execution_log": execution_log
+            }
+        execution_log.append(f"Issuer granted (by approvers.py list): emp_no {emp_no}")
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
