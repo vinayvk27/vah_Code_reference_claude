@@ -1,11 +1,9 @@
-print(f"[DIAG-UPLOAD] Parsed file: filename={parsed.get('filename')}, "
-      f"file_type={parsed.get('file_type')}, "
-      f"row_count={parsed.get('row_count')}, "
-      f"first_row={parsed.get('data', [{}])[0] if parsed.get('data') else None}")
+INSERT IGNORE INTO dpah_module_usergroups (module_id, group_id)
+SELECT m.module_id, 1
+FROM dpah_modules m
+WHERE m.module_name = 'MRR';
 
-print(f"[DIAG-EXCEL-HANDLER] uploaded_files count: {len(state.get('uploaded_files', []))}, "
-      f"types: {[f.get('file_type') for f in state.get('uploaded_files', [])]}")
-
-print(f"[DIAG-VALIDATOR] valid={result.get('valid')}, "
-      f"errors={result.get('errors')}, "
-      f"warnings={result.get('warnings')}")
+INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id)
+SELECT 7, 1, a.agent_id
+FROM dpah_agents a
+WHERE a.agent_name = 'MRR_GENERAL_CREATOR';
