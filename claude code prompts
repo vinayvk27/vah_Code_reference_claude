@@ -1,3 +1,48 @@
+
+Why Python is failing where PHP succeeds — the technical explanation:
+The issue isn't PHP version (5.6 vs 8.4). It's the process architecture of whatever PHP binary is running on your machine.
+When PHP loads the OCI8 extension, it loads oci.dll from C:\instantclient_12_1. For that to work, the PHP process and oci.dll must be the same architecture — both 32-bit or both 64-bit. This is a fundamental rule of Windows DLL loading; it's not a Python rule or a PHP rule. It's an operating system rule.
+Your C:\instantclient_12_1\oci.dll is 32-bit (file size 641 KB; 64-bit version is typically 2+ MB). So whichever PHP loads it successfully — 5.6 or 8.4 — that PHP process is also 32-bit.
+Your Python in C:\ml_env_311 is 64-bit. A 64-bit process cannot load a 32-bit DLL. The OS prevents it at the kernel level. This is the DPI-1047 error.
+Concrete way to prove this to your team:
+Ask them to run this command in the same Windows session where their PHP works:
+Code
+or
+Code
+or whatever the PHP process name is.
+The output will show an architecture column. It will say x86 (which means 32-bit). Both their PHP 5.6 and 8.4 must be 32-bit binaries — that's why both connect.
+If they want even more concrete proof: have them run a PHP one-liner:
+Code
+This prints the architecture of the running PHP. If it's 32, they're running 32-bit PHP. If 64, then there's something else going on that needs deeper investigation.
+This isn't a Python failing or PHP succeeding — it's that 32-bit processes can use the 32-bit oci.dll, 64-bit processes cannot. No exceptions.
+The honest constraint situation:
+You said:
+Can't install software.
+No internet on this server.
+Oracle is not under your control.
+That's a real lockdown. Let me think through what's still possible.
+Option 1 — Get a 64-bit Instant Client onto the machine via your PHP team.
+The 64-bit Instant Client zip is an Oracle download, but it doesn't need to be installed. It's just files in a folder. If your PHP team or any colleague has internet access on another machine:
+Have them download instantclient-basiclite-windows.x64-21.x.zip (~50 MB) from oracle.com/database/technologies/instant-client/winx64-64-downloads.html.
+Copy the zip to a USB drive or send via internal network share.
+Unzip to C:\instantclient_21_x_64 on your dev server.
+Update app/dao/oracle.py to point at that folder.
+You're not installing anything — just unzipping a folder you already have permission to write to (C: writable for your user is normal). This is not the same as software installation. Software installation requires admin to write to Program Files, modify registry, install services. Unzipping a folder requires nothing.
+If your IT department considers "unzipping a Oracle-provided zip file" as software installation, then strictly speaking, you'd need to ask them. But functionally, this is the cleanest solution.
+Option 2 — Have PHP do the Oracle queries on Python's behalf.
+Your PHP works. So do this:
+Write a small PHP script that:
+Receives a request (e.g., via a simple PHP file served by your Apache).
+Takes an item ID or item name as parameter.
+Runs the Oracle query.
+Returns JSON.
+From Python, call this PHP endpoint via requests.get(). Python doesn't need Oracle at all — it just makes HTTP calls to your PHP server, which talks to Oracle.
+This is the PHP-proxy approach I mentioned earlier as Option C. It's ugly but functionally complete.
+
+
+
+
+
 Tables needed in MariaDB (replicated from Oracle ERP):
 
 1. scmitems
