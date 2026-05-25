@@ -1,124 +1,13 @@
- test_mrr.xlsx
-A
-🤖
-**Material Requisition — Review Before Submit**
-
-MRR Number: DPE/MRR/3/26-27
-Requestor: emp 1065
-Department: SDG
-Project: YEB2736 — 4.5M Satcom Ground Data terminal (4.5m GDT-SAT)
-Phase: PROTO_DESIGN
-Requisition Type: RETURNABLE
-Need by: 2026-06-15
-Description: Cabling for satcom prototype
-Comments: Urgent test order
-
-**Line Items:**
-  1. DP-RM-CAB-03390 — UOM: MTR
-     Qty: 5.0 | Available: 104.7
-     Unit Cost (LPP): 11.00 | Subtotal: 55.00
-     Return by: 2026-08-15T00:00:00
-
-  2. DP-RM-CAB-03100 — UOM: NOS
-     Qty: 2.0 | Available: 359.4
-     Unit Cost (LPP): 50.00 | Subtotal: 100.00
-     Return by: 2026-08-15T00:00:00
-
-**Total Cost: 155.00**
-
-Please confirm or cancel below:
+# MATREQUISITIONID, MATREQUISITIONNO, WAREHOUSEID, REQUISITIONTYPE, REQUESTORID, REQUISITIONDATE, DEPARTMENT, NEEDBYDATE, WHOCOLUMN, STATUS, PROJECTID, PROJECTPHASEID, REQTRANSACTIONTYPE, SUPPLIERID, SUPPLIERSITEID, DESCRIPTION, COMMENTS, VERIFICATION_STATUS, VERIFICATION_DATE, APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE, TOTAL_COST
+'1', 'DPE/MRR/1/26-27', '1', 'RETURNABLE', '1065', '2026-05-25 16:30:21', 'SDG', '2026-06-15 00:00:00', NULL, 'ENTERED', '13987', '14045', 'MATERIAL REQUISITION', '0', '0', 'Cabling for satcom prototype', 'Urgent test order', NULL, NULL, NULL, NULL, NULL, NULL, '55100'
+'2', 'DPE/MRR/2/26-27', '1', 'RETURNABLE', '1065', '2026-05-25 16:35:46', 'SDG', '2026-06-15 00:00:00', NULL, 'ENTERED', '13987', '14045', 'MATERIAL REQUISITION', '0', '0', 'Cabling for satcom prototype', 'Urgent test order', NULL, NULL, NULL, NULL, NULL, NULL, '55100'
+'3', 'DPE/MRR/3/26-27', '1', 'RETURNABLE', '1065', '2026-05-25 16:36:32', 'SDG', '2026-06-15 00:00:00', NULL, 'ENTERED', '13987', '14045', 'MATERIAL REQUISITION', '0', '0', 'Cabling for satcom prototype', 'Urgent test order', NULL, NULL, NULL, NULL, NULL, NULL, '155'
 
 
-
-Your MRR **DPE/MRR/3/26-27** has been submitted.
-Total cost: ₹155.00
-
-Running verification...
-
-No requisition to verify.
-
-
-
-INFO:     Started server process [40028]
-INFO:     Waiting for application startup.
-[Startup] RMS timesheet is now DB-backed - no pre-loading required
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
-[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'} 
-[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
-2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-INFO:     127.0.0.1:61312 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-CONTROLLER] thread_id received: None
-[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=1
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router: last_msg='please process this mrr upload', normalized='please process this mrr upload', has_pending=False
-[DIAG-MRR] creator_path_router -> excel_handler
-[DIAG-MRR] excel_handler_node entered. emp_no=1065
-[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test 
-order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-[DIAG-MRR] excel_handler_node: excel_file found=True
-[DIAG-MRR] excel_handler_node: calling validator with 2 rows
-[DIAG-MRR] excel_handler_node: validator returned valid=True
-[DIAG-MRR] mrr_submission_node entered. has_pending_data=True
-[DIAG-MRR] auto_verifier_node entered. new_requisition_id=None
-User context built for: 1065 (Arun Kumar M)
-User context built for: 1065 (Arun Kumar M)
-
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3, 5}
-  intersection_module_ids = {1, 3, 5}
-  modules in access_tree = 3
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-    - HRMS: 2 collections
-        - hrms_leave_data: 2 agents
-        - hrms_salarydata: 2 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-
-=== DEBUG: Resolved context for emp_no 1065 ===
-  group_idx = 1
-  role_ids = [7]
-  visible_module_ids = {1, 3, 5}
-  intersection_module_ids = {1, 3, 5}
-  modules in access_tree = 3
-    - RMS: 2 collections
-        - rms_timesheet: 1 agents
-        - rms_projectplan: 1 agents
-INFO:     10.5.1.58:65162 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-    - HRMS: 2 collections
-        - hrms_leave_data: 2 agents
-        - hrms_salarydata: 2 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:65163 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}    
-[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
-2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition 
-Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent 
-test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-INFO:     10.5.1.58:65236 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-CONTROLLER] thread_id received: None
-[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router: last_msg='process this mrr', normalized='process this mrr', has_pending=False
-[DIAG-MRR] creator_path_router -> excel_handler
-[DIAG-MRR] excel_handler_node entered. emp_no=1065
-[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test 
-order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 
-'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-[DIAG-MRR] excel_handler_node: excel_file found=True
-[DIAG-MRR] excel_handler_node: calling validator with 2 rows
-[DIAG-MRR] excel_handler_node: validator returned valid=True
-[DIAG-MRR] mrr_submission_node entered. has_pending_data=True
-[DIAG-MRR] auto_verifier_node entered. new_requisition_id=None
-
+# MATREQUISITIONLINEID, MATREQUISITIONID, ITEMID, ITEMREVISIONID, UOMID, REQUISITIONQTY, ISSUEQTY, WHOCOLUMN, RETURNQUANTITY, STATUS, CLOSEREASON, ITEMCOST, RETURN_DATE
+'1', '1', '7609', '7881', '4', '5000.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '55000.0000', '2026-08-15 00:00:00'
+'2', '1', '7636', '7854', '7', '2.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '100.0000', '2026-08-15 00:00:00'
+'3', '2', '7609', '7881', '4', '5000.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '55000.0000', '2026-08-15 00:00:00'
+'4', '2', '7636', '7854', '7', '2.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '100.0000', '2026-08-15 00:00:00'
+'5', '3', '7609', '7881', '4', '5.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '55.0000', '2026-08-15 00:00:00'
+'6', '3', '7636', '7854', '7', '2.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '100.0000', '2026-08-15 00:00:00'
