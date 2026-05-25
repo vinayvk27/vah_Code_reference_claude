@@ -7,12 +7,36 @@ WHERE cs.WAREHOUSE = '1'
   AND si.LPP_VALUE_UNITPRICE_INR > 0
 LIMIT 10;
 
-SELECT projectid, projectnumber, projectdescription
+# DP_PART_NO, ITEMID, UOM, QOH, LPP_VALUE_UNITPRICE_INR, UNITOFMEASUREID
+'DP-RM-CAB-03390', '7609', 'MTR', '104.7', '11.0000', '4'
+'DP-RM-CAB-03350', '7613', 'MTR', '57.5', '80.3000', '4'
+'DP-RM-CAB-03290', '7619', 'MTR', '480.75', '7.0000', '4'
+'DP-RM-CAB-03110', '7635', 'MTR', '1096.8', '116.4000', '4'
+'DP-RM-CAB-03100', '7636', 'NOS', '359.4', '50.0000', '7'
+'DP-RM-CAB-02880', '7638', 'MTR', '19493.05', '10.6000', '4'
+'DP-RM-CAB-02680', '7647', 'MTR', '38', '83.2000', '4'
+'DP-RM-CAB-02620', '7653', 'MTR', '87.9', '10.6820', '4'
+'DP-RM-CAB-02580', '7657', 'MTR', '277.8', '24.5000', '4'
+'DP-RM-CAB-02340', '7679', 'MTR', '28', '27.6300', '4'
+
+
+SELECT projectid, projectnumber,description
 FROM posproject
 LIMIT 5;
+
+# projectid, projectnumber, description
+'13988', 'YIA2740', 'Integrated ADSB Receiver System with AIS and GPS'
+'13987', 'YEB2736', '4.5M Satcom Ground Data terminal (4.5m GDT-SAT)'
+'13986', 'YIC2738', 'ATE development for IRST Processor unit'
+'13985', 'R7-YEA1566', 'Repair support for Checkout Equipment (COE)'
+'13984', 'BIC2713', 'cPCI Serial Bus IO Modules'
+
 
 SELECT pp.projectphaseid, pp.phasename
 FROM posprojectphases pp
 JOIN posproject p ON p.projectid = pp.projectid
-WHERE p.projectnumber = '<one of the project numbers from step 2>'
+WHERE p.projectnumber = 'YEB2736'
 LIMIT 5;
+
+# projectphaseid, phasename
+'14045', 'PROTO_DESIGN'
