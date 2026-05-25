@@ -1,36 +1,10 @@
-def creator_path_router(state: MaterialRequisitionState) -> str:
-    """
-    Routes to the correct sub-path for the creator persona.
-    """
-    print(f"[DIAG-MRR] creator_path_router entered. persona={state.get('selected_agent_role')}", flush=True)
+INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}
+INFO:     127.0.0.1:63272 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router -> excel_handler
 
-    msgs = state.get("messages") or []
-    last_msg = ""
-    for m in reversed(msgs):
-        if isinstance(m, HumanMessage):
-            content = getattr(m, "content", None)
-            if content is not None:
-                last_msg = str(content).strip().lower()
-                break
-
-    pending = state.get("pending_mrr_data")
-
-    # User confirmed pending submission
-    if pending and last_msg in ("confirm_mrr", "confirm submit", "confirm"):
-        print(f"[DIAG-MRR] creator_path_router -> submit_mrr", flush=True)
-        return "submit_mrr"
-
-    # User cancelled
-    if pending and last_msg in ("cancel_mrr", "cancel"):
-        print(f"[DIAG-MRR] creator_path_router -> cancel_mrr", flush=True)
-        return "cancel_mrr"
-
-    # Excel uploaded
-    uploaded = state.get("uploaded_files") or []
-    if uploaded:
-        print(f"[DIAG-MRR] creator_path_router -> excel_handler", flush=True)
-        return "excel_handler"
-
-    # Default — form flow
-    print(f"[DIAG-MRR] creator_path_router -> form_flow", flush=True)
-    return "form_flow"
+*** curl output is same like earlier
