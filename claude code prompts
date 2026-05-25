@@ -1,19 +1,104 @@
-INFO:     10.5.1.58:61800 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-CONTROLLER] thread_id received: None
-[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router: last_msg='process this mrr', normalized='process this mrr', has_pending=False
-[DIAG-MRR] creator_path_router -> excel_handler
-[DIAG-MRR] excel_handler_node entered. emp_no=1065
-[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test 
-order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 
-'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-[DIAG-MRR] excel_handler_node: excel_file found=True
-[DIAG-MRR] excel_handler_node: calling validator with 2 rows
-[DIAG-MRR] excel_handler_node: validator returned valid=True
-INFO:     10.5.1.58:61914 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=4
-[DIAG-MRR] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=, collection=
-[DIAG-MRR] permission_blocked_node entered. denial_message='I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?'
+═══════════════════════════════════════════════════════════════════
+REACT TASK: Persist thread_id across chat turns
+═══════════════════════════════════════════════════════════════════
+
+PROBLEM
+───────────────────────────────────────────────────────────────────
+Every chat turn currently starts a fresh server-side conversation.
+This breaks any multi-turn flow that depends on prior context, such
+as the MRR Excel upload → confirm flow:
+
+1. User uploads test_mrr.xlsx → backend validates, stores pending
+   data in workflow state keyed by thread_id, returns summary.
+2. User types "confirm mrr" → backend receives a NEW request with
+   no thread_id → state is empty → backend doesn't know about the
+   pending upload → flow fails.
+
+The backend always returns the thread_id in the FIRST SSE event
+(`meta`). The frontend just isn't capturing or replaying it.
+
+REQUIRED FIX
+───────────────────────────────────────────────────────────────────
+
+For each module/conversation, the frontend must:
+
+1. Capture the thread_id from the meta event.
+2. Persist it for the rest of that conversation (component state OR
+   per-module state).
+3. Include it in every subsequent POST to:
+   - POST /api/v1/chat/stream
+   - POST /api/v1/chat/stream-with-file
+4. Clear it when the user explicitly starts a new conversation (new
+   chat, switch module, sign out).
+
+SSE EVENT TO LISTEN FOR
+───────────────────────────────────────────────────────────────────
+
+The backend sends this as the FIRST SSE event of every response:
+
+  data: {"type": "meta", "thread_id": "abc-123-def-456"}
+
+When you parse SSE events, check for type === "meta" and store the
+thread_id.
+
+REQUEST BODIES TO UPDATE
+───────────────────────────────────────────────────────────────────
+
+For POST /api/v1/chat/stream (JSON body):
+
+  Currently sending:
+  {
+    "module_name": "MRR",
+    "message": "confirm mrr",
+    "chat_history": [...]
+  }
+
+  Should send:
+  {
+    "module_name": "MRR",
+    "message": "confirm mrr",
+    "chat_history": [...],
+    "thread_id": "<the stored thread_id, or null if none yet>"
+  }
+
+For POST /api/v1/chat/stream-with-file (multipart form):
+
+  Add a form field:
+    thread_id: <the stored thread_id, or omit if none yet>
+
+  So the request looks like:
+    -F "collection_name=MRR"
+    -F "message=..."
+    -F "files=@..."
+    -F "thread_id=<id>"   ← add this when known
+
+WHEN TO CLEAR THE thread_id
+───────────────────────────────────────────────────────────────────
+
+Treat thread_id as conversation-scoped. Clear it when:
+
+- User clicks "New chat" / "Start fresh" / similar.
+- User switches modules (RMS → HRMS, etc.). Different module =
+  different conversation.
+- User logs out.
+
+DO NOT clear it between messages in the same conversation. It must
+persist across all turns until one of the above happens.
+
+ACCEPTANCE TEST
+───────────────────────────────────────────────────────────────────
+
+1. Login as Junior 1065.
+2. Open MRR module.
+3. Upload test_mrr.xlsx → see summary + form widget.
+4. Open browser devtools, Network tab.
+5. Send "confirm mrr" message.
+6. Verify the request to /api/v1/chat/stream includes a thread_id
+   field, and its value matches the thread_id from step 3's meta
+   event.
+7. Expected: backend responds with submission confirmation, not the
+   "I can only help with MRR tasks" out-of-domain message.
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
