@@ -1,248 +1,410 @@
-═══════════════════════════════════════════════════════════════════
-TASK 4.12: Implement approval actions for MRR
-═══════════════════════════════════════════════════════════════════
-Add UPDATE logic to mrr_approver_agent_node and
-mrr_erp_approver_agent_node so users can actually approve/reject
-pending requisitions through chat.
+d:\dev\agentic_ai\dpah_backend_v1\main.py:18: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/material_workflow/nodes.py.
-- Do NOT modify RMS, HRMS, validator, controllers, routes, or other
-  workflow files.
-- Do NOT add new dependencies.
-- Do NOT remove existing list-display logic — add to it.
-- If anything requires touching out-of-scope code, STOP and report.
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
 
-Output INTENDED FOOTPRINT at start.
-Output `git diff --stat HEAD` at end.
+  @app.on_event("startup")
+INFO:     Started server process [14268]
+INFO:     Waiting for application startup.
+[Startup] RMS timesheet is now DB-backed - no pre-loading required
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
+User context built for: 1065 (Arun Kumar M)
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-Currently mrr_approver_agent_node and mrr_erp_approver_agent_node
-only list pending requisitions. They don't process approval
-commands from the user. If user types "approve 1" or
-"approve MRR/1/26-27", the node ignores it and re-shows the list.
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:57046 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 1065 (Arun Kumar M)
 
-This task adds command parsing + DB UPDATE logic so approval
-actions actually work.
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:57048 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 1065 (Arun Kumar M)
 
-Two personas to handle:
-- mrr_approver_agent_node (manager approval — COO/CTO)
-- mrr_erp_approver_agent_node (ERP approval — ERP HOD)
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:57049 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:57625 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=, collection=
+[DIAG-MRR] permission_blocked_node entered. denial_message='I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?'
+INFO:     10.5.1.58:58277 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=4
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg="i want to create 'dp-rm-fas-01440'", normalized="i want to create 'dp-rm-fas-01440'", has_pending=False
+[DIAG-MRR] creator_path_router -> form_flow
+C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py:2060: UserWarning: Received a Pydantic BaseModel 
+V1 schema. This is not supported by method="json_schema". Please use method="function_calling" or specify schema via JSON Schema or Pydantic V2 BaseModel. Overriding to method="function_calling".
+  warnings.warn(
+Extraction Error: 'NoneType' object has no attribute 'has_minimum_data'
+User context built for: 1065 (Arun Kumar M)
 
-Each must:
-1. Inspect the user's last message.
-2. If it's an approval command, parse it, run the UPDATE, confirm.
-3. If it's a list command, fall back to existing list-display.
-4. Optionally support reject command too.
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:59031 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 1065 (Arun Kumar M)
 
-───────────────────────────────────────────────────────────────────
-SCOPE — Manager Approver (mrr_approver_agent_node)
-───────────────────────────────────────────────────────────────────
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:59032 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}    
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
+2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition 
+Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent 
+test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+INFO:     10.5.1.58:59138 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-CONTROLLER] thread_id received: None
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg='process this mrr', normalized='process this mrr', has_pending=False
+[DIAG-MRR] creator_path_router -> excel_handler
+[DIAG-MRR] excel_handler_node entered. emp_no=1065
+[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test 
+order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 
+'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+[DIAG-MRR] excel_handler_node: excel_file found=True
+[DIAG-MRR] excel_handler_node: calling validator with 2 rows
+[DIAG-MRR] excel_handler_node: validator returned valid=True
+[DIAG-MRR] mrr_submission_node entered. has_pending_data=True
+[DIAG-MRR] auto_verifier_node entered. new_requisition_id=None
+User context built for: 531 (Prithivi Rajan M)
 
-At the top of the function (after the existing authorization check
-for is_manager_approver), inspect the user's last HumanMessage to
-determine intent.
+=== DEBUG: Resolved context for emp_no 531 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60042 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 531 (Prithivi Rajan M)
 
-Command parsing rules (case-insensitive, applied to last user
-message):
+=== DEBUG: Resolved context for emp_no 531 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60043 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 531 (Prithivi Rajan M)
 
-1. "approve all" or "approve all pending" → bulk approve ALL pending
-   MRRs.
-2. "approve <number>" or "approve MRR/<number>/<fy>" or
-   "approve requisition <number>" → approve that single MRR by ID.
-   Use a regex like r'\b(?:approve|approve\s+requisition)\s+(?:mrr/)?(\d+)(?:/[\d\-]+)?\b'
-   to extract the numeric ID.
-3. "reject <number>" or similar → reject that single MRR.
-4. Otherwise (or if no command parsed) → show list (existing
-   behavior).
+=== DEBUG: Resolved context for emp_no 531 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {5}
+  intersection_module_ids = {5}
+  modules in access_tree = 1
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60044 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:60913 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=531, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=erp_approver, collection=mrr_general       
+[DIAG-MRR] erp_approver_agent_node entered. emp_no=531
+User context built for: 1065 (Arun Kumar M)
+User context built for: 1065 (Arun Kumar M)
 
-For approve action:
-  UPDATE mrr_matrequisitionheader
-  SET APPROVAL_STATUS = 'APPROVED',
-      APPROVAL_DATE = NOW(),
-      ERP_APPROVAL_STATUS = 'PENDING'
-  WHERE MATREQUISITIONID = :id
-    AND APPROVAL_STATUS = 'PENDING'
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}     
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents    
+        - rms_projectplan: 1 agents  
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents  
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:61783 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
 
-After approval, the MRR cascades to the ERP approval queue (because
-ERP_APPROVAL_STATUS is set to PENDING). The auto-verifier rule said
-"under 2000 → auto-approved → goes to ERP" but for cases that go
-through manager approval (over 2000), the same ERP cascade should
-happen after manager says yes.
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:61784 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}    
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
+2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition 
+Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent 
+test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+INFO:     10.5.1.58:61868 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-CONTROLLER] thread_id received: None
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=, collection=mrr_general
+[DIAG-MRR] permission_blocked_node entered. denial_message="I wasn't able to understand your request. Could you rephrase it?"
+INFO:     10.5.1.58:62009 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=4
+[DIAG-MRR] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=, collection=
+[DIAG-MRR] permission_blocked_node entered. denial_message='I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?'
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}    
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
+2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition 
+Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent 
+test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+INFO:     10.5.1.58:62064 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-CONTROLLER] thread_id received: '9a337e34-fcb7-4d1a-926f-2bcdf2da4751'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=6
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=, collection=mrr_general
+[DIAG-MRR] permission_blocked_node entered. denial_message="I wasn't able to understand your request. Could you rephrase it?"
+User context built for: 1065 (Arun Kumar M)
+User context built for: 1065 (Arun Kumar M)
 
-For reject action:
-  UPDATE mrr_matrequisitionheader
-  SET APPROVAL_STATUS = 'REJECTED',
-      APPROVAL_DATE = NOW()
-  WHERE MATREQUISITIONID = :id
-    AND APPROVAL_STATUS = 'PENDING'
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
 
-  Do NOT set ERP_APPROVAL_STATUS — rejected MRRs don't go to ERP.
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:62083 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:62084 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}    
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
+2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition 
+Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent 
+test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+INFO:     10.5.1.58:62222 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-CONTROLLER] thread_id received: None
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=, collection=mrr_general
+[DIAG-MRR] permission_blocked_node entered. denial_message="I wasn't able to understand your request. Could you rephrase it?"
+User context built for: 1065 (Arun Kumar M)
 
-For approve all:
-  UPDATE mrr_matrequisitionheader
-  SET APPROVAL_STATUS = 'APPROVED',
-      APPROVAL_DATE = NOW(),
-      ERP_APPROVAL_STATUS = 'PENDING'
-  WHERE APPROVAL_STATUS = 'PENDING'
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:62326 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 1065 (Arun Kumar M)
 
-Use db.execute(text(...)) and db.commit(). Wrap in try/except so
-errors are gracefully reported. Use rowcount on the result to
-confirm how many rows were updated.
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:62327 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 1065 (Arun Kumar M)
 
-Response messages:
-- Successful single approve: "Approved MRR DPE/MRR/<id>/26-27.
-  It has been forwarded to ERP for final approval."
-- Approve all (multiple): "Approved N pending MRRs. They have been
-  forwarded to ERP for final approval."
-- Approve all (zero pending): "There are no pending MRRs to approve."
-- Successful reject: "Rejected MRR DPE/MRR/<id>/26-27."
-- ID not found / not pending: "MRR with ID <id> not found in
-  pending state. It may already be approved/rejected or doesn't exist."
-- Parse error: "I couldn't determine which MRR to approve. Please say
-  'approve MRR/<id>/26-27' or 'approve all'."
+=== DEBUG: Resolved context for emp_no 1065 ===
+  group_idx = 1
+  role_ids = [7]
+  visible_module_ids = {1, 3, 5}
+  intersection_module_ids = {1, 3, 5}
+  modules in access_tree = 3
+    - RMS: 2 collections
+        - rms_timesheet: 1 agents
+        - rms_projectplan: 1 agents
+    - HRMS: 2 collections
+        - hrms_leave_data: 2 agents
+        - hrms_salarydata: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:62332 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:62384 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=, collection=
+[DIAG-MRR] permission_blocked_node entered. denial_message='I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?'
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}    
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 
+2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition 
+Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent 
+test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+INFO:     10.5.1.58:62517 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-CONTROLLER] thread_id received: 'eef85834-43c2-4646-a713-0a08e4865380'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=4
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=, collection=mrr_general
+[DIAG-MRR] permission_blocked_node entered. denial_message="I wasn't able to understand your request. Could you rephrase it?"
+INFO:     10.5.1.58:62847 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=6
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg='create mrr', normalized='create mrr', has_pending=False
+[DIAG-MRR] creator_path_router -> form_flow
+C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py:2060: UserWarning: Received a Pydantic BaseModel 
+V1 schema. This is not supported by method="json_schema". Please use method="function_calling" or specify schema via JSON Schema or Pydantic V2 BaseModel. Overriding to method="function_calling".
+  warnings.warn(
+Extraction Error: 'NoneType' object has no attribute 'has_minimum_data'
+INFO:     10.5.1.58:62968 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=8
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg='project number\trequisition type\tneed by date\tdescription\tcomments\titem 
+name\trequested quantity\treturn date yeb2736\treturnable\t2026-06-15\tcabling for satcom prototype\turgent test order\tdp-rm-cab-03390\t5000\t2026-08-15 yeb2736\treturnable\t2026-06-15\tcabling for satcom prototype\turgent test order\tdp-rm-cab-03100\t2\t2026-08-15', normalized='project number requisition type need by date description comments item name requested quantity return date yeb2736 returnable 2026-06-15 cabling for satcom prototype urgent test order dp-rm-cab-03390 5000 2026-08-15 yeb2736 returnable 2026-06-15 cabling for satcom prototype urgent test order dp-rm-cab-03100 
+2 2026-08-15', has_pending=False
+[DIAG-MRR] creator_path_router -> form_flow
+Extraction Error: 'NoneType' object has no attribute 'has_minimum_data'
+INFO:     10.5.1.58:63157 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=10
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg='create mrr "project number\trequisition type\tneed by date\tdescription\tcomments\titem name\trequested quantity\treturn date yeb2736\treturnable\t2026-06-15\tcabling for satcom prototype\turgent test order\tdp-rm-cab-03390\t5000\t2026-08-15 yeb2736\treturnable\t2026-06-15\tcabling for satcom prototype\turgent 
+test order\tdp-rm-cab-03100\t2\t2026-08-15"', normalized='create mrr "project number requisition type need by date description comments item name requested quantity return date yeb2736 returnable 2026-06-15 cabling for satcom prototype 
+urgent test order dp-rm-cab-03390 5000 2026-08-15 yeb2736 returnable 2026-06-15 cabling for satcom prototype urgent test order dp-rm-cab-03100 2 2026-08-15"', has_pending=False
+[DIAG-MRR] creator_path_router -> form_flow
 
-After the UPDATE and confirmation message, the node should NOT
-re-show the pending list. The user can ask "show pending approvals"
-again if they want to see what's left.
+** initially i have truncated the headers and lines tables.then i have uploaded excel again, it has inserted into database. but what happened is the verification status has to be changed to approved but it wasnt changed. so 
+when i tried to login as cto or erp login it is saying no pending approvals. this has to be corrected
+Extraction Error: 'NoneType' object has no attribute 'has_minimum_data'
 
-───────────────────────────────────────────────────────────────────
-SCOPE — ERP Approver (mrr_erp_approver_agent_node)
-───────────────────────────────────────────────────────────────────
 
-Same pattern. The authorization check uses is_erp_approver instead
-of is_manager_approver.
 
-Command parsing rules:
+XHRPOST
+http://10.5.1.58:6100/api/v1/chat/stream
+[HTTP/1.1 200 OK 210ms]
 
-1. "approve all" / "approve all pending" → bulk approve.
-2. "approve <number>" / "approve MRR/<number>/<fy>" → single approve.
-3. "reject <number>" → single reject.
-4. Otherwise → show list (existing behavior).
+XHRPOST
+http://10.5.1.58:6100/api/v1/chat/stream-with-file
+[HTTP/1.1 200 OK 8860ms]
 
-For approve action (ERP final):
-  UPDATE mrr_matrequisitionheader
-  SET ERP_APPROVAL_STATUS = 'APPROVED',
-      ERP_APPROVAL_DATE = NOW(),
-      STATUS = 'RELEASED'
-  WHERE MATREQUISITIONID = :id
-    AND ERP_APPROVAL_STATUS = 'PENDING'
-    AND APPROVAL_STATUS = 'APPROVED'
 
-After ERP approval, STATUS goes to 'RELEASED' (ready for store
-issuance — which is a future task).
+data: {"type": "meta", "thread_id": "59e7ddba-9d62-4374-b9d7-8e4b61d0f27d"}
 
-For reject action:
-  UPDATE mrr_matrequisitionheader
-  SET ERP_APPROVAL_STATUS = 'REJECTED',
-      ERP_APPROVAL_DATE = NOW()
-  WHERE MATREQUISITIONID = :id
-    AND ERP_APPROVAL_STATUS = 'PENDING'
+data: {"type": "chunk", "text": "**Material Requisition \u2014 Review Before Submit**\n\nMRR Number: DPE/MRR/2/26-27\nRequestor: emp 1065\nDepartment: SDG\nProject: YEB2736 \u2014 4.5M Satcom Ground Data terminal (4.5m GDT-SAT)\nPhase: PROTO_DESIGN\nRequisition Type: RETURNABLE\nNeed by: 2026-06-15\nDescription: Cabling for satcom prototype\nComments: Urgent test order\n\n**Line Items:**\n  1. DP-RM-CAB-03390 \u2014 UOM: MTR\n     Qty: 5.0 | Available: 104.7\n     Unit Cost (LPP): 11.00 | Subtotal: 55.00\n     Return by: 2026-08-15T00:00:00\n\n  2. DP-RM-CAB-03100 \u2014 UOM: NOS\n     Qty: 2.0 | Available: 359.4\n     Unit Cost (LPP): 50.00 | Subtotal: 100.00\n     Return by: 2026-08-15T00:00:00\n\n**Total Cost: 155.00**\n\nPlease confirm or cancel below:\n\n\n\n"}
 
-For approve all:
-  UPDATE mrr_matrequisitionheader
-  SET ERP_APPROVAL_STATUS = 'APPROVED',
-      ERP_APPROVAL_DATE = NOW(),
-      STATUS = 'RELEASED'
-  WHERE ERP_APPROVAL_STATUS = 'PENDING'
-    AND APPROVAL_STATUS = 'APPROVED'
+data: {"type": "form", "form_spec": {"type": "confirmation", "title": "Confirm MRR Submission", "fields": [], "buttons": [{"label": "Confirm Submit", "value": "confirm_mrr"}, {"label": "Cancel", "value": "cancel_mrr"}]}}
 
-Response messages mirror the manager approver:
-- Single approve: "ERP-approved MRR DPE/MRR/<id>/26-27. Released to
-  store for issuance."
-- Approve all (n>0): "ERP-approved N MRRs. All released to store."
-- Approve all (n=0): "There are no MRRs pending ERP approval."
-- Reject: "ERP-rejected MRR DPE/MRR/<id>/26-27."
-- Not found: similar message.
+data: {"type": "chunk", "text": "Your MRR **DPE/MRR/2/26-27** has been submitted.\nTotal cost: \u20b9155.00\n\nRunning verification...\n\n"}
 
-───────────────────────────────────────────────────────────────────
-HELPER FUNCTION (suggested, optional)
-───────────────────────────────────────────────────────────────────
+data: {"type": "chunk", "text": "No requisition to verify.\n\n"}
 
-Both nodes have similar command parsing. You may extract a small
-helper at the top of nodes.py:
-
-def _parse_approval_command(message: str) -> dict:
-    """
-    Parses an approval command from the user's message.
-    Returns dict with:
-      'action': 'approve_one' | 'approve_all' | 'reject_one' | 'list'
-      'mrr_id': int | None
-    """
-    import re
-    msg = (message or "").lower().strip()
-
-    if re.search(r'\bapprove\s+all\b', msg):
-        return {"action": "approve_all", "mrr_id": None}
-
-    match = re.search(
-        r'\b(approve|reject)\s+(?:requisition\s+)?(?:mrr/)?(\d+)(?:/[\d\-]+)?\b',
-        msg
-    )
-    if match:
-        verb = match.group(1)
-        mrr_id = int(match.group(2))
-        action = "approve_one" if verb == "approve" else "reject_one"
-        return {"action": action, "mrr_id": mrr_id}
-
-    return {"action": "list", "mrr_id": None}
-
-Use this in both approver nodes.
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_4_12_REPORT.md with:
-- INTENDED / ACTUAL footprint.
-- Full code of updated mrr_approver_agent_node.
-- Full code of updated mrr_erp_approver_agent_node.
-- The helper _parse_approval_command (if used).
-- Confirmation that no other files were touched.
-
-───────────────────────────────────────────────────────────────────
-ACCEPTANCE TESTS (HUMAN VERIFIES)
-───────────────────────────────────────────────────────────────────
-
-Test 1: Server boots clean.
-
-Test 2: Login as Vijay (COO 16). MRR module.
-        Send "show pending approvals" → see MRRs 1 and 2.
-
-Test 3: Send "approve 1" → response: "Approved MRR DPE/MRR/1/26-27.
-        It has been forwarded to ERP for final approval."
-
-Test 4: Verify DB:
-        SELECT APPROVAL_STATUS, ERP_APPROVAL_STATUS
-        FROM mrr_matrequisitionheader WHERE MATREQUISITIONID = 1;
-        Expected: APPROVAL_STATUS='APPROVED', ERP_APPROVAL_STATUS='PENDING'.
-
-Test 5: Send "approve all" → response: "Approved 1 pending MRR..."
-        (only MRR 2 remains pending). MRR 2 now in same state as MRR 1.
-
-Test 6: Send "show pending approvals" → response: "You have no
-        pending manager approvals at this time."
-
-Test 7: Logout, login as ERP HOD (531). MRR module.
-        Send "show ERP approvals" → see MRRs 1, 2, and 3 (all three
-        now waiting for ERP).
-
-Test 8: Send "approve 3" → "ERP-approved MRR DPE/MRR/3/26-27.
-        Released to store for issuance."
-
-Test 9: Verify DB:
-        SELECT ERP_APPROVAL_STATUS, STATUS FROM mrr_matrequisitionheader
-        WHERE MATREQUISITIONID = 3;
-        Expected: ERP_APPROVAL_STATUS='APPROVED', STATUS='RELEASED'.
-
-Test 10: Send "approve all" → approves remaining 2.
-
-Test 11: Send "reject 4" (or some non-existent ID) → graceful "not
-         found" message.
-
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+data: [DONE]
