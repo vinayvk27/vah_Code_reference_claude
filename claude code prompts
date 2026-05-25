@@ -57,6 +57,8 @@ async def stream_chat_with_file_upload(
                 detail=f"Error processing file '{file.filename}': {str(e)}"
             )
 
+    request_data["uploaded_files"] = uploaded_files
+
     return StreamingResponse(
         sse_generator_with_file(db, current_user.model_dump(), raw_token, request_data, uploaded_files),
         media_type="text/event-stream",
