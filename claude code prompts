@@ -9,3 +9,5 @@ INFO:     127.0.0.1:65291 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
 [DIAG-MRR] excel_handler_node entered. emp_no=1065
 [DIAG-MRR] excel_handler_node: first file keys=none, file=None
 [DIAG-MRR] excel_handler_node: excel_file found=False
+
+why these many iterations i don't understand can you please verify 
