@@ -1,122 +1,26 @@
-def excel_handler_node(state: MaterialRequisitionState) -> dict:
-    """Handles MRR Excel upload."""
-    print(f"[DIAG-MRR] excel_handler_node entered. emp_no={state.get('emp_no')}", flush=True)
+INFO:     127.0.0.1:63552 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router -> excel_handler
+[DIAG-MRR] excel_handler_node entered. emp_no=1065
+[DIAG-MRR] excel_handler_node: uploaded_files count=1
+[DIAG-MRR] excel_handler_node: excel_file found=False
 
-    from app.services.mrr_validator import validate_and_resolve_mrr_excel
+(ml_env_311) C:\ml_env_311\Scripts>curl -X POST http://localhost:5970/api/v1/chat/stream-with-file -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTcyMzA0Mn0.OeZ8EbRuv7NVNYypDeFsjNkqORIj76pluTDQkIhDos8" -F "message=Please process this MRR upload" -F "collection_name=MRR" -F "files=@test_mrr.xlsx" -i
+HTTP/1.1 100 Continue
 
-    uploaded_files = state.get("uploaded_files") or []
-    print(f"[DIAG-MRR] excel_handler_node: uploaded_files count={len(uploaded_files)}", flush=True)
+HTTP/1.1 200 OK
+date: Mon, 25 May 2026 07:57:05 GMT
+server: uvicorn
+content-type: text/event-stream; charset=utf-8
+transfer-encoding: chunked
 
-    if not uploaded_files:
-        return {
-            "messages": [AIMessage(content=(
-                "I didn't see an Excel file in your upload. Please upload the MRR Excel file."
-            ))],
-            "execution_log": (state.get("execution_log") or []) + [
-                "Excel handler: no uploaded_files in state."
-            ]
-        }
+data: {"type": "meta", "thread_id": "326bb6d8-73af-48a2-a0ff-b1e6664b2ab7"}
 
-    excel_file = None
-    for f in uploaded_files:
-        if not f:
-            continue
-        if f.get("file_type") == "excel" and f.get("data"):
-            excel_file = f
-            break
+data: {"type": "chunk", "text": "The file you uploaded is not a valid Excel file. Please upload a .xlsx file with the MRR data.\n\n"}
 
-    print(f"[DIAG-MRR] excel_handler_node: excel_file found={excel_file is not None}", flush=True)
+data: [DONE]
 
-    if not excel_file:
-        return {
-            "messages": [AIMessage(content=(
-                "The file you uploaded is not a valid Excel file. Please upload a .xlsx file with the MRR data."
-            ))],
-            "execution_log": (state.get("execution_log") or []) + [
-                "Excel handler: no excel file_type found in uploaded_files."
-            ]
-        }
-
-    from app.models.dto_schemas import CurrentUser
-    try:
-        current_user = CurrentUser(
-            emp_no=state.get("emp_no") or "",
-            name=state.get("user_info", {}).get("name", "") if state.get("user_info") else "",
-            email=state.get("user_info", {}).get("email", "") if state.get("user_info") else "",
-            hierarchy=state.get("user_info", {}).get("hierarchy", {}) if state.get("user_info") else {},
-            group_idx=state.get("group_idx") or 0,
-            role_ids=state.get("role_ids") or [],
-            role_names=state.get("role_names") or [],
-            dept=state.get("user_dept") or ""
-        )
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "messages": [AIMessage(content=f"Could not build user context: {e}")],
-            "execution_log": (state.get("execution_log") or []) + [
-                f"Excel handler: CurrentUser construction failed: {e}"
-            ]
-        }
-
-    print(f"[DIAG-MRR] excel_handler_node: calling validator with {len(excel_file['data'])} rows", flush=True)
-
-    try:
-        result = validate_and_resolve_mrr_excel(excel_file["data"], current_user)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "messages": [AIMessage(content=f"Validator error: {e}")],
-            "execution_log": (state.get("execution_log") or []) + [
-                f"Excel handler: validator threw: {e}"
-            ]
-        }
-
-    print(f"[DIAG-MRR] excel_handler_node: validator returned valid={result.get('valid')}", flush=True)
-
-    if not result.get("valid"):
-        errors = result.get("errors", [])
-        error_text = "Your MRR upload has the following issues:\n\n"
-        for i, err in enumerate(errors, 1):
-            error_text += f"{i}. {err}\n"
-        error_text += "\nPlease fix and re-upload the Excel file."
-        return {
-            "messages": [AIMessage(content=error_text)],
-            "execution_log": (state.get("execution_log") or []) + [
-                f"Excel validation failed: {len(errors)} errors."
-            ]
-        }
-
-    summary = result.get("summary_for_user", "")
-    warnings = result.get("warnings", [])
-    warning_text = ""
-    if warnings:
-        warning_text = "\n\n**Warnings:**\n"
-        for w in warnings:
-            warning_text += f"- {w}\n"
-
-    form_payload = {
-        "type": "confirmation",
-        "title": "Confirm MRR Submission",
-        "fields": [],
-        "buttons": [
-            {"label": "Confirm Submit", "value": "confirm_mrr"},
-            {"label": "Cancel", "value": "cancel_mrr"}
-        ]
-    }
-    import json
-    form_str = json.dumps(form_payload)
-    full_message = (
-        summary + warning_text +
-        f"\n\nPlease confirm or cancel below:\n\n"
-        f"<<FORM>>{form_str}<<ENDFORM>>"
-    )
-
-    return {
-        "messages": [AIMessage(content=full_message)],
-        "pending_mrr_data": result,
-        "execution_log": (state.get("execution_log") or []) + [
-            "Excel validated; awaiting user confirmation."
-        ]
-    }
+** i have save dthe file as excel 2007 and in properties also it is showing .xlsx only
