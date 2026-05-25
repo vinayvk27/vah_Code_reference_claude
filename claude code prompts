@@ -1,37 +1,248 @@
-Hi! What can I help you with?
-SHOW ME PENDING APPROVALS
-V
-🤖
-### Pending Manager Approvals
+═══════════════════════════════════════════════════════════════════
+TASK 4.12: Implement approval actions for MRR
+═══════════════════════════════════════════════════════════════════
+Add UPDATE logic to mrr_approver_agent_node and
+mrr_erp_approver_agent_node so users can actually approve/reject
+pending requisitions through chat.
 
-| Req ID | MRR No | Requestor | Total Cost | Status | Date |
-|---|---|---|---|---|---|
-| 1 | DPE/MRR/1/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
-| 2 | DPE/MRR/2/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/material_workflow/nodes.py.
+- Do NOT modify RMS, HRMS, validator, controllers, routes, or other
+  workflow files.
+- Do NOT add new dependencies.
+- Do NOT remove existing list-display logic — add to it.
+- If anything requires touching out-of-scope code, STOP and report.
 
-*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
 
-APPROVE ALL THE PENDINGS
-V
-🤖
-### Pending Manager Approvals
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Currently mrr_approver_agent_node and mrr_erp_approver_agent_node
+only list pending requisitions. They don't process approval
+commands from the user. If user types "approve 1" or
+"approve MRR/1/26-27", the node ignores it and re-shows the list.
 
-| Req ID | MRR No | Requestor | Total Cost | Status | Date |
-|---|---|---|---|---|---|
-| 1 | DPE/MRR/1/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
-| 2 | DPE/MRR/2/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
+This task adds command parsing + DB UPDATE logic so approval
+actions actually work.
 
-*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
+Two personas to handle:
+- mrr_approver_agent_node (manager approval — COO/CTO)
+- mrr_erp_approver_agent_node (ERP approval — ERP HOD)
 
-APPROVE ALL
-V
-🤖
-### Pending Manager Approvals
+Each must:
+1. Inspect the user's last message.
+2. If it's an approval command, parse it, run the UPDATE, confirm.
+3. If it's a list command, fall back to existing list-display.
+4. Optionally support reject command too.
 
-| Req ID | MRR No | Requestor | Total Cost | Status | Date |
-|---|---|---|---|---|---|
-| 1 | DPE/MRR/1/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
-| 2 | DPE/MRR/2/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
+───────────────────────────────────────────────────────────────────
+SCOPE — Manager Approver (mrr_approver_agent_node)
+───────────────────────────────────────────────────────────────────
 
-*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
+At the top of the function (after the existing authorization check
+for is_manager_approver), inspect the user's last HumanMessage to
+determine intent.
 
+Command parsing rules (case-insensitive, applied to last user
+message):
+
+1. "approve all" or "approve all pending" → bulk approve ALL pending
+   MRRs.
+2. "approve <number>" or "approve MRR/<number>/<fy>" or
+   "approve requisition <number>" → approve that single MRR by ID.
+   Use a regex like r'\b(?:approve|approve\s+requisition)\s+(?:mrr/)?(\d+)(?:/[\d\-]+)?\b'
+   to extract the numeric ID.
+3. "reject <number>" or similar → reject that single MRR.
+4. Otherwise (or if no command parsed) → show list (existing
+   behavior).
+
+For approve action:
+  UPDATE mrr_matrequisitionheader
+  SET APPROVAL_STATUS = 'APPROVED',
+      APPROVAL_DATE = NOW(),
+      ERP_APPROVAL_STATUS = 'PENDING'
+  WHERE MATREQUISITIONID = :id
+    AND APPROVAL_STATUS = 'PENDING'
+
+After approval, the MRR cascades to the ERP approval queue (because
+ERP_APPROVAL_STATUS is set to PENDING). The auto-verifier rule said
+"under 2000 → auto-approved → goes to ERP" but for cases that go
+through manager approval (over 2000), the same ERP cascade should
+happen after manager says yes.
+
+For reject action:
+  UPDATE mrr_matrequisitionheader
+  SET APPROVAL_STATUS = 'REJECTED',
+      APPROVAL_DATE = NOW()
+  WHERE MATREQUISITIONID = :id
+    AND APPROVAL_STATUS = 'PENDING'
+
+  Do NOT set ERP_APPROVAL_STATUS — rejected MRRs don't go to ERP.
+
+For approve all:
+  UPDATE mrr_matrequisitionheader
+  SET APPROVAL_STATUS = 'APPROVED',
+      APPROVAL_DATE = NOW(),
+      ERP_APPROVAL_STATUS = 'PENDING'
+  WHERE APPROVAL_STATUS = 'PENDING'
+
+Use db.execute(text(...)) and db.commit(). Wrap in try/except so
+errors are gracefully reported. Use rowcount on the result to
+confirm how many rows were updated.
+
+Response messages:
+- Successful single approve: "Approved MRR DPE/MRR/<id>/26-27.
+  It has been forwarded to ERP for final approval."
+- Approve all (multiple): "Approved N pending MRRs. They have been
+  forwarded to ERP for final approval."
+- Approve all (zero pending): "There are no pending MRRs to approve."
+- Successful reject: "Rejected MRR DPE/MRR/<id>/26-27."
+- ID not found / not pending: "MRR with ID <id> not found in
+  pending state. It may already be approved/rejected or doesn't exist."
+- Parse error: "I couldn't determine which MRR to approve. Please say
+  'approve MRR/<id>/26-27' or 'approve all'."
+
+After the UPDATE and confirmation message, the node should NOT
+re-show the pending list. The user can ask "show pending approvals"
+again if they want to see what's left.
+
+───────────────────────────────────────────────────────────────────
+SCOPE — ERP Approver (mrr_erp_approver_agent_node)
+───────────────────────────────────────────────────────────────────
+
+Same pattern. The authorization check uses is_erp_approver instead
+of is_manager_approver.
+
+Command parsing rules:
+
+1. "approve all" / "approve all pending" → bulk approve.
+2. "approve <number>" / "approve MRR/<number>/<fy>" → single approve.
+3. "reject <number>" → single reject.
+4. Otherwise → show list (existing behavior).
+
+For approve action (ERP final):
+  UPDATE mrr_matrequisitionheader
+  SET ERP_APPROVAL_STATUS = 'APPROVED',
+      ERP_APPROVAL_DATE = NOW(),
+      STATUS = 'RELEASED'
+  WHERE MATREQUISITIONID = :id
+    AND ERP_APPROVAL_STATUS = 'PENDING'
+    AND APPROVAL_STATUS = 'APPROVED'
+
+After ERP approval, STATUS goes to 'RELEASED' (ready for store
+issuance — which is a future task).
+
+For reject action:
+  UPDATE mrr_matrequisitionheader
+  SET ERP_APPROVAL_STATUS = 'REJECTED',
+      ERP_APPROVAL_DATE = NOW()
+  WHERE MATREQUISITIONID = :id
+    AND ERP_APPROVAL_STATUS = 'PENDING'
+
+For approve all:
+  UPDATE mrr_matrequisitionheader
+  SET ERP_APPROVAL_STATUS = 'APPROVED',
+      ERP_APPROVAL_DATE = NOW(),
+      STATUS = 'RELEASED'
+  WHERE ERP_APPROVAL_STATUS = 'PENDING'
+    AND APPROVAL_STATUS = 'APPROVED'
+
+Response messages mirror the manager approver:
+- Single approve: "ERP-approved MRR DPE/MRR/<id>/26-27. Released to
+  store for issuance."
+- Approve all (n>0): "ERP-approved N MRRs. All released to store."
+- Approve all (n=0): "There are no MRRs pending ERP approval."
+- Reject: "ERP-rejected MRR DPE/MRR/<id>/26-27."
+- Not found: similar message.
+
+───────────────────────────────────────────────────────────────────
+HELPER FUNCTION (suggested, optional)
+───────────────────────────────────────────────────────────────────
+
+Both nodes have similar command parsing. You may extract a small
+helper at the top of nodes.py:
+
+def _parse_approval_command(message: str) -> dict:
+    """
+    Parses an approval command from the user's message.
+    Returns dict with:
+      'action': 'approve_one' | 'approve_all' | 'reject_one' | 'list'
+      'mrr_id': int | None
+    """
+    import re
+    msg = (message or "").lower().strip()
+
+    if re.search(r'\bapprove\s+all\b', msg):
+        return {"action": "approve_all", "mrr_id": None}
+
+    match = re.search(
+        r'\b(approve|reject)\s+(?:requisition\s+)?(?:mrr/)?(\d+)(?:/[\d\-]+)?\b',
+        msg
+    )
+    if match:
+        verb = match.group(1)
+        mrr_id = int(match.group(2))
+        action = "approve_one" if verb == "approve" else "reject_one"
+        return {"action": action, "mrr_id": mrr_id}
+
+    return {"action": "list", "mrr_id": None}
+
+Use this in both approver nodes.
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_4_12_REPORT.md with:
+- INTENDED / ACTUAL footprint.
+- Full code of updated mrr_approver_agent_node.
+- Full code of updated mrr_erp_approver_agent_node.
+- The helper _parse_approval_command (if used).
+- Confirmation that no other files were touched.
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Test 1: Server boots clean.
+
+Test 2: Login as Vijay (COO 16). MRR module.
+        Send "show pending approvals" → see MRRs 1 and 2.
+
+Test 3: Send "approve 1" → response: "Approved MRR DPE/MRR/1/26-27.
+        It has been forwarded to ERP for final approval."
+
+Test 4: Verify DB:
+        SELECT APPROVAL_STATUS, ERP_APPROVAL_STATUS
+        FROM mrr_matrequisitionheader WHERE MATREQUISITIONID = 1;
+        Expected: APPROVAL_STATUS='APPROVED', ERP_APPROVAL_STATUS='PENDING'.
+
+Test 5: Send "approve all" → response: "Approved 1 pending MRR..."
+        (only MRR 2 remains pending). MRR 2 now in same state as MRR 1.
+
+Test 6: Send "show pending approvals" → response: "You have no
+        pending manager approvals at this time."
+
+Test 7: Logout, login as ERP HOD (531). MRR module.
+        Send "show ERP approvals" → see MRRs 1, 2, and 3 (all three
+        now waiting for ERP).
+
+Test 8: Send "approve 3" → "ERP-approved MRR DPE/MRR/3/26-27.
+        Released to store for issuance."
+
+Test 9: Verify DB:
+        SELECT ERP_APPROVAL_STATUS, STATUS FROM mrr_matrequisitionheader
+        WHERE MATREQUISITIONID = 3;
+        Expected: ERP_APPROVAL_STATUS='APPROVED', STATUS='RELEASED'.
+
+Test 10: Send "approve all" → approves remaining 2.
+
+Test 11: Send "reject 4" (or some non-existent ID) → graceful "not
+         found" message.
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
