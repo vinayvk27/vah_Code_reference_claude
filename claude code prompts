@@ -1,19 +1,3 @@
-INFO:     10.5.1.58:54348 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}
-[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-INFO:     10.5.1.58:54451 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-MRR] parse_intent_node entered. emp_no=1065
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router: last_msg='process this mrr', normalized='process this mrr', has_pending=False
-[DIAG-MRR] creator_path_router -> excel_handler
-[DIAG-MRR] excel_handler_node entered. emp_no=1065
-[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-[DIAG-MRR] excel_handler_node: excel_file found=True
-[DIAG-MRR] excel_handler_node: calling validator with 2 rows
-[DIAG-MRR] excel_handler_node: validator returned valid=True
-INFO:     10.5.1.58:54487 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-MRR] parse_intent_node entered. emp_no=1065
-[DIAG-MRR] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=, collection=
-[DIAG-MRR] permission_blocked_node entered. denial_message='I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?'
+print(f"[DIAG-CONTROLLER] thread_id received: {thread_id!r}", flush=True)
+
+print(f"[DIAG-MRR] parse_intent_node entered. emp_no={state.get('emp_no')}, pending_mrr_data_present={state.get('pending_mrr_data') is not None}, message_count={len(state.get('messages', []))}", flush=True)
