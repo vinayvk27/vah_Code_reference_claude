@@ -1,1 +1,9 @@
-curl -X POST http://localhost:5970/api/v1/chat/stream -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"module_name\":\"MRR\",\"message\":\"confirm mrr\",\"chat_history\":[],\"thread_id\":\"PASTE_THREAD_ID_HERE\"}" -i
+data: {"type": "chunk", "text": "Please fill out the project details or just type them to me:\n\n"}
+
+data: {"type": "form", "form_spec": {"version": 1, "form_id": "mrr_header_form", "title": "Material Requisition Details", "description": "Please specify the project and phase for this requisition.", "submit_label": "Save & Continue", "cancel_label": "Cancel", "fields": [{"name": "project_id", "label": "Project", "type": "typeahead", "tool": "search_projects", "required": true, "placeholder": "Type to search projects..."}, {"name": "phase_id", "label": "Phase", "type": "dropdown", "depends_on": "project_id", "tool": "get_project_phases", "required": true, "placeholder": "Select a phase..."}, {"name": "remarks", "label": "Remarks (Optional)", "type": "textarea", "required": false}]}}
+
+data: {"type": "chunk", "text": "\"items\": []}"}
+
+data: [DONE]
+
+** why it is asking details again even though after filling everything
