@@ -1,1 +1,22 @@
-module_name = (request_data.get("module_name") or request_data.get("collection_name") or "RMS").upper()
+(ml_env_311) C:\ml_env_311\Scripts>curl -X POST http://localhost:5970/api/v1/chat/stream-with-file -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTcyMzA0Mn0.OeZ8EbRuv7NVNYypDeFsjNkqORIj76pluTDQkIhDos8" -F "message=Please process this MRR upload" -F "collection_name=MRR" -F "files=@test_mrr.xlsx" -i
+HTTP/1.1 100 Continue
+
+HTTP/1.1 200 OK
+date: Mon, 25 May 2026 07:48:20 GMT
+server: uvicorn
+content-type: text/event-stream; charset=utf-8
+transfer-encoding: chunked
+
+data: {"type": "meta", "thread_id": "e096f3e3-3ddd-48f4-9e15-5afa5f85fb58"}
+
+data: {"error": "Server error: 'NoneType' object has no attribute 'get'"}
+
+data: [DONE]
+
+INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}
+INFO:     127.0.0.1:63075 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
