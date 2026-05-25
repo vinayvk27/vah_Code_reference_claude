@@ -1,10 +1,122 @@
-INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
-[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}
-INFO:     127.0.0.1:63272 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-MRR] parse_intent_node entered. emp_no=1065
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router -> excel_handler
+def excel_handler_node(state: MaterialRequisitionState) -> dict:
+    """Handles MRR Excel upload."""
+    print(f"[DIAG-MRR] excel_handler_node entered. emp_no={state.get('emp_no')}", flush=True)
 
-*** curl output is same like earlier
+    from app.services.mrr_validator import validate_and_resolve_mrr_excel
+
+    uploaded_files = state.get("uploaded_files") or []
+    print(f"[DIAG-MRR] excel_handler_node: uploaded_files count={len(uploaded_files)}", flush=True)
+
+    if not uploaded_files:
+        return {
+            "messages": [AIMessage(content=(
+                "I didn't see an Excel file in your upload. Please upload the MRR Excel file."
+            ))],
+            "execution_log": (state.get("execution_log") or []) + [
+                "Excel handler: no uploaded_files in state."
+            ]
+        }
+
+    excel_file = None
+    for f in uploaded_files:
+        if not f:
+            continue
+        if f.get("file_type") == "excel" and f.get("data"):
+            excel_file = f
+            break
+
+    print(f"[DIAG-MRR] excel_handler_node: excel_file found={excel_file is not None}", flush=True)
+
+    if not excel_file:
+        return {
+            "messages": [AIMessage(content=(
+                "The file you uploaded is not a valid Excel file. Please upload a .xlsx file with the MRR data."
+            ))],
+            "execution_log": (state.get("execution_log") or []) + [
+                "Excel handler: no excel file_type found in uploaded_files."
+            ]
+        }
+
+    from app.models.dto_schemas import CurrentUser
+    try:
+        current_user = CurrentUser(
+            emp_no=state.get("emp_no") or "",
+            name=state.get("user_info", {}).get("name", "") if state.get("user_info") else "",
+            email=state.get("user_info", {}).get("email", "") if state.get("user_info") else "",
+            hierarchy=state.get("user_info", {}).get("hierarchy", {}) if state.get("user_info") else {},
+            group_idx=state.get("group_idx") or 0,
+            role_ids=state.get("role_ids") or [],
+            role_names=state.get("role_names") or [],
+            dept=state.get("user_dept") or ""
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "messages": [AIMessage(content=f"Could not build user context: {e}")],
+            "execution_log": (state.get("execution_log") or []) + [
+                f"Excel handler: CurrentUser construction failed: {e}"
+            ]
+        }
+
+    print(f"[DIAG-MRR] excel_handler_node: calling validator with {len(excel_file['data'])} rows", flush=True)
+
+    try:
+        result = validate_and_resolve_mrr_excel(excel_file["data"], current_user)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "messages": [AIMessage(content=f"Validator error: {e}")],
+            "execution_log": (state.get("execution_log") or []) + [
+                f"Excel handler: validator threw: {e}"
+            ]
+        }
+
+    print(f"[DIAG-MRR] excel_handler_node: validator returned valid={result.get('valid')}", flush=True)
+
+    if not result.get("valid"):
+        errors = result.get("errors", [])
+        error_text = "Your MRR upload has the following issues:\n\n"
+        for i, err in enumerate(errors, 1):
+            error_text += f"{i}. {err}\n"
+        error_text += "\nPlease fix and re-upload the Excel file."
+        return {
+            "messages": [AIMessage(content=error_text)],
+            "execution_log": (state.get("execution_log") or []) + [
+                f"Excel validation failed: {len(errors)} errors."
+            ]
+        }
+
+    summary = result.get("summary_for_user", "")
+    warnings = result.get("warnings", [])
+    warning_text = ""
+    if warnings:
+        warning_text = "\n\n**Warnings:**\n"
+        for w in warnings:
+            warning_text += f"- {w}\n"
+
+    form_payload = {
+        "type": "confirmation",
+        "title": "Confirm MRR Submission",
+        "fields": [],
+        "buttons": [
+            {"label": "Confirm Submit", "value": "confirm_mrr"},
+            {"label": "Cancel", "value": "cancel_mrr"}
+        ]
+    }
+    import json
+    form_str = json.dumps(form_payload)
+    full_message = (
+        summary + warning_text +
+        f"\n\nPlease confirm or cancel below:\n\n"
+        f"<<FORM>>{form_str}<<ENDFORM>>"
+    )
+
+    return {
+        "messages": [AIMessage(content=full_message)],
+        "pending_mrr_data": result,
+        "execution_log": (state.get("execution_log") or []) + [
+            "Excel validated; awaiting user confirmation."
+        ]
+    }
