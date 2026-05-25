@@ -1,5 +1,1 @@
-INFO:     127.0.0.1:62812 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'RMS'
-[DIAG-RMS] parse_intent_node entered. emp_no=1065
-[DIAG-RMS] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=
-[DIAG-RMS] permission_blocked_node entered. denial_message='I can only help with RMS tasks like logging hours, viewing your tasks, or approving worklogs. Could you rephrase your request?'
+module_name = (request_data.get("module_name") or request_data.get("collection_name") or "RMS").upper()
