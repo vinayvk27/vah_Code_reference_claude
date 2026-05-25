@@ -4,8 +4,7 @@
             import pandas as pd
             df = pd.read_excel(BytesIO(content))
             data = df.to_dict('records')
-            
-            # Create the result dictionary first
+
             result = {
                 "filename": filename,
                 "file_type": "excel",
@@ -14,12 +13,13 @@
                 "preview": data[:5]
             }
 
-            # Print using 'result', NOT 'parsed'
             print(f"[DIAG-UPLOAD] Parsed file: filename={result.get('filename')}, "
                 f"file_type={result.get('file_type')}, "
                 f"row_count={result.get('row_count')}, "
                 f"first_row={result.get('data', [{}])[0] if result.get('data') else None}")
-              
+
+            return result
+
         except ImportError:
             try:
                 text = content.decode('utf-8')
