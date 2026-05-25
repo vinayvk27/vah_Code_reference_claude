@@ -1,28 +1,153 @@
-S.No	User ID and Role	Test Case	Expected Result	Actual Result	Status
-1	Junior 1065 – RMS	log hours.	I have logged 8 hours on Task #5 for 2026-05-12 with the note "backend API development". 	I have logged 8 hours on Task #5 for 2026-05-12 with the note "backend API development". 	pass
-2	Junior 1065 – RMS	view tasks	You don't have reviewer access to rms timesheet. Please contact your administrator if you need this permission. 	You don't have reviewer access to rms timesheet. Please contact your administrator if you need this permission. 	pass
-3	Junior 1065 – RMS	create tasks	I''d be happy to help you create tasks! However, I need some details for each task you want to create. Please provide the following information for each task: - **Resource ID**: The employee ID who will be assigned the task - **Project ID**: The project the task belongs to - **Product ID**: The product associated with the task - **Task Index**: The task number/index - **Activity Index**: The activity number/index - **Start Date**: When the task should start (YYYY-MM-DD format) - **End Date**: When the task should end (YYYY-MM-DD format) - **Planned Hours**: The number of hours planned for the task You can provide these details one task at a time or multiple tasks at once. For example: 	I''d be happy to help you create tasks! However, I need some details for each task you want to create. Please provide the following information for each task: - **Resource ID**: The employee ID who will be assigned the task - **Project ID**: The project the task belongs to - **Product ID**: The product associated with the task - **Task Index**: The task number/index - **Activity Index**: The activity number/index - **Start Date**: When the task should start (YYYY-MM-DD format) - **End Date**: When the task should end (YYYY-MM-DD format) - **Planned Hours**: The number of hours planned for the task You can provide these details one task at a time or multiple tasks at once. For example: 	PASS
-4	Junior 1065 – RMS	create tasks after view tasks	Create tasks Response	Create task and Review tasks Were shown	pass
-5	Junior 1065 – HRMS	Apply for leave	To apply for leave, could you please specify the type of leave (Casual, Sick, or Earned), the start and end dates, and the reason for your absence? 	To apply for leave, could you please specify the type of leave (Casual, Sick, or Earned), the start and end dates, and the reason for your absence? 	pass
-6	Junior 1065 – HRMS	CREATE leave type 	Not allowed. 	I only define leave types and generate payslips. To approve leaves, use the Approver. To submit a leave request, use the Filler. 	fail
-7	Junior 1065 – HRMS	show all leave requests 	Not allowed. 	You don't have approver access to hrms leave data. Please contact your administrator if you need this permission. 	pass
-8	Junior 1065 – HRMS	approve leave request 3 	Not allowed. 	You don't have approver access to hrms leave data. Please contact your administrator if you need this permission. 	pass
-9	Junior 1065 – HRMS	show payslip 	Here is your payslip for January 2024. 	Here is your payslip for January 2024. 	pass
-10	Junior 1065 – HRMS	view leave balance 	Here is your current leave balance: - Casual Leave (id=1): 12 of 12 remaining - Sick Leave (id=2): 8 of 8 remaining - Earned Leave (id=3): 15 of 15 remaining 	Here is your current leave balance: - Casual Leave (id=1): 12 of 12 remaining - Sick Leave (id=2): 8 of 8 remaining - Earned Leave (id=3): 15 of 15 remaining 	pass
-11	Junior 1065 – MRM	create a requisition. 	Fill the required fields response	{"project_id": "YEA2612-P3", "phase_id": "PROTO_DESIGN", "warehouse": "DPE", "requisition_type": "Returnable", "need_by_date": "13-MAY-2026", "remarks": "", "has_minimum_data": true, Please fill out the project details or just type them to me: "items": []} 	pass
-12	Junior 1065 – MRM	APPROVE requisition 	Manager approval is restricted to the COO and CTO. If you believe this is an error, contact your administrator. 	Manager approval is restricted to the COO and CTO. If you believe this is an error, contact your administrator. 	pass
-13	Senior 1731 in RMS	approve worklogs	Any response	No Respone from Backend. Blank Respone.	fail
-14	Senior 1731 in RMS	approve worklog 3 	Approved worklog 3 — hours match planned values and all required fields are present. 	Approved worklog 3 — hours match planned values and all required fields are present. 	pass
-15	Senior 1731 in RMS	show worklogs 	Access not given.	No worklogs were found for today. Done — here are your current tasks and worklogs. 	fail
-16	Senior 1731 in RMS	log hours 	Please provide details	I've logged 8 hours to Task #1 in Project 1, Product 1. 	fail
-17	Senior 1731 in RMS	log 9 hours to task 4 in project 3 	I've logged 9 hours to Task #4 in Project 3, Product 3.I've logged 9 hours to Task #4 in Project 3. 	I've logged 9 hours to Task #4 in Project 3, Product 3.I've logged 9 hours to Task #4 in Project 3. 	pass
-18	Senior 1731 in RMS	create task 	Please provide details	I've created a new task (Task #1) in Project 1, Product 1 for you, scheduled from May 20 to May 21, 2026, with 8 planned hours. 	fail
-19	Senior 1731 in HRMS	show all leave requests 	Access not given.	No Respone from Backend. Blank Respone.	fail
-20	Senior 1731 in HRMS	approve leave request 1 	Approved. 	Here are the current pending leave requests: * **#4** (Resource: 2291): **Casual Leave** from 2026-05-15 to 2026-05-16 (2 days) * Reason: Friend wedding * **#5** (Resource: 2633): **Sick Leave** on 2026-05-18 (1 day) * Reason: Migraine * **#6** (Resource: 2830): **Earned Leave** from 2026-06-01 to 2026-06-05 (5 days) * Reason: Annual trip Regarding your request to "approve leave request 1": There is no pending leave request with ID #1. The pending requests are #4, #5, and #6. Please confirm the correct request ID you wish to approve. 	pass
-21	Senior 1731 in HRMS	create leave type 	Not allowed. 	No Respone from Backend. Blank Respone.	fail
-22	Senior 1731 in HRMS	show payslip 	Here is your payslip for January 2024. 	I can only handle your own leave requests and data. To approve leaves or create leave types, you need approver access. 	fail
-23	Senior 1731 in HRMS	view leave balance 	Here is your current leave balance: - Casual Leave (id=1): 12 of 12 remaining - Sick Leave (id=2): 8 of 8 remaining - Earned Leave (id=3): 15 of 15 remaining 	Here is your current leave balance: - Casual Leave (id=1): 12 of 12 remaining - Sick Leave (id=2): 8 of 8 remaining - Earned Leave (id=3): 15 of 15 remaining 	pass
-24	16 in MRR	show pending approvals 	You have no pending manager approvals at this time. 	You have no pending manager approvals at this time. 	pass
-25	16 in MRR	show erp approvals 	ERP approval is restricted to the ERP HOD. If you believe this is an error, contact your administrator. 	ERP approval is restricted to the ERP HOD. If you believe this is an error, contact your administrator. 	pass
-26	531 in MRR	show pending approvals 	Manager approval is restricted to the COO and CTO. If you believe this is an error, contact your administrator. 	Manager approval is restricted to the COO and CTO. If you believe this is an error, contact your administrator. 	pass
-27	531 in MRR	show erp approvals 	You have no pending ERP approvals at this time. 	You have no pending ERP approvals at this time. 	pass
+═══════════════════════════════════════════════════════════════════
+TASK 4.9-DIAG: Re-enable diagnostic prints across all 3 workflows
+═══════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch the three nodes.py files listed below.
+- Do NOT modify any other file (controllers, routes, models,
+  services, graphs, intents, states, prompts).
+- Do NOT modify any logic. Only ADD print statements at function
+  entry points.
+- If a print with the same DIAG label already exists at the top
+  of the function, leave it as-is. Do NOT add duplicates.
+- If anything requires touching out-of-scope code, STOP and report.
+
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Tester feedback surfaced three failures where the backend returns
+blank responses (no chunks, no error). We need diagnostic prints
+to determine which node in each workflow received the request and
+what state it was in.
+
+This task is purely instrumentation. No business logic changes.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+1. UPDATE app/workflows/rms_workflow/nodes.py
+
+   Add the following print at the VERY FIRST LINE inside each of
+   these functions (immediately after the docstring, before any
+   other code):
+
+   a. parse_intent_node:
+      print(f"[DIAG-RMS] parse_intent_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+   b. permission_check_node:
+      print(f"[DIAG-RMS] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}, collection={state.get('selected_collection')}", flush=True)
+
+   c. permission_blocked_node:
+      print(f"[DIAG-RMS] permission_blocked_node entered. denial_message={state.get('denial_message')!r}", flush=True)
+
+   d. creator_agent_node:
+      print(f"[DIAG-RMS] creator_agent_node entered. emp_no={state.get('emp_no')}, collection={state.get('selected_collection')!r}", flush=True)
+
+   e. reviewer_agent_node:
+      print(f"[DIAG-RMS] reviewer_agent_node entered. emp_no={state.get('emp_no')}, collection={state.get('selected_collection')!r}", flush=True)
+
+   f. approver_agent_node:
+      print(f"[DIAG-RMS] approver_agent_node entered. emp_no={state.get('emp_no')}, collection={state.get('selected_collection')!r}", flush=True)
+
+   If creator/reviewer/approver agents have an existing
+   [DIAG-RMS] print at their top from earlier work (Task 4.7.2),
+   leave them alone — do not add a duplicate.
+
+2. UPDATE app/workflows/hrms_workflow/nodes.py
+
+   Add similar prints at the top of each of these functions:
+
+   a. parse_intent_node:
+      print(f"[DIAG-HRMS] parse_intent_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+   b. permission_check_node:
+      print(f"[DIAG-HRMS] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}, collection={state.get('selected_collection')}", flush=True)
+
+   c. permission_blocked_node:
+      print(f"[DIAG-HRMS] permission_blocked_node entered. denial_message={state.get('denial_message')!r}", flush=True)
+
+   d. creator_agent_node:
+      print(f"[DIAG-HRMS] creator_agent_node entered. emp_no={state.get('emp_no')}, collection={state.get('selected_collection')!r}", flush=True)
+
+   e. reviewer_agent_node:
+      print(f"[DIAG-HRMS] reviewer_agent_node entered. emp_no={state.get('emp_no')}, collection={state.get('selected_collection')!r}", flush=True)
+
+   f. approver_agent_node:
+      print(f"[DIAG-HRMS] approver_agent_node entered. emp_no={state.get('emp_no')}, collection={state.get('selected_collection')!r}", flush=True)
+
+   If any [DIAG-HRMS] print already exists at the top of a function,
+   leave it alone — do not duplicate.
+
+3. UPDATE app/workflows/material_workflow/nodes.py
+
+   Add similar prints at the top of each of these functions:
+
+   a. parse_intent_node:
+      print(f"[DIAG-MRR] parse_intent_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+   b. permission_check_node:
+      print(f"[DIAG-MRR] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}, collection={state.get('selected_collection')}", flush=True)
+
+   c. permission_blocked_node:
+      print(f"[DIAG-MRR] permission_blocked_node entered. denial_message={state.get('denial_message')!r}", flush=True)
+
+   d. creator_router_entry (if it exists as a node function in
+      nodes.py; if it's a passthrough lambda in graph.py, skip):
+      print(f"[DIAG-MRR] creator_router_entry entered. uploaded_files_count={len(state.get('uploaded_files', []))}, has_pending={state.get('pending_mrr_data') is not None}", flush=True)
+
+   e. excel_handler_node:
+      If it has an existing print, leave it. Otherwise add:
+      print(f"[DIAG-MRR] excel_handler_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+   f. mrr_submission_node:
+      print(f"[DIAG-MRR] mrr_submission_node entered. has_pending_data={state.get('pending_mrr_data') is not None}", flush=True)
+
+   g. mrr_cancel_node:
+      print(f"[DIAG-MRR] mrr_cancel_node entered.", flush=True)
+
+   h. approver_agent_node (MRR version):
+      Already has a DIAG print from Task 4.7.1. Leave as-is.
+
+   i. erp_approver_agent_node (MRR version):
+      Add print if missing:
+      print(f"[DIAG-MRR] erp_approver_agent_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+   j. auto_verifier_node:
+      print(f"[DIAG-MRR] auto_verifier_node entered. new_requisition_id={state.get('new_requisition_id')}", flush=True)
+
+4. CREATE TASK_4_9_DIAG_REPORT.md with:
+   - INTENDED / ACTUAL footprint.
+   - For each workflow file: list of functions where prints were
+     added (newly) vs left alone (pre-existing).
+   - Confirmation that no logic changes were made.
+   - Confirmation of no out-of-scope file changes.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- All controller files
+- All route files
+- All model files
+- All service files
+- All graph.py / state.py / intent.py / prompts.py / tools.py
+  files in any workflow folder
+- scripts/seed_dpah_tables.py
+- Anything in app/dao/, app/core/, app/models/
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TEST
+───────────────────────────────────────────────────────────────────
+
+Test: Server boots clean. No import errors. Send any chat message
+to any module; verify at least one [DIAG-*] line appears in the
+server terminal output.
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
