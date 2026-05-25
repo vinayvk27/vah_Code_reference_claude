@@ -1,14 +1,40 @@
 @staticmethod
-    async def parse_uploaded_file(filename: str, content: bytes) -> dict:
-        filename_lower = filename.lower()
-        if filename_lower.endswith('.csv'):
-            file_type = 'csv'
-        elif filename_lower.endswith(('.xlsx', '.xls')):
-            file_type = 'excel'
-        else:
-            raise ValueError(f"Unsupported file type: {filename}. Only CSV and Excel files are supported.")
+    async def _parse_excel(filename: str, content: bytes) -> dict:
+        try:
+            import pandas as pd
+            df = pd.read_excel(BytesIO(content))
+            data = df.to_dict('records')
+            
+            # Create the result dictionary first
+            result = {
+                "filename": filename,
+                "file_type": "excel",
+                "row_count": len(data),
+                "data": data,
+                "preview": data[:5]
+            }
 
-        if file_type == 'csv':
-            return ChatController._parse_csv(filename, content)
-        else:
-            return await ChatController._parse_excel(filename, content)
+            # Print using 'result', NOT 'parsed'
+            print(f"[DIAG-UPLOAD] Parsed file: filename={result.get('filename')}, "
+                f"file_type={result.get('file_type')}, "
+                f"row_count={result.get('row_count')}, "
+                f"first_row={result.get('data', [{}])[0] if result.get('data') else None}")
+              
+        except ImportError:
+            try:
+                text = content.decode('utf-8')
+                if '\t' in text:
+                    return ChatController._parse_tsv(filename, content)
+                else:
+                    return ChatController._parse_csv(filename, content)
+            except:
+                raise ValueError("Excel file parsing requires pandas and openpyxl.")
+        except Exception as e:
+            try:
+                text = content.decode('utf-8')
+                if '\t' in text:
+                    return ChatController._parse_tsv(filename, content)
+                else:
+                    return ChatController._parse_csv(filename, content)
+            except:
+                raise ValueError(f"Error parsing Excel file: {str(e)}")
