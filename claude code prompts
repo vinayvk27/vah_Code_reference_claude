@@ -1,42 +1,60 @@
-SELECT cs.DP_PART_NO, cs.ITEMID, cs.UOM, cs.QOH,
-       si.LPP_VALUE_UNITPRICE_INR, si.UNITOFMEASUREID
-FROM com_search cs
-JOIN SCMITEMS si ON si.ITEMID = cs.ITEMID AND si.WAREHOUSEID = 1
-WHERE cs.WAREHOUSE = '1'
-  AND si.LPP_VALUE_UNITPRICE_INR IS NOT NULL
-  AND si.LPP_VALUE_UNITPRICE_INR > 0
-LIMIT 10;
+import pandas as pd
 
-# DP_PART_NO, ITEMID, UOM, QOH, LPP_VALUE_UNITPRICE_INR, UNITOFMEASUREID
-'DP-RM-CAB-03390', '7609', 'MTR', '104.7', '11.0000', '4'
-'DP-RM-CAB-03350', '7613', 'MTR', '57.5', '80.3000', '4'
-'DP-RM-CAB-03290', '7619', 'MTR', '480.75', '7.0000', '4'
-'DP-RM-CAB-03110', '7635', 'MTR', '1096.8', '116.4000', '4'
-'DP-RM-CAB-03100', '7636', 'NOS', '359.4', '50.0000', '7'
-'DP-RM-CAB-02880', '7638', 'MTR', '19493.05', '10.6000', '4'
-'DP-RM-CAB-02680', '7647', 'MTR', '38', '83.2000', '4'
-'DP-RM-CAB-02620', '7653', 'MTR', '87.9', '10.6820', '4'
-'DP-RM-CAB-02580', '7657', 'MTR', '277.8', '24.5000', '4'
-'DP-RM-CAB-02340', '7679', 'MTR', '28', '27.6300', '4'
+data = [
+    {
+        "Project Number": "YEB2736",
+        "Requisition Type": "RETURNABLE",
+        "Need By Date": "2026-06-15",
+        "Description": "Cabling for satcom prototype",
+        "Comments": "Urgent test order",
+        "Item Name": "DP-RM-CAB-03390",
+        "Requested Quantity": 5,
+        "Return Date": "2026-08-15"
+    },
+    {
+        "Project Number": "YEB2736",
+        "Requisition Type": "RETURNABLE",
+        "Need By Date": "2026-06-15",
+        "Description": "Cabling for satcom prototype",
+        "Comments": "Urgent test order",
+        "Item Name": "DP-RM-CAB-03100",
+        "Requested Quantity": 2,
+        "Return Date": "2026-08-15"
+    }
+]
 
-
-SELECT projectid, projectnumber,description
-FROM posproject
-LIMIT 5;
-
-# projectid, projectnumber, description
-'13988', 'YIA2740', 'Integrated ADSB Receiver System with AIS and GPS'
-'13987', 'YEB2736', '4.5M Satcom Ground Data terminal (4.5m GDT-SAT)'
-'13986', 'YIC2738', 'ATE development for IRST Processor unit'
-'13985', 'R7-YEA1566', 'Repair support for Checkout Equipment (COE)'
-'13984', 'BIC2713', 'cPCI Serial Bus IO Modules'
+df = pd.DataFrame(data)
+df.to_excel("test_mrr.xlsx", index=False)
+print("Created test_mrr.xlsx with 2 line items")
+print(df)
 
 
-SELECT pp.projectphaseid, pp.phasename
-FROM posprojectphases pp
-JOIN posproject p ON p.projectid = pp.projectid
-WHERE p.projectnumber = 'YEB2736'
-LIMIT 5;
+import pandas as pd
+from app.services.mrr_validator import validate_and_resolve_mrr_excel
+from app.models.dto_schemas import CurrentUser
 
-# projectphaseid, phasename
-'14045', 'PROTO_DESIGN'
+# Read the Excel back as the controller would
+df = pd.read_excel("test_mrr.xlsx")
+data = df.to_dict(orient="records")
+
+# Build a mock CurrentUser for Junior 1065
+user = CurrentUser(
+    emp_no="1065",
+    group_idx=1,
+    role_ids=[7],
+    role_names=["Junior"],
+    dept="SDG"
+)
+
+result = validate_and_resolve_mrr_excel(data, user)
+print("VALID:", result["valid"])
+print("ERRORS:", result.get("errors"))
+print("WARNINGS:", result.get("warnings"))
+if result["valid"]:
+    print("HEADER:")
+    for k, v in result["header"].items():
+        print(f"  {k}: {v}")
+    print(f"\nLINES ({len(result['lines'])}):")
+    for line in result["lines"]:
+        print(f"  {line}")
+    print(f"\nSUMMARY:\n{result['summary_for_user']}")
