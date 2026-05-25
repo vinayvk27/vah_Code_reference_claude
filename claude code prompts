@@ -1,17 +1,20 @@
-Understood. Here's what I changed in graph.py:
+(ml_env_311) C:\ml_env_311\Scripts>curl -X POST http://localhost:5970/api/v1/chat/stream-with-file -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTcyMzA0Mn0.OeZ8EbRuv7NVNYypDeFsjNkqORIj76pluTDQkIhDos8" -F "message=Please process this MRR upload" -F "collection_name=MRR" -F "files=@test_mrr.xlsx" -i
+HTTP/1.1 100 Continue
 
-Added excel_handler_post_router() function (lines 66-76) — routes to "auto_submit" if pending_mrr_data is valid, otherwise "end".
+HTTP/1.1 200 OK
+date: Mon, 25 May 2026 10:56:01 GMT
+server: uvicorn
+content-type: text/event-stream; charset=utf-8
+transfer-encoding: chunked
 
-Replaced add_edge("excel_handler", END) with add_conditional_edges using excel_handler_post_router → "auto_submit" goes to "submit_mrr", "end" goes to END.
+data: {"type": "meta", "thread_id": "806b1d96-8a31-41e7-81a1-62921288f092"}
 
-Same for "excel_handler_node" — conditional edges to "submit_mrr_node" or END.
+data: {"type": "chunk", "text": "**Material Requisition \u2014 Review Before Submit**\n\nMRR Number: DPE/MRR/1/26-27\nRequestor: emp 1065\nDepartment: SDG\nProject: YEB2736 \u2014 4.5M Satcom Ground Data terminal (4.5m GDT-SAT)\nPhase: PROTO_DESIGN\nRequisition Type: RETURNABLE\nNeed by: 2026-06-15\nDescription: Cabling for satcom prototype\nComments: Urgent test order\n\n**Line Items:**\n  1. DP-RM-CAB-03390 \u2014 UOM: MTR\n     Qty: 5000.0 | Available: 104.7\n     Unit Cost (LPP): 11.00 | Subtotal: 55000.00\n     Return by: 2026-08-15T00:00:00\n\n  2. DP-RM-CAB-03100 \u2014 UOM: NOS\n     Qty: 2.0 | Available: 359.4\n     Unit Cost (LPP): 50.00 | Subtotal: 100.00\n     Return by: 2026-08-15T00:00:00\n\n**Total Cost: 55,100.00**\n\nPlease confirm or cancel below:\n\n\n\n"}
 
-Kept submit_mrr → auto_verifier_node and cancel_mrr → END edges unchanged.
+data: {"type": "form", "form_spec": {"type": "confirmation", "title": "Confirm MRR Submission", "fields": [], "buttons": [{"label": "Confirm Submit", "value": "confirm_mrr"}, {"label": "Cancel", "value": "cancel_mrr"}]}}
 
-The graph compiles (no syntax errors). The flow is now:
+data: {"type": "chunk", "text": "Submission failed: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'REQUISITIONQUANTITY' in 'field list'\n[SQL: \n                INSERT INTO mrr_matrequisitionlines (\n                    MATREQUISITIONLINEID, MATREQUISITIONID, ITEMID,\n                    ITEMREVISIONID, UOMID, REQUISITIONQUANTITY, ISSUEQTY,\n                    RETURNQUANTITY, STATUS, CLOSEREASON, ITEMCOST,\n                    RETURN_DATE\n                ) VALUES (\n                    %(lid)s, %(mid)s, %(iid)s, %(rev)s, %(uom)s, %(qty)s, 0, 0,\n                    'ENTERED', '', %(cost)s, %(retdate)s\n                )\n            ]\n[parameters: {'lid': 1, 'mid': 1, 'iid': 7609, 'rev': 7881, 'uom': 4, 'qty': 5000.0, 'cost': 55000.0, 'retdate': '2026-08-15T00:00:00'}]\n(Background on this error at: https://sqlalche.me/e/20/f405). Please try again or contact support.\n\n"}
 
+data: {"type": "chunk", "text": "No requisition to verify.\n\n"}
 
-excel_handler → excel_handler_post_router → auto_submit → submit_mrr → auto_verifier_node → END
-                         ↓
-                       end → END
-When Task 4.10 adds SqliteSaver, this gets reverted: back to add_edge("excel_handler", END) so the confirm/cancel turn works again.
+data: [DONE]
