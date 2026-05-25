@@ -2,19 +2,36 @@
 HTTP/1.1 100 Continue
 
 HTTP/1.1 200 OK
-date: Mon, 25 May 2026 10:56:01 GMT
+date: Mon, 25 May 2026 11:00:19 GMT
 server: uvicorn
 content-type: text/event-stream; charset=utf-8
 transfer-encoding: chunked
 
-data: {"type": "meta", "thread_id": "806b1d96-8a31-41e7-81a1-62921288f092"}
+data: {"type": "meta", "thread_id": "26ab75e6-4fa7-4838-a314-b7db8f8566d2"}
 
 data: {"type": "chunk", "text": "**Material Requisition \u2014 Review Before Submit**\n\nMRR Number: DPE/MRR/1/26-27\nRequestor: emp 1065\nDepartment: SDG\nProject: YEB2736 \u2014 4.5M Satcom Ground Data terminal (4.5m GDT-SAT)\nPhase: PROTO_DESIGN\nRequisition Type: RETURNABLE\nNeed by: 2026-06-15\nDescription: Cabling for satcom prototype\nComments: Urgent test order\n\n**Line Items:**\n  1. DP-RM-CAB-03390 \u2014 UOM: MTR\n     Qty: 5000.0 | Available: 104.7\n     Unit Cost (LPP): 11.00 | Subtotal: 55000.00\n     Return by: 2026-08-15T00:00:00\n\n  2. DP-RM-CAB-03100 \u2014 UOM: NOS\n     Qty: 2.0 | Available: 359.4\n     Unit Cost (LPP): 50.00 | Subtotal: 100.00\n     Return by: 2026-08-15T00:00:00\n\n**Total Cost: 55,100.00**\n\nPlease confirm or cancel below:\n\n\n\n"}
 
 data: {"type": "form", "form_spec": {"type": "confirmation", "title": "Confirm MRR Submission", "fields": [], "buttons": [{"label": "Confirm Submit", "value": "confirm_mrr"}, {"label": "Cancel", "value": "cancel_mrr"}]}}
 
-data: {"type": "chunk", "text": "Submission failed: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'REQUISITIONQUANTITY' in 'field list'\n[SQL: \n                INSERT INTO mrr_matrequisitionlines (\n                    MATREQUISITIONLINEID, MATREQUISITIONID, ITEMID,\n                    ITEMREVISIONID, UOMID, REQUISITIONQUANTITY, ISSUEQTY,\n                    RETURNQUANTITY, STATUS, CLOSEREASON, ITEMCOST,\n                    RETURN_DATE\n                ) VALUES (\n                    %(lid)s, %(mid)s, %(iid)s, %(rev)s, %(uom)s, %(qty)s, 0, 0,\n                    'ENTERED', '', %(cost)s, %(retdate)s\n                )\n            ]\n[parameters: {'lid': 1, 'mid': 1, 'iid': 7609, 'rev': 7881, 'uom': 4, 'qty': 5000.0, 'cost': 55000.0, 'retdate': '2026-08-15T00:00:00'}]\n(Background on this error at: https://sqlalche.me/e/20/f405). Please try again or contact support.\n\n"}
+data: {"type": "chunk", "text": "Your MRR **DPE/MRR/1/26-27** has been submitted.\nTotal cost: \u20b955,100.00\n\nRunning verification...\n\n"}
 
 data: {"type": "chunk", "text": "No requisition to verify.\n\n"}
 
 data: [DONE]
+
+INFO:     127.0.0.1:60814 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-CONTROLLER] thread_id received: None
+[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=1
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg='please process this mrr upload', normalized='please process this mrr upload', has_pending=False
+[DIAG-MRR] creator_path_router -> excel_handler
+[DIAG-MRR] excel_handler_node entered. emp_no=1065
+[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test 
+order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5000, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+[DIAG-MRR] excel_handler_node: excel_file found=True
+[DIAG-MRR] excel_handler_node: calling validator with 2 rows
+[DIAG-MRR] excel_handler_node: validator returned valid=True
+[DIAG-MRR] mrr_submission_node entered. has_pending_data=True
+[DIAG-MRR] auto_verifier_node entered. new_requisition_id=None
