@@ -1,40 +1,22 @@
-Hi! What can I help you with?
-process this mrr
- test_mrr.xlsx
-A
-🤖
-**Material Requisition — Review Before Submit**
-
-MRR Number: DPE/MRR/1/26-27
-Requestor: emp 1065
-Department: SDG
-Project: YEB2736 — 4.5M Satcom Ground Data terminal (4.5m GDT-SAT)
-Phase: PROTO_DESIGN
-Requisition Type: RETURNABLE
-Need by: 2026-06-15
-Description: Cabling for satcom prototype
-Comments: Urgent test order
-
-**Line Items:**
-  1. DP-RM-CAB-03390 — UOM: MTR
-     Qty: 5.0 | Available: 104.7
-     Unit Cost (LPP): 11.00 | Subtotal: 55.00
-     Return by: 2026-08-15T00:00:00
-
-  2. DP-RM-CAB-03100 — UOM: NOS
-     Qty: 2.0 | Available: 359.4
-     Unit Cost (LPP): 50.00 | Subtotal: 100.00
-     Return by: 2026-08-15T00:00:00
-
-**Total Cost: 155.00**
-
-Please confirm or cancel below:
-
-
-
-confirm mrr
-A
-🤖
-{"project_id": "YEA2612-P3", "phase_id": "PROTO_DESIGN", "warehouse": "DPE", "requisition_type": "Returnable", "need_by_date": "13-MAY-2026", "remarks": "", "has_minimum_data": true, Please fill out the project details or just type them to me:
-
-"items": []}
+INFO:     10.5.1.58:50655 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+INFO:     10.5.1.58:50809 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router -> excel_handler
+[DIAG-MRR] excel_handler_node entered. emp_no=1065
+[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+[DIAG-MRR] excel_handler_node: excel_file found=True
+[DIAG-MRR] excel_handler_node: calling validator with 2 rows
+[DIAG-MRR] excel_handler_node: validator returned valid=True
+INFO:     10.5.1.58:50907 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-MRR] parse_intent_node entered. emp_no=1065
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router -> form_flow
+C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py:2060: UserWarning: Received a Pydantic BaseModel V1 schema. This is not supported by method="json_schema". Please use method="function_calling" or specify schema via JSON Schema or Pydantic V2 BaseModel. Overriding to method="function_calling".
+  warnings.warn(
+Extraction Error: 'NoneType' object has no attribute 'has_minimum_data'
