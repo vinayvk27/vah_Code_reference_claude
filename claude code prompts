@@ -1,13 +1,1 @@
-INFO:     Uvicorn running on http://0.0.0.0:5970 (Press CTRL+C to quit)
-[DIAG-UPLOAD] Parsed file: filename=test_mrr.xlsx, file_type=excel, row_count=2, first_row={'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}
-INFO:     127.0.0.1:65291 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-MRR] parse_intent_node entered. emp_no=1065
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router -> excel_handler
-[DIAG-MRR] excel_handler_node entered. emp_no=1065
-[DIAG-MRR] excel_handler_node: first file keys=none, file=None
-[DIAG-MRR] excel_handler_node: excel_file found=False
-
-why these many iterations i don't understand can you please verify 
+print(f"[DIAG-ROUTE] After parse: type={type(file_data)}, value={file_data}", flush=True)
