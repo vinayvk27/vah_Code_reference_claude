@@ -1,40 +1,59 @@
-@staticmethod
-    async def _parse_excel(filename: str, content: bytes) -> dict:
-        try:
-            import pandas as pd
-            df = pd.read_excel(BytesIO(content))
-            data = df.to_dict('records')
+INFO:     127.0.0.1:52462 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
+[DIAG-MRR] parse_intent_node entered. emp_no=1065
+Traceback (most recent call last):
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 84, in parse_result
+    return parse_json_markdown(text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 164, in parse_json_markdown
+    return _parse_json(json_str, parser=parser)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 194, in _parse_json
+    return parser(json_str)
+           ^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 137, in parse_partial_json
+    return json.loads(s, strict=strict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\__init__.py", line 359, in loads
+    return cls(**kw).decode(s)
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ^^^^^^^^^^^^^^^^^^^^^^
+json.decoder.JSONDecodeError: Expecting ':' delimiter: line 5 column 33 (char 114)
 
-            result = {
-                "filename": filename,
-                "file_type": "excel",
-                "row_count": len(data),
-                "data": data,
-                "preview": data[:5]
-            }
+The above exception was the direct cause of the following exception:
 
-            print(f"[DIAG-UPLOAD] Parsed file: filename={result.get('filename')}, "
-                f"file_type={result.get('file_type')}, "
-                f"row_count={result.get('row_count')}, "
-                f"first_row={result.get('data', [{}])[0] if result.get('data') else None}")
-
-            return result
-
-        except ImportError:
-            try:
-                text = content.decode('utf-8')
-                if '\t' in text:
-                    return ChatController._parse_tsv(filename, content)
-                else:
-                    return ChatController._parse_csv(filename, content)
-            except:
-                raise ValueError("Excel file parsing requires pandas and openpyxl.")
-        except Exception as e:
-            try:
-                text = content.decode('utf-8')
-                if '\t' in text:
-                    return ChatController._parse_tsv(filename, content)
-                else:
-                    return ChatController._parse_csv(filename, content)
-            except:
-                raise ValueError(f"Error parsing Excel file: {str(e)}")
+Traceback (most recent call last):
+  File "d:\dev\agentic_ai\dpah_backend_v1\app\workflows\material_workflow\intent.py", line 121, in classify_mrr_intent
+    parsed = _parser.parse(raw_text)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 90, in parse
+    return self.parse_result([Generation(text=text)])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 74, in parse_result
+    json_object = super().parse_result(result)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 87, in parse_result
+    raise OutputParserException(msg, llm_output=text) from e
+langchain_core.exceptions.OutputParserException: Invalid json output: ```json
+{
+  "domain": "IN_DOMAIN",
+  "collection": "mrr_general",
+  "persona": "CREATOR",
+  "confidence": "HIGH", "MEDIUM",
+  "reasoning": "The user is initiating a material requisition process via upload, which falls under the CREATOR persona's responsibility to create new material requisitions within the mrr_general collection."      
+}
+```
+For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router -> excel_handler
+[DIAG-MRR] excel_handler_node entered. emp_no=1065
+[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
+[DIAG-MRR] excel_handler_node: excel_file found=True
+[DIAG-MRR] excel_handler_node: calling validator with 2 rows
+[DIAG-MRR] excel_handler_node: validator returned valid=True
