@@ -1,69 +1,37 @@
-class MaterialRequisitionState(TypedDict):
-    """
-    State container for MRR agent orchestration and form management.
+Hi! What can I help you with?
+SHOW ME PENDING APPROVALS
+V
+🤖
+### Pending Manager Approvals
 
-    Inherits core RBAC fields for parity with RMS/Universal Chatbot:
-    - emp_no: str
-    - group_idx: int
-    - role_ids: List[int]
-    - role_names: List[str]
-    - selected_module: str
-    - classifier_confidence: str
-    - append_soft_correction: bool
+| Req ID | MRR No | Requestor | Total Cost | Status | Date |
+|---|---|---|---|---|---|
+| 1 | DPE/MRR/1/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
+| 2 | DPE/MRR/2/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
 
-    MRR Form-Specific Fields:
-    - current_step: str (State Machine: 'HEADER', 'ITEMS', 'EVALUATING', 'END')
-    - latest_submission: Optional[dict] (Intercepted Generative UI JSON payload)
-    - form_state: dict (Validated header: requisition_type, project_id, phase_id, etc.)
-    - items: List[dict] (Confirmed line items with qty and unit prices)
-    - total_cost: float (Qty * LPP Rate for routing thresholds)
-    - routing_decision: Optional[str] (Target: 'mrr_approver' or 'erp_approver')
-    """
+*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
 
-    # Core Orchestration Fields
-    user_id: str
-    emp_no: str
-    group_idx: int
-    role_ids: List[int]
-    role_names: List[str]
-    selected_module: str
-    user_info: Dict[str, Any]  # Full profile context
-    user_dept: str
-    selected_collection: str
-    selected_agent_role: str
-    parsed_intent: str
-    classifier_confidence: str
-    append_soft_correction: bool
-    has_permission: bool
-    messages: Annotated[list, add_messages]
-    execution_log: List[str]
-    uploaded_files: list
-    denial_message: Optional[str]
+APPROVE ALL THE PENDINGS
+V
+🤖
+### Pending Manager Approvals
 
-    # MRR Form State Machine Fields
-    current_step: str
-    latest_submission: Optional[Dict[str, Any]]
+| Req ID | MRR No | Requestor | Total Cost | Status | Date |
+|---|---|---|---|---|---|
+| 1 | DPE/MRR/1/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
+| 2 | DPE/MRR/2/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
 
-    # Material Requisition Transaction Data
-    form_state: Dict[str, Any]
-    items: List[Dict[str, Any]]
-    total_cost: float
-    routing_decision: Optional[str]
+*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
 
-    # MRR Excel Upload Path
-    pending_mrr_data: Optional[Dict[str, Any]]# MATREQUISITIONID, MATREQUISITIONNO, WAREHOUSEID, REQUISITIONTYPE, REQUESTORID, REQUISITIONDATE, DEPARTMENT, NEEDBYDATE, WHOCOLUMN, STATUS, PROJECTID, PROJECTPHASEID, REQTRANSACTIONTYPE, SUPPLIERID, SUPPLIERSITEID, DESCRIPTION, COMMENTS, VERIFICATION_STATUS, VERIFICATION_DATE, APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE, TOTAL_COST
-'1', 'DPE/MRR/1/26-27', '1', 'RETURNABLE', '1065', '2026-05-25 16:30:21', 'SDG', '2026-06-15 00:00:00', NULL, 'ENTERED', '13987', '14045', 'MATERIAL REQUISITION', '0', '0', 'Cabling for satcom prototype', 'Urgent test order', NULL, NULL, NULL, NULL, NULL, NULL, '55100'
-'2', 'DPE/MRR/2/26-27', '1', 'RETURNABLE', '1065', '2026-05-25 16:35:46', 'SDG', '2026-06-15 00:00:00', NULL, 'ENTERED', '13987', '14045', 'MATERIAL REQUISITION', '0', '0', 'Cabling for satcom prototype', 'Urgent test order', NULL, NULL, NULL, NULL, NULL, NULL, '55100'
-'3', 'DPE/MRR/3/26-27', '1', 'RETURNABLE', '1065', '2026-05-25 16:36:32', 'SDG', '2026-06-15 00:00:00', NULL, 'ENTERED', '13987', '14045', 'MATERIAL REQUISITION', '0', '0', 'Cabling for satcom prototype', 'Urgent test order', NULL, NULL, NULL, NULL, NULL, NULL, '155'
+APPROVE ALL
+V
+🤖
+### Pending Manager Approvals
 
+| Req ID | MRR No | Requestor | Total Cost | Status | Date |
+|---|---|---|---|---|---|
+| 1 | DPE/MRR/1/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
+| 2 | DPE/MRR/2/26-27 | 1065 | ₹55100 | PENDING | 2026-05-25 |
 
-# MATREQUISITIONLINEID, MATREQUISITIONID, ITEMID, ITEMREVISIONID, UOMID, REQUISITIONQTY, ISSUEQTY, WHOCOLUMN, RETURNQUANTITY, STATUS, CLOSEREASON, ITEMCOST, RETURN_DATE
-'1', '1', '7609', '7881', '4', '5000.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '55000.0000', '2026-08-15 00:00:00'
-'2', '1', '7636', '7854', '7', '2.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '100.0000', '2026-08-15 00:00:00'
-'3', '2', '7609', '7881', '4', '5000.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '55000.0000', '2026-08-15 00:00:00'
-'4', '2', '7636', '7854', '7', '2.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '100.0000', '2026-08-15 00:00:00'
-'5', '3', '7609', '7881', '4', '5.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '55.0000', '2026-08-15 00:00:00'
-'6', '3', '7636', '7854', '7', '2.0000', '0.0000', NULL, '0.0000', 'ENTERED', '', '100.0000', '2026-08-15 00:00:00'
+*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
 
-
-i have done the update statement given by you
