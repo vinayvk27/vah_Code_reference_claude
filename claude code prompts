@@ -1,28 +1,189 @@
-INFO:     127.0.0.1:57262 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
-[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'MRR'
-[DIAG-CONTROLLER] thread_id received: None
-[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=1
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router: last_msg='please process this mrr upload', normalized='please process this mrr upload', has_pending=False
-[DIAG-MRR] creator_path_router -> excel_handler
-[DIAG-MRR] excel_handler_node entered. emp_no=1065
-[DIAG-MRR] excel_handler_node: first file keys=['filename', 'file_type', 'row_count', 'data', 'preview'], file={'filename': 'test_mrr.xlsx', 'file_type': 'excel', 'row_count': 2, 'data': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test 
-order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 
-'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}], 'preview': [{'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03390', 'Requested Quantity': 5, 'Return Date': '2026-08-15'}, {'Project Number': 'YEB2736', 'Requisition Type': 'RETURNABLE', 'Need By Date': '2026-06-15', 'Description': 'Cabling for satcom prototype', 'Comments': 'Urgent test order', 'Item Name': 'DP-RM-CAB-03100', 'Requested Quantity': 2, 'Return Date': '2026-08-15'}]}
-[DIAG-MRR] excel_handler_node: excel_file found=True
-[DIAG-MRR] excel_handler_node: calling validator with 2 rows
-[DIAG-MRR] excel_handler_node: validator returned valid=True
-INFO:     127.0.0.1:57347 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-MRR] parse_intent_node entered. emp_no=1065, pending_mrr_data_present=False, message_count=1
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
-[DIAG-MRR] creator_path_router entered. persona=creator
-[DIAG-MRR] creator_path_router: last_msg='confirm mrr', normalized='confirm mrr', has_pending=False
-[DIAG-MRR] creator_path_router -> form_flow
-C:\ml_env_311\Lib\site-packages\langchain_openai\chat_models\base.py:2060: UserWarning: Received a Pydantic BaseModel 
-V1 schema. This is not supported by method="json_schema". Please use method="function_calling" or specify schema via JSON Schema or Pydantic V2 BaseModel. Overriding to method="function_calling".
-  warnings.warn(
-Extraction Error: 'NoneType' object has no attribute 'has_minimum_data'
+═══════════════════════════════════════════════════════════════════
+TASK 4.11: Temporary single-turn MRR submission (auto-confirm)
+═══════════════════════════════════════════════════════════════════
+Workaround until SqliteSaver checkpointer is added (Task 4.10).
+Excel upload → validate → IMMEDIATELY submit to DB → auto_verifier.
+Confirm/cancel flow remains in code but is bypassed for now.
 
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/material_workflow/graph.py.
+- Do NOT modify nodes.py (preserve excel_handler_node,
+  mrr_submission_node, mrr_cancel_node, mrr_auto_verifier_node bodies).
+- Do NOT modify the validator, resolvers, controllers, or any other
+  workflow files.
+- Do NOT delete or alter the creator_path_router function. Just bypass
+  its confirm/cancel routes by changing edges in the graph.
+- If anything requires touching out-of-scope code, STOP and report.
 
-** till now we havent went through approvers and erp approver also can you close the issues soon
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
+
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Multi-turn flow currently doesn't work because the workflow has no
+checkpointer — pending_mrr_data is lost between the upload and the
+confirm turns.
+
+TEMPORARY FIX: collapse upload+confirm into one turn. After
+excel_handler_node successfully validates, route directly to
+mrr_submission_node, which inserts the DB row, then to
+auto_verifier_node. User sees the validated summary AND the
+submission confirmation in one response.
+
+When SqliteSaver is added later (Task 4.10), we revert this change:
+excel_handler_node will once again route to END (waiting for the
+user's confirm/cancel turn), restoring the two-turn UX.
+
+───────────────────────────────────────────────────────────────────
+SCOPE — graph.py changes only
+───────────────────────────────────────────────────────────────────
+
+Currently the MRR graph has these edges (post-Task 4.7):
+
+  excel_handler -> END
+  submit_mrr -> auto_verifier_node
+  cancel_mrr -> END
+
+Change to:
+
+  excel_handler -> conditional_router (new): decides between submit_mrr
+                   (if validation passed) or END (if validation failed)
+  submit_mrr -> auto_verifier_node  (unchanged)
+  cancel_mrr -> END  (unchanged — kept for future use)
+
+The new conditional router after excel_handler is needed because
+mrr_submission_node should only run if validation actually populated
+pending_mrr_data. If validation failed (and pending_mrr_data is None),
+we end without inserting anything.
+
+──── Concrete changes ────
+
+(a) Add a small router function inside graph.py (or in nodes.py if
+    that's cleaner — your call). Suggest defining inline in graph.py
+    next to the existing add_conditional_edges definitions:
+
+    def excel_handler_post_router(state: MaterialRequisitionState) -> str:
+        """
+        After excel_handler runs, decide whether to auto-submit.
+        TEMPORARY: bypasses the confirm/cancel turn because no
+        checkpointer exists. Will be removed when SqliteSaver lands
+        (Task 4.10).
+        """
+        pending = state.get("pending_mrr_data")
+        if pending and pending.get("valid"):
+            return "auto_submit"
+        return "end"
+
+(b) Change the edge for excel_handler:
+
+    REMOVE:
+        builder.add_edge("excel_handler", END)
+
+    ADD:
+        builder.add_conditional_edges(
+            "excel_handler",
+            excel_handler_post_router,
+            {
+                "auto_submit": "submit_mrr",
+                "end": END,
+            }
+        )
+
+    Also (if registered separately): the "excel_handler_node" name.
+
+    Same change for "excel_handler_node" registration if both names
+    exist:
+        REMOVE: builder.add_edge("excel_handler_node", END)
+        ADD: builder.add_conditional_edges(
+                "excel_handler_node",
+                excel_handler_post_router,
+                {"auto_submit": "submit_mrr_node", "end": END}
+             )
+
+    Use whichever node names exist in the current graph.
+
+(c) Keep the cancel_mrr -> END edge as-is.
+
+(d) Keep creator_path_router's confirm/cancel branches as-is in
+    nodes.py. They remain reachable when the frontend (eventually)
+    sends thread_id and the checkpointer is in place.
+
+───────────────────────────────────────────────────────────────────
+OPTIONAL: tiny user-facing note
+───────────────────────────────────────────────────────────────────
+
+In excel_handler_node, when validation succeeds, the message
+currently includes "<<FORM>>...<<ENDFORM>>" with confirm/cancel
+buttons. For now that form widget won't be functional. We can
+either:
+
+  (1) Leave it — user sees buttons but they don't do anything.
+      The submission already happened automatically.
+  (2) Strip the FORM block from the summary so user doesn't see
+      misleading buttons.
+
+For this task: leave the FORM block as-is. The submission
+confirmation message from mrr_submission_node will appear right
+after in the same response, making it clear the submission already
+completed.
+
+───────────────────────────────────────────────────────────────────
+ACCEPTANCE TESTS (HUMAN VERIFIES)
+───────────────────────────────────────────────────────────────────
+
+Test 1: Server boots clean. No import errors.
+
+Test 2: Junior 1065 uploads test_mrr.xlsx via curl
+        (stream-with-file). Expected server DIAGs in order:
+        - parse_intent_node entered.
+        - permission_check_node entered. parsed_intent=IN_DOMAIN,
+          persona=creator
+        - creator_path_router entered. -> excel_handler
+        - excel_handler_node entered.
+        - excel_handler_node: validator returned valid=True
+        - excel_handler_post_router (new): -> auto_submit
+        - mrr_submission_node entered.
+        - auto_verifier_node entered.
+
+        Expected curl response: chunks containing:
+        - The validated summary
+        - "Your MRR DPE/MRR/X/26-27 has been submitted..."
+        - Auto-verifier result
+
+Test 3: Verify DB row inserted:
+        SELECT MATREQUISITIONID, MATREQUISITIONNO, DEPARTMENT,
+               TOTAL_COST, VERIFICATION_STATUS, APPROVAL_STATUS,
+               ERP_APPROVAL_STATUS, REQUESTORID, PROJECTID,
+               NEEDBYDATE
+        FROM mrr_matrequisitionheader
+        ORDER BY MATREQUISITIONID DESC LIMIT 1;
+
+        Expected: 1 row, TOTAL_COST=155, DEPARTMENT='SDG'.
+
+Test 4: Verify lines inserted:
+        SELECT MATREQUISITIONLINEID, ITEMID, UOMID, REQUISITIONQTY,
+               ITEMCOST, RETURN_DATE
+        FROM mrr_matrequisitionlines
+        ORDER BY MATREQUISITIONLINEID DESC LIMIT 5;
+
+        Expected: 2 rows, ITEMIDs 7609 and 7636, ITEMCOSTs 55 and 100.
+
+Test 5: Approver flow now testable.
+        Login as COO (16). Send "show pending approvals" to MRR.
+        Expected: chat response lists the newly-inserted MRR if
+        auto-verifier set APPROVAL_STATUS=PENDING (for >2000 cost),
+        OR shows "no pending approvals" if auto-approved (under 2000).
+
+        For our test (TOTAL_COST=155, under 2000):
+        - APPROVAL_STATUS=APPROVED (auto-approved)
+        - ERP_APPROVAL_STATUS=PENDING (now waits for ERP HOD)
+        - COO sees: "no pending manager approvals"
+        - Login as ERP HOD (531). Send "show ERP approvals" to MRR.
+          Expected: chat response lists this MRR.
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
