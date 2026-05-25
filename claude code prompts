@@ -1,85 +1,18 @@
-Hi! What can I help you with?
-approve worklogs
-I
-🤖
-I'll help you approve worklogs. First, let me check what worklogs are currently awaiting approval.
+SELECT cs.DP_PART_NO, cs.ITEMID, cs.UOM, cs.QOH,
+       si.LPP_VALUE_UNITPRICE_INR, si.UNITOFMEASUREID
+FROM com_search cs
+JOIN SCMITEMS si ON si.ITEMID = cs.ITEMID AND si.WAREHOUSEID = 1
+WHERE cs.WAREHOUSE = '1'
+  AND si.LPP_VALUE_UNITPRICE_INR IS NOT NULL
+  AND si.LPP_VALUE_UNITPRICE_INR > 0
+LIMIT 10;
 
-The provided data snapshot shows multiple worklogs with a status of `is_approved: 'PENDING'` that are currently awaiting your approval.
+SELECT projectid, projectnumber, projectdescription
+FROM posproject
+LIMIT 5;
 
-The pending worklogs are:
-1.  **Worklog ID 15**: Task #1, Hours: 3.0, Remarks: "memory test"
-2.  **Worklog ID 18**: Task #1, Hours: 4.0, Remarks: "partiall completed"
-3.  **Worklog ID 19**: Task #1, Hours: 2.0, Remarks: "refactor test"
-4.  **Worklog ID 23**: Task #14, Hours: 8.0, Remarks: "testing"
-5.  **Worklog ID 24**: Task #14, Hours: 8.0, Remarks: "testing AGAIN"
-6.  **Worklog ID 25**: Task #1, Hours: 8.0, Remarks: "Tetsing 123"
-7.  **Worklog ID 27**: Task #1, Hours: 5.0, Remarks: "Work on task 16"
-8.  **Worklog ID 28**: Task #2, Hours: 5.0, Remarks: "Work done"
-9.  **Worklog ID 29**: Task #1, Hours: 6.0, Remarks: "Testing"
-10. **Worklog ID 30**: Task #1, Hours: 6.0, Remarks: "Testing"
-
-I will proceed to approve all these pending entries.
-
-
-
-
-
-
-
-
-
-
-
-
-Approved all 10 pending worklogs.
-
-=== END DEBUG ===
-INFO:     10.5.1.58:51122 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:51197 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=1731
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=approver
-[DIAG-RMS] approver_agent_node entered. emp_no=1731, selected_collection='rms_timesheet', selected_agent_role='approver', will_enter_rms_branch=True
-
-
-Hi! What can I help you with?
-show all leave requests
-I
-🤖
-Here are all the current pending leave requests:
-
-1.  **Request #4**
-    *   **Employee ID:** 2291
-    *   **Type:** Casual Leave
-    *   **Dates:** 2026-05-15 to 2026-05-16 (2 days)
-    *   **Reason:** Friend wedding
-
-2.  **Request #5**
-    *   **Employee ID:** 2633
-    *   **Type:** Sick Leave
-    *   **Dates:** 2026-05-18 (1 day)
-    *   **Reason:** Migraine
-
-3.  **Request #6**
-    *   **Employee ID:** 2830
-    *   **Type:** Earned Leave
-    *   **Dates:** 2026-06-01 to 2026-06-05 (5 days)
-    *   **Reason:** Annual trip
-
-Let me know if you'd like to approve or reject any of these.
-
-
-[DIAG-HRMS] parse_intent_node entered. emp_no=1731
-[DIAG-HRMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=approver, collection=hrms_leave_data
-[DIAG-HRMS] approver_agent_node entered. emp_no=1731, collection='hrms_leave_data'
-
-
-create leave type
-I
-🤖
-
-I have created the leave type 'Maternity Leave' with a maximum of 90 days.
-
-INFO:     10.5.1.58:52330 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-HRMS] parse_intent_node entered. emp_no=1731
-[DIAG-HRMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=hrms_leave_data
-[DIAG-HRMS] creator_agent_node entered. emp_no=1731, collection='hrms_leave_data'
+SELECT pp.projectphaseid, pp.phasename
+FROM posprojectphases pp
+JOIN posproject p ON p.projectid = pp.projectid
+WHERE p.projectnumber = '<one of the project numbers from step 2>'
+LIMIT 5;
