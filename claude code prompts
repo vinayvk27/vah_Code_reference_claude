@@ -1,16 +1,30 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "import pandas as pd; from app.services.mrr_validator import validate_and_resolve_mrr_excel; from app.models.dto_schemas import CurrentUser; df = pd.read_excel('test_mrr.xlsx'); data = df.to_dict(orient='records'); user = CurrentUser(emp_no='1065', group_idx=1, role_ids=[7], role_names=['Junior'], dept='SDG'); result = validate_and_resolve_mrr_excel(data, user); print('VALID:', result['valid']); print('ERRORS:', result.get('errors')); print('WARNINGS:', result.get('warnings')); print('HEADER:'); [print('  %s: %s' % (k, v)) for k, v in result['header'].items()]; print('LINES (%d):' % len(result['lines'])); [print('  %s' % str(line)) for line in result['lines']]; print('SUMMARY:\n%s' % result['summary_for_user'])"
-Traceback (most recent call last):
-  File "<string>", line 1, in <module>
-  File "C:\ml_env_311\Lib\site-packages\pydantic\main.py", line 214, in __init__
-    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-pydantic_core._pydantic_core.ValidationError: 3 validation errors for CurrentUser
-name
-  Field required [type=missing, input_value={'emp_no': '1065', 'group...Junior'], 'dept': 'SDG'}, input_type=dict]
-    For further information visit https://errors.pydantic.dev/2.10/v/missing
-email
-  Field required [type=missing, input_value={'emp_no': '1065', 'group...Junior'], 'dept': 'SDG'}, input_type=dict]
-    For further information visit https://errors.pydantic.dev/2.10/v/missing
-hierarchy
-  Field required [type=missing, input_value={'emp_no': '1065', 'group...Junior'], 'dept': 'SDG'}, input_type=dict]
-    For further information visit https://errors.pydantic.dev/2.10/v/missing
+import pandas as pd
+from app.services.mrr_validator import validate_and_resolve_mrr_excel
+from app.models.dto_schemas import CurrentUser
+
+df = pd.read_excel("test_mrr.xlsx")
+data = df.to_dict(orient="records")
+
+user = CurrentUser(
+    emp_no="1065",
+    name="Arun Test",
+    email="test@dp.local",
+    hierarchy="ENG/SDG",
+    group_idx=1,
+    role_ids=[7],
+    role_names=["Junior"],
+    dept="SDG"
+)
+
+result = validate_and_resolve_mrr_excel(data, user)
+print("VALID:", result["valid"])
+print("ERRORS:", result.get("errors"))
+print("WARNINGS:", result.get("warnings"))
+if result["valid"]:
+    print("\nHEADER:")
+    for k, v in result["header"].items():
+        print(f"  {k}: {v}")
+    print(f"\nLINES ({len(result['lines'])}):")
+    for line in result["lines"]:
+        print(f"  {line}")
+    print(f"\nSUMMARY:\n{result['summary_for_user']}")
