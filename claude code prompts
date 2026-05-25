@@ -1,14 +1,5 @@
-(ml_env_311) C:\ml_env_311\Scripts>curl -X POST http://localhost:5970/api/v1/chat/stream-with-file -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTcyMzA0Mn0.OeZ8EbRuv7NVNYypDeFsjNkqORIj76pluTDQkIhDos8" -F "message=Please process this MRR upload" -F "collection_name=MRR" -F "files=@test_mrr.xlsx" -i
-HTTP/1.1 100 Continue
-
-HTTP/1.1 200 OK
-date: Mon, 25 May 2026 07:43:54 GMT
-server: uvicorn
-content-type: text/event-stream; charset=utf-8
-transfer-encoding: chunked
-
-data: {"type": "meta", "thread_id": "dc1e1de3-66df-496d-8261-4f6078e38024"}
-
-data: {"type": "chunk", "text": "I can only help with RMS tasks like logging hours, viewing your tasks, or approving worklogs. Could you rephrase your request?\n\n"}
-
-data: [DONE]
+INFO:     127.0.0.1:62812 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'RMS'
+[DIAG-RMS] parse_intent_node entered. emp_no=1065
+[DIAG-RMS] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=
+[DIAG-RMS] permission_blocked_node entered. denial_message='I can only help with RMS tasks like logging hours, viewing your tasks, or approving worklogs. Could you rephrase your request?'
