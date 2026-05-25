@@ -1,10 +1,1 @@
-(ml_env_311) C:\ml_env_311\Scripts>curl -X POST http://localhost:5970/api/v1/chat/stream-with-file -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDY1IiwidXNlcl9pZCI6IjEwNjUiLCJuYW1lIjoiQXJ1biBLdW1hciBNIiwiZW1haWwiOiJhcnVuLm1vaGFucmFqQGRhdGFwYXR0ZXJucy5jby5pbiIsImRlcHQiOiJTREciLCJncm91cF9pZHgiOjEsInJvbGVfaWRzIjpbN10sInJvbGVfbmFtZXMiOlsiSnVuaW9yIl0sImhpZXJhcmNoeSI6eyJncmFkZSI6Ik0xIiwiZ3JhZGVfaWQiOjIyLCJyZXBvcnRpbmdfdG8iOiIyNjIiLCJsMSI6MCwibDIiOjAsImwzIjoxLCJ0c2xldmVsIjowfSwidHlwZSI6ImFjY2VzcyIsImV4cCI6MTc3OTcyMzA0Mn0.OeZ8EbRuv7NVNYypDeFsjNkqORIj76pluTDQkIhDos8" -F "message=Please process this MRR upload" -F "collection_name=MRR" -F "file=@test_mrr.xlsx" -i
-HTTP/1.1 100 Continue
-
-HTTP/1.1 422 Unprocessable Entity
-date: Mon, 25 May 2026 07:40:38 GMT
-server: uvicorn
-content-length: 90
-content-type: application/json
-
-{"detail":[{"type":"missing","loc":["body","files"],"msg":"Field required","input":null}]}
+curl -X POST http://localhost:5970/api/v1/chat/stream-with-file -H "Authorization: Bearer YOUR_TOKEN" -F "message=Please process this MRR upload" -F "collection_name=MRR" -F "files=@test_mrr.xlsx" -i
