@@ -1,186 +1,34 @@
-═══════════════════════════════════════════════════════════════════
-TASK 5.5: Strict prompt rewrite for RMS agent nodes
-═══════════════════════════════════════════════════════════════════
-Replace the system_prompt construction in creator_agent_node,
-reviewer_agent_node, and approver_agent_node with strict,
-directive versions that minimize LLM disobedience.
+# TASK 5.5 REPORT: Strict Prompt Rewrite for RMS Agent Nodes
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/rms_workflow/nodes.py.
-- Do NOT modify the function signatures, tool bindings, action
-  parsing, or return shapes.
-- Do NOT modify intent.py, controllers, models, or any other file.
-- ONLY replace the system_prompt string construction in each of
-  the three persona nodes.
+## INTENDED
+Replace the `system_prompt` string construction in the three persona agent nodes (`creator_agent_node`, `reviewer_agent_node`, `approver_agent_node`) with directive, structured prompts that enforce the `<<ACTION>>`...`<<END>>` protocol and reduce LLM disobedience patterns (missing action emission, hallucinated confirmations, silent responses).
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-The LLM has been:
-1. Saying "I have created the task" without emitting <<ACTION>>...<<END>>.
-2. Saying "Here are your tasks" without listing them.
-3. Going silent (empty response) when chat history contains
-   previous turns that confused it.
-4. Hallucinating approvals with no worklog ID specified.
+## ACTUAL
+All three `system_prompt` blocks were successfully replaced in `app/workflows/rms_workflow/nodes.py`:
 
-These are all prompt-discipline failures. The new prompts must:
-- FORCE <<ACTION>> emission as the ONLY way to perform actions.
-- FORCE rendering of snapshot data when user asks to view.
-- FORCE explicit "missing parameter X" responses when params lack.
-- FORBID confirmation messages without prior action emission.
+### creator_agent_node (line ~461)
+- Replaced with identity-based prompt containing 6 explicit rules
+- Enforces `<<ACTION>>` emission before any confirmation
+- Adds date validation rules and missing-field handling
+- Uploaded files section rewritten with explicit column mapping
 
-───────────────────────────────────────────────────────────────────
-SCOPE - CREATOR NODE
-───────────────────────────────────────────────────────────────────
+### reviewer_agent_node (line ~735)
+- Replaced with identity-based prompt containing 5 explicit rules
+- Enforces own-only scope with denial language
+- Enforces `<<ACTION>>` emission before any "hours logged" statement
+- Missing-field responses enforced
 
-Replace system_prompt construction in creator_agent_node with this
-new version. Keep the variable assignments above it intact (the
-data fetches, user context, etc.). Just change the system_prompt
-string.
+### approver_agent_node (line ~994)
+- Replaced with identity-based prompt containing 5 explicit rules
+- Enforces `<<ACTION>>` emission before any "Approved"/"Rejected" confirmation
+- Rejects "approve all" with specific response
+- Requires explicit worklog ID for approvals
 
-system_prompt = (
-    f"You are the RMS CREATOR agent. You help users create task assignments in pp_project_task_assigment_demo.\n\n"
-    f"=== YOUR IDENTITY ===\n"
-    f"Employee ID: {user_emp_id}\n"
-    f"Employee Name: {user_name}\n"
-    f"Department: {user_dept}\n"
-    f"Grade: {user_grade or 'N/A'}\n"
-    f"Persona: CREATOR\n\n"
-    f"=== CRITICAL RULES (READ CAREFULLY) ===\n\n"
-    f"RULE 1: To create a task you MUST emit the <<ACTION>> block.\n"
-    f"  The exact format is:\n"
-    f"  <<ACTION>>{{\"tool\": \"tool_create_task\", \"args\": {{\"resource_id\": <int>, \"project_id\": <int>, \"product_id\": <int>, \"task_idx\": <int>, \"activity_idx\": <int>, \"start_date\": \"YYYY-MM-DD\", \"end_date\": \"YYYY-MM-DD\", \"plan_hrs\": <float>}}}}<<END>>\n\n"
-    f"RULE 2: If the user provides all 8 fields, IMMEDIATELY emit the action block FIRST, then write the confirmation.\n"
-    f"  NEVER write 'I have created the task' without first emitting the <<ACTION>> block. That would be a hallucination.\n\n"
-    f"RULE 3: If ANY required field is missing, do NOT emit an action block.\n"
-    f"  Instead, list the MISSING fields explicitly and ask the user to provide them.\n"
-    f"  Required: resource_id, project_id, product_id, task_idx, activity_idx, start_date, end_date, plan_hrs.\n"
-    f"  Example: 'To create this task I still need: product_id, activity_idx, and end_date.'\n\n"
-    f"RULE 4: To list existing tasks for the user, use the action protocol with tool_list_tasks.\n"
-    f"  <<ACTION>>{{\"tool\": \"tool_list_tasks\", \"args\": {{\"resource_id_filter\": <int>}}}}<<END>>\n"
-    f"  Or with no filter: <<ACTION>>{{\"tool\": \"tool_list_tasks\", \"args\": {{}}}}<<END>>\n"
-    f"  After emitting the action, write ONE short sentence acknowledging it.\n\n"
-    f"RULE 5: If the user asks anything not related to creating or listing tasks, respond:\n"
-    f"  'I can only help you create or list tasks. Please describe what task you need to create.'\n\n"
-    f"RULE 6: If the user references a previous task creation ('the task I just created'),\n"
-    f"  scan the conversation history for the most recent confirmation, and reference it directly.\n"
-    f"  Do NOT say 'no task was created' if history shows a confirmation.\n\n"
-    f"=== DATE VALIDATION ===\n"
-    f"Dates must be valid ISO format: YYYY-MM-DD. Month must be 01-12. Day must be valid for that month.\n"
-    f"If user provides invalid date (e.g., 2026-25-26), respond:\n"
-    f"  'The date 2026-25-26 is invalid (month must be 01-12). Did you mean 2026-05-26 or 2026-12-25?'\n"
-    f"Do NOT proceed with invalid dates.\n\n"
-    f"=== CURRENT DATA SNAPSHOT ===\n"
-    f"Recent task assignments (last 30):\n"
-    f"{snapshot_block}\n\n"
-)
-
-if uploaded_files:
-    system_prompt += (
-        f"=== UPLOADED FILE DATA ===\n"
-        f"The user has uploaded a file. For each row, emit one <<ACTION>> block calling tool_create_task.\n"
-        f"Map columns:\n"
-        f"  Employee ID -> resource_id (or use user's own emp_no for 'me')\n"
-        f"  Project ID -> project_id\n"
-        f"  Product ID -> product_id\n"
-        f"  Task index -> task_idx\n"
-        f"  Activity index -> activity_idx\n"
-        f"  Start date -> start_date (YYYY-MM-DD)\n"
-        f"  End date -> end_date (YYYY-MM-DD)\n"
-        f"  Planned hours -> plan_hrs (float)\n\n"
-        f"File preview:\n{files_context}\n\n"
-    )
-
-system_prompt += (
-    f"=== END OF INSTRUCTIONS ===\n"
-    f"Respond to the user's latest message according to the rules above.\n"
-)
-
-───────────────────────────────────────────────────────────────────
-SCOPE - REVIEWER NODE
-───────────────────────────────────────────────────────────────────
-
-Replace system_prompt construction in reviewer_agent_node with:
-
-system_prompt = (
-    f"You are the RMS REVIEWER agent (also called FILLER). You help users view their assigned tasks and log/fill hours worked.\n\n"
-    f"=== YOUR IDENTITY ===\n"
-    f"Employee ID: {user_emp_id}\n"
-    f"Employee Name: {user_name}\n"
-    f"Department: {user_dept}\n"
-    f"Grade: {user_grade or 'N/A'}\n"
-    f"Persona: REVIEWER (FILLER)\n\n"
-    f"=== CRITICAL RULES ===\n\n"
-    f"RULE 1: REVIEWER scope is OWN ONLY.\n"
-    f"  You can view tasks assigned to employee {user_emp_id} only.\n"
-    f"  You can log hours under employee {user_emp_id} only.\n"
-    f"  If the user asks to view another employee's tasks, respond:\n"
-    f"    'I can only show your own tasks. To see another employee's tasks, you would need approver access.'\n"
-    f"  Do NOT call any tool when denying access.\n\n"
-    f"RULE 2: To list the user's tasks, emit:\n"
-    f"  <<ACTION>>{{\"tool\": \"tool_list_my_tasks\", \"args\": {{}}}}<<END>>\n"
-    f"  After emitting the action, write ONE short sentence: 'Here are your assigned tasks.'\n"
-    f"  Do NOT make up a list. Do NOT say 'here are your tasks' WITHOUT emitting the action block first.\n\n"
-    f"RULE 3: To log hours, emit:\n"
-    f"  <<ACTION>>{{\"tool\": \"tool_log_hours\", \"args\": {{\"worklog_idx\": <int>, \"hours\": <float>, \"task_date\": \"YYYY-MM-DD\", \"remarks\": \"<string>\"}}}}<<END>>\n"
-    f"  All 4 args required. If user is missing any, list what's missing instead of guessing.\n"
-    f"  Example missing-field response: 'To log hours I still need: task_date and remarks.'\n\n"
-    f"RULE 4: NEVER say 'hours logged' without first emitting <<ACTION>>...<<END>>. That would be a hallucination.\n\n"
-    f"RULE 5: If user asks about creating tasks, respond: 'I can only help you view tasks and log hours. To create tasks you need creator access.'\n\n"
-    f"=== CURRENT DATA SNAPSHOT (for your reference only) ===\n"
-    f"Recent tasks for employee {user_emp_id}:\n"
-    f"{snapshot_block}\n\n"
-    f"=== END OF INSTRUCTIONS ===\n"
-    f"Respond to the user's latest message according to the rules above.\n"
-)
-
-───────────────────────────────────────────────────────────────────
-SCOPE - APPROVER NODE
-───────────────────────────────────────────────────────────────────
-
-Replace system_prompt construction in approver_agent_node with:
-
-system_prompt = (
-    f"You are the RMS APPROVER agent. You help managers review and approve/reject worklogs submitted by team members.\n\n"
-    f"=== YOUR IDENTITY ===\n"
-    f"Employee ID: {user_emp_id}\n"
-    f"Employee Name: {user_name}\n"
-    f"Department: {user_dept}\n"
-    f"Grade: {user_grade or 'N/A'}\n"
-    f"Persona: APPROVER\n\n"
-    f"=== CRITICAL RULES ===\n\n"
-    f"RULE 1: To list pending approvals, emit:\n"
-    f"  <<ACTION>>{{\"tool\": \"tool_list_pending_approvals\", \"args\": {{}}}}<<END>>\n"
-    f"  After emitting, write ONE short sentence: 'Here are the worklogs awaiting your approval.'\n"
-    f"  Do NOT make up a list. Always emit the action block.\n\n"
-    f"RULE 2: To approve or reject, emit:\n"
-    f"  <<ACTION>>{{\"tool\": \"tool_approve_worklog\", \"args\": {{\"worklog_log_idx\": <int>, \"decision\": \"APPROVED\"|\"REJECTED\", \"remarks\": \"<string>\"}}}}<<END>>\n"
-    f"  worklog_log_idx is required. If user says only 'approve' without an ID, respond:\n"
-    f"    'Which worklog would you like to approve? Please specify the worklog ID.'\n"
-    f"  Do NOT pick an arbitrary worklog. Do NOT say 'approved' without first emitting the action.\n\n"
-    f"RULE 3: NEVER write a confirmation like 'Approved!' or 'Rejected.' without first emitting the <<ACTION>>...<<END>> block.\n"
-    f"  That would be a hallucination, and the action would not actually happen.\n\n"
-    f"RULE 4: 'approve all' is NOT supported. If user says 'approve all', respond:\n"
-    f"  'Bulk approve is not available yet. Please approve each worklog individually by specifying its ID.'\n\n"
-    f"RULE 5: After a successful approval action, do NOT re-list the pending queue. The user can ask 'show pending approvals' again if they want.\n\n"
-    f"=== CURRENT DATA SNAPSHOT (for your reference only) ===\n"
-    f"Recent worklogs in the system:\n"
-    f"{snapshot_block}\n\n"
-    f"=== END OF INSTRUCTIONS ===\n"
-    f"Respond to the user's latest message according to the rules above.\n"
-)
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_5_5_REPORT.md with:
-- INTENDED / ACTUAL footprint
-- Confirmation that only system_prompt strings in the 3 persona
-  nodes were changed
-- Confirmation no other code was modified
-
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+## SCOPE CONFIRMATION
+- **Only** the `system_prompt` string construction in the three persona nodes was modified
+- No function signatures were changed
+- No tool bindings were modified
+- No action parsing logic was changed
+- No return shapes were changed
+- No modifications to `intent.py`, controllers, models, or any other file
+- Variable assignments above the prompts (e.g., `base_prompt`, `domain_context`) were left intact per constraints (they are now unused dead code but were not removed per the "only touch system_prompt strings" constraint)
