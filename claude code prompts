@@ -1,119 +1,20 @@
-# TASK 5.2: Rewrite RMS Intent Classifier Prompt — Report
-
-## INTENDED Footprint
-- **Files to modify:** `app/workflows/rms_workflow/intent.py` only.
-- **Changes:**
-  1. Expand `MODULE_DOMAIN_DESCRIPTION` constant (preserve variable name).
-  2. Replace `_prompt_template` with a comprehensive, example-driven prompt.
-- **No changes to:** `RMSIntentClassification` Pydantic schema, `keyword_fallback()`, `classify_rms_intent()`, or any other file.
-
-## ACTUAL Footprint
-- **Files modified:** `app/workflows/rms_workflow/intent.py` (2 edits).
-  1. **`MODULE_DOMAIN_DESCRIPTION`** (lines 36–77): Expanded from a 4-line summary to a 42-line detailed description with persona definitions, collection roles, and 6 critical disambiguation rules.
-  2. **`_prompt_template`** (lines 110–190): Replaced a minimal 4-line template with a 80-line comprehensive prompt containing 17 examples, confidence calibration rules, and explicit JSON-only output instructions.
-
-## Confirmations
-| Constraint | Status |
-|---|---|
-| Only `intent.py` modified | CONFIRMED |
-| `RMSIntentClassification` schema unchanged | CONFIRMED (zero modifications) |
-| `keyword_fallback()` unchanged | CONFIRMED (zero modifications) |
-| `classify_rms_intent()` structure unchanged | CONFIRMED (zero modifications) |
-| `_parser` unchanged | CONFIRMED (zero modifications) |
-| `input_variables` and `partial_variables` signatures unchanged | CONFIRMED |
-
-## MODULE_DOMAIN_DESCRIPTION — Before vs After
-
-**Before (4 lines):**
-- Brief one-paragraph description of collections and personas.
-- No disambiguation rules.
-- Ambiguous description of `rms_projectplan` as "create tasks, plan project work."
-
-**After (42 lines):**
-- Clearly distinguishes `rms_timesheet` as the PRIMARY collection.
-- Explicitly marks `rms_projectplan` as NOT YET IMPLEMENTED, with specific language triggers.
-- Defines all 3 personas with concrete action descriptions.
-- Includes 6 numbered disambiguation rules covering the common misclassifications.
-- Covers OUT_OF_DOMAIN cases (weather, jokes, salary, material requisition).
-
-## New `_prompt_template` — Full Content
-
-```
-You are an intent classifier for the RMS (Resource Management System) module.
-
-{module_description}
-
-Now classify the following user message. Use the rules above carefully — especially the disambiguation rules.
-
-EXAMPLES:
-
-User: "show my tasks"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Listing assigned tasks for filling hours - REVIEWER action."}
-
-User: "what are my pending tasks"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Asking to view assigned tasks - REVIEWER."}
-
-User: "log 8 hours today on task 5"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Logging hours against a task is REVIEWER, not CREATOR."}
-
-User: "fill timesheet for today"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Filling timesheet is REVIEWER persona."}
-
-User: "I worked 6 hours on the auth feature today, please log it"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Logging worked hours - REVIEWER."}
-
-User: "create a task for me on project 5 product 10 task 3 from monday to friday with 16 planned hours"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "CREATOR", "confidence": "HIGH", "reasoning": "Creating a new task assignment - CREATOR."}
-
-User: "assign task 7 to Athira for project 100"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "CREATOR", "confidence": "HIGH", "reasoning": "Assigning task to a reportee - CREATOR."}
-
-User: "I need to add a new task"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "CREATOR", "confidence": "HIGH", "reasoning": "Adding a new task - CREATOR."}
-
-User: "show pending approvals"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Viewing pending worklogs for approval - APPROVER."}
-
-User: "approve worklog 12"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Approving a worklog - APPROVER."}
-
-User: "reject worklog 5 with reason late submission"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Rejecting a worklog - APPROVER."}
-
-User: "approve all pending"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Bulk approval - APPROVER."}
-
-User: "create a project plan for the new mobile app"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_projectplan", "persona": "CREATOR", "confidence": "MEDIUM", "reasoning": "Explicit project-planning language - rms_projectplan."}
-
-User: "set up project schedule for Q3 deliverables"
-Output: {"domain": "IN_DOMAIN", "collection": "rms_projectplan", "persona": "CREATOR", "confidence": "MEDIUM", "reasoning": "Project schedule setup - rms_projectplan."}
-
-User: "what is the weather today"
-Output: {"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Not related to RMS at all."}
-
-User: "tell me a joke"
-Output: {"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Conversational request unrelated to RMS."}
-
-User: "what's my salary"
-Output: {"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Salary is HRMS module, not RMS."}
-
-User: "approve material requisition 5"
-Output: {"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Material requisition is MRR module, not RMS."}
-
-CONFIDENCE CALIBRATION:
-- HIGH: Message clearly matches one of the example patterns or its variants. No ambiguity.
-- MEDIUM: Message is reasonably clear but could be interpreted multiple ways, OR uses rms_projectplan language (which is rare).
-- LOW: Message is vague or barely-related. Likely better classified as OUT_OF_DOMAIN.
-
-Now classify this message:
-
-User message: {user_message}
-
-{format_instructions}
-
-Respond ONLY with valid JSON matching the schema. No prose before or after the JSON.
-```
-
-## Summary
-The prompt has been upgraded from a thin 3-line template to a comprehensive classifier with 17 real-world examples covering all 3 personas, both collections, OUT_OF_DOMAIN cases, and confidence calibration guidance. The `MODULE_DOMAIN_DESCRIPTION` now encodes the full persona/collection model with explicit disambiguation rules, ensuring the LLM receives consistent guidance regardless of few-shot examples alone.
+=== END DEBUG ===
+INFO:     10.5.1.58:56861 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:56907 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=show my tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3428, collection='rms_timesheet', last_msg=show my tasks
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=28
+INFO:     10.5.1.58:57065 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=log 4 hours today on task 1
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3428, collection='rms_timesheet', last_msg=log 4 hours today on task 1
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=62
+INFO:     10.5.1.58:57126 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=create a task for project 5
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have creator access to rms timesheet. Please contact your administrator if you need this permission."
