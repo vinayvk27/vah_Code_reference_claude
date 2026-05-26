@@ -1,18 +1,36 @@
-Hi! What can I help you with?
-create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2026-25-26 to 2026-25-28,planned 8 hours
-V
-🤖
-
-
-I have created the task for employee 3010. Let me know if you need further assistance!
+INFO:     10.5.1.58:58628 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
 [DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
 [DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
 [DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
 Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
 [RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] creator_agent_node returning. full_text_len=86
+[DIAG-RMS] creator_agent_node returning. full_text_len=0
 
-select * from pp_task_assigment_demo
+** in the same chat session if i tried to create task again means blank message is coming.
+
+but i have a option called clear session and then i asked the below things
+create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2026-05-26 to 2026-05-28,planned 8 hours
+V
+🤖
+
+
+I have created the task for employee 3010 with the specified details.
+
 # WorkLogIdx, Resource, PlanIdx, ProjectIdx, ProductIdx, TaskIdx, ActivityIdx, StartDate, EndDate, PlanHrs, IsCompleted, created_by, created_date
 '20', '2291', NULL, '100', '10', '5', '1', '2026-05-25', '2026-05-30', '16', '0', '2291', '2026-05-26'
 '21', '2291', NULL, '100', '10', '5', '1', '2026-05-25', '2026-05-30', '16', '0', '2291', '2026-05-26'
+'22', '3010', NULL, '100', '10', '1', '1', '2026-05-26', '2026-05-28', '8', '0', '2830', '2026-05-26'
+INFO:     10.5.1.58:58992 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] creator_agent_node returning. full_text_len=0
+INFO:     10.5.1.58:60246 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] creator_agent_node returning. full_text_len=287
