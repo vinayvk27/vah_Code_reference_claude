@@ -1,210 +1,28 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.workflows.rms_workflow.intent import classify_rms_intent; test_messages = ['show my tasks', 'log 4 hours today on task 1', 'create a task for project 5', 'create a task for myself, project 100, product 10, task index 5, activity 1, from 2026-05-25 to 2026-05-30, planned 16 hours', 'log 8 hours on task 1 for 2026-05-26 with remark design work', 'show pending approvals', 'approve worklog 5', 'tell me a joke', 'could you release it']; [print('\\n--- %r' % msg, '\\n  domain=%s, collection=%r, persona=%r, confidence=%s' % (classify_rms_intent(msg).domain, classify_rms_intent(msg).collection, classify_rms_intent(msg).persona, classify_rms_intent(msg).confidence), '\\n  reasoning: %s' % classify_rms_intent(msg).reasoning) for msg in test_messages]"
-\n--- 'show my tasks' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH \n  reasoning: Asking to view assigned tasks - REVIEWER.
-\n--- 'log 4 hours today on task 1' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH \n  reasoning: Logging hours against a task is explicitly defined as REVIEWER action, not CREATOR.\n--- 'create a task for project 5' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='CREATOR', confidence=HIGH \n  reasoning: Explicitly states intent to create a new task, which aligns with the CREATOR persona under rms_timesheet.
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 84, in parse_result
-    return parse_json_markdown(text)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 164, in parse_json_markdown
-    return _parse_json(json_str, parser=parser)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 194, in _parse_json
-    return parser(json_str)
-           ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 137, in parse_partial_json
-    return json.loads(s, strict=strict)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\__init__.py", line 359, in loads
-    return cls(**kw).decode(s)
-           ^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 337, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 353, in raw_decode
-    obj, end = self.scan_once(s, idx)
-               ^^^^^^^^^^^^^^^^^^^^^^
-json.decoder.JSONDecodeError: Expecting ',' delimiter: line 1 column 76 (char 75)
+Hi! What can I help you with?
+show my tasks
+V
+🤖
 
-The above exception was the direct cause of the following exception:
+Here are your currently assigned tasks:
 
-Traceback (most recent call last):
-  File "D:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 207, in classify_rms_intent
-    parsed = _parser.parse(raw_text)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 90, in parse
-    return self.parse_result([Generation(text=text)])
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 74, in parse_result
-    json_object = super().parse_result(result)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 87, in parse_result
-    raise OutputParserException(msg, llm_output=text) from e
-langchain_core.exceptions.OutputParserException: Invalid json output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "persona": "CREATOR", "confidence": "HIGH", "reasoning": "The user explicitly requests to 'create a task' with specific project, product, and hour details, which matches the CREATOR persona rule for creating new task assignments."}
-For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 84, in parse_result
-    return parse_json_markdown(text)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 164, in parse_json_markdown
-    return _parse_json(json_str, parser=parser)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 194, in _parse_json
-    return parser(json_str)
-           ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 137, in parse_partial_json
-    return json.loads(s, strict=strict)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\__init__.py", line 359, in loads
-    return cls(**kw).decode(s)
-           ^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 337, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 353, in raw_decode
-    obj, end = self.scan_once(s, idx)
-               ^^^^^^^^^^^^^^^^^^^^^^
-json.decoder.JSONDecodeError: Expecting ',' delimiter: line 1 column 76 (char 75)
+1. **Task #5** (Task ID: 20)
+   - Project ID: 100
+   - Plan Hours: 16.0
+   - Period: 2026-05-25 to 2026-05-30
+   - Status: In Progress
 
-The above exception was the direct cause of the following exception:
+2. **Task #5** (Task ID: 21)
+   - Project ID: 100
+   - Plan Hours: 16.0
+   - Period: 2026-05-25 to 2026-05-30
+   - Status: In Progress
 
-Traceback (most recent call last):
-  File "D:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 207, in classify_rms_intent
-    parsed = _parser.parse(raw_text)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 90, in parse
-    return self.parse_result([Generation(text=text)])
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 74, in parse_result
-    json_object = super().parse_result(result)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 87, in parse_result
-    raise OutputParserException(msg, llm_output=text) from e
-langchain_core.exceptions.OutputParserException: Invalid json output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "persona": "CREATOR", "confidence": "HIGH", "reasoning": "The user explicitly requests to 'create a task' with specific project, product, and hour details, which matches the CREATOR persona rule for creating new task assignments."}
-For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 84, in parse_result
-    return parse_json_markdown(text)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 164, in parse_json_markdown
-    return _parse_json(json_str, parser=parser)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 194, in _parse_json
-    return parser(json_str)
-           ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 137, in parse_partial_json
-    return json.loads(s, strict=strict)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\__init__.py", line 359, in loads
-    return cls(**kw).decode(s)
-           ^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 337, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 353, in raw_decode
-    obj, end = self.scan_once(s, idx)
-               ^^^^^^^^^^^^^^^^^^^^^^
-json.decoder.JSONDecodeError: Expecting ',' delimiter: line 1 column 76 (char 75)
+Let me know if you'd like to log hours for any of these tasks!
 
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "D:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 207, in classify_rms_intent
-    parsed = _parser.parse(raw_text)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 90, in parse
-    return self.parse_result([Generation(text=text)])
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 74, in parse_result
-    json_object = super().parse_result(result)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 87, in parse_result
-    raise OutputParserException(msg, llm_output=text) from e
-langchain_core.exceptions.OutputParserException: Invalid json output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "persona": "CREATOR", "confidence": "HIGH", "reasoning": "The user explicitly requests to 'create a task' with specific project, product, and hour details, which matches the CREATOR persona rule for creating new task assignments."}
-For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 84, in parse_result
-    return parse_json_markdown(text)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 164, in parse_json_markdown
-    return _parse_json(json_str, parser=parser)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 194, in _parse_json
-    return parser(json_str)
-           ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 137, in parse_partial_json
-    return json.loads(s, strict=strict)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\__init__.py", line 359, in loads
-    return cls(**kw).decode(s)
-           ^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 337, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 353, in raw_decode
-    obj, end = self.scan_once(s, idx)
-               ^^^^^^^^^^^^^^^^^^^^^^
-json.decoder.JSONDecodeError: Expecting ',' delimiter: line 1 column 76 (char 75)
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "D:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 207, in classify_rms_intent
-    parsed = _parser.parse(raw_text)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 90, in parse
-    return self.parse_result([Generation(text=text)])
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 74, in parse_result
-    json_object = super().parse_result(result)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 87, in parse_result
-    raise OutputParserException(msg, llm_output=text) from e
-langchain_core.exceptions.OutputParserException: Invalid json output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "persona": "CREATOR", "confidence": "HIGH", "reasoning": "The user explicitly requests to 'create a task' with specific project, product, and hour details, which matches the CREATOR persona rule for creating new task assignments."}
-For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE
-Traceback (most recent call last):
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 84, in parse_result
-    return parse_json_markdown(text)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 164, in parse_json_markdown
-    return _parse_json(json_str, parser=parser)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 194, in _parse_json
-    return parser(json_str)
-           ^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\utils\json.py", line 137, in parse_partial_json
-    return json.loads(s, strict=strict)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\__init__.py", line 359, in loads
-    return cls(**kw).decode(s)
-           ^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 337, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ProgramData\anaconda3\envs\Machinelearning\Lib\json\decoder.py", line 353, in raw_decode
-    obj, end = self.scan_once(s, idx)
-               ^^^^^^^^^^^^^^^^^^^^^^
-json.decoder.JSONDecodeError: Expecting ',' delimiter: line 1 column 76 (char 75)
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "D:\dev\agentic_ai\dpah_backend_v1\app\workflows\rms_workflow\intent.py", line 207, in classify_rms_intent
-    parsed = _parser.parse(raw_text)
-             ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 90, in parse
-    return self.parse_result([Generation(text=text)])
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\pydantic.py", line 74, in parse_result
-    json_object = super().parse_result(result)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\ml_env_311\Lib\site-packages\langchain_core\output_parsers\json.py", line 87, in parse_result
-    raise OutputParserException(msg, llm_output=text) from e
-langchain_core.exceptions.OutputParserException: Invalid json output: {"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "persona": "CREATOR", "confidence": "HIGH", "reasoning": "The user explicitly requests to 'create a task' with specific project, product, and hour details, which matches the CREATOR persona rule for creating new task assignments."}
-For troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE
-\n--- 'create a task for myself, project 100, product 10, task index 5, activity 1, from 2026-05-25 to 2026-05-30, planned 16 hours' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='CREATOR', confidence=LOW \n 
- reasoning: Keyword fallback used; LLM classifier unavailable.
-\n--- 'log 8 hours on task 1 for 2026-05-26 with remark design work' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH \n  reasoning: The user is logging hours on a specific task, which is a REVIEWER action according to disambiguation rule 1.
-\n--- 'show pending approvals' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='APPROVER', confidence=HIGH \n  reasoning: The request explicitly asks to view pending approvals, which maps directly to Rule 4 for the APPROVER persona on the rms_timesheet collection.
-\n--- 'approve worklog 5' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='APPROVER', confidence=HIGH \n  reasoning: The message explicitly requests to approve a specific worklog, which matches the criteria for the APPROVER persona.
-\n--- 'tell me a joke' \n  domain=OUT_OF_DOMAIN, collection='', persona='', confidence=HIGH \n  reasoning: Asking for a joke is not related to tasks, timesheets, projects, or worklogs, falling outside the RMS scope.
-\n--- 'could you release it' \n  domain=IN_DOMAIN, collection='rms_timesheet', persona='APPROVER', confidence=HIGH \n  reasoning: The phrase 'release it' in the context of a Resource Management System typically refers to approving or releasing a submitted worklog, which is an APPROVER action within the rms_timesheet collection.
+INFO:     10.5.1.58:56711 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show my tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=2291, collection='rms_timesheet', last_msg=show my tasks
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=375
