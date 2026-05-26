@@ -1,74 +1,170 @@
-=== END DEBUG ===
-INFO:     10.5.1.58:55275 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 3428 (Vinay Neelam)
+"""
+RMS Intent Classification
+=========================
+LLM-driven classifier with keyword-fallback for RMS workflow routing.
 
-=== DEBUG: Resolved context for emp_no 3428 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:55276 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:55372 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=show my tasks
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_projectplan'
-[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have reviewer access to rms projectplan. Please contact your administrator if you need this permission."
-INFO:     10.5.1.58:55643 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=log 4 hours today on task
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have creator access to rms timesheet. Please contact your administrator if you need this permission."
-INFO:     10.5.1.58:55761 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=create a task for project 5
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_projectplan'
-[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have creator access to rms projectplan. Please contact your administrator if you need this permission."
-User context built for: 2291 (Vikash Kumar Singh)
+The classifier returns an RMSIntentClassification with:
+  - domain: "IN_DOMAIN" or "OUT_OF_DOMAIN"
+  - collection: "rms_timesheet", "rms_projectplan", or ""
+  - persona: "CREATOR", "REVIEWER", "APPROVER", or ""
+  - confidence: "HIGH", "MEDIUM", or "LOW"
+  - reasoning: short explanation
 
-=== DEBUG: Resolved context for emp_no 2291 ===
-  group_idx = 32
-  role_ids = [8]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 2 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:55957 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-User context built for: 2291 (Vikash Kumar Singh)
+Uses PydanticOutputParser for structured output, which works with any LLM
+provider that can produce JSON-formatted text. This is more portable than
+relying on provider-native structured-output APIs (which our internal LLM
+does not fully implement).
+"""
 
-=== DEBUG: Resolved context for emp_no 2291 ===
-  group_idx = 32
-  role_ids = [8]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 2 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:55958 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 2291 (Vikash Kumar Singh)
+from pydantic import BaseModel, Field
+from typing import Literal
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
 
-=== DEBUG: Resolved context for emp_no 2291 ===
-  group_idx = 32
-  role_ids = [8]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 2 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:55959 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:56022 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show my tasks
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_projectplan'
-[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have reviewer access to rms projectplan. Please contact your administrator if you need this permission."
+from app.core.llm import get_llm_non_streaming
+from app.workflows.rms_workflow.prompts import (
+    APPROVER_KEYWORDS,
+    CREATOR_KEYWORDS,
+    FILLER_KEYWORDS,
+    QUERY_KEYWORDS,
+)
+
+# =============================================================================
+# MODULE DOMAIN DESCRIPTION
+# =============================================================================
+
+MODULE_DOMAIN_DESCRIPTION = """The RMS (Resource Management System) module handles timesheet logging and project planning.
+Available collections:
+  - rms_timesheet: log hours, view tasks, approve worklogs, review team timesheets.
+  - rms_projectplan: create tasks, plan project work, manage project structure.
+Available personas: CREATOR (creates entries), REVIEWER (reviews own data and submits), APPROVER (approves others' submissions)."""
+
+# =============================================================================
+# PYDANTIC MODEL
+# =============================================================================
+
+
+class RMSIntentClassification(BaseModel):
+    """Structured output for RMS intent classification."""
+
+    domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"] = Field(
+        description='Whether the user message falls within RMS scope.'
+    )
+    collection: str = Field(
+        description='Which RMS collection the request targets: "rms_timesheet", "rms_projectplan", or empty if out of domain.'
+    )
+    persona: str = Field(
+        description='Which persona the request targets: "CREATOR", "REVIEWER", "APPROVER", or empty if out of domain.'
+    )
+    confidence: Literal["HIGH", "MEDIUM", "LOW"] = Field(
+        description='Confidence level in the classification.'
+    )
+    reasoning: str = Field(
+        description='One-sentence explanation of the classification.'
+    )
+
+
+# =============================================================================
+# PARSER & PROMPT TEMPLATE (module-level — built once at import time)
+# =============================================================================
+
+_parser = PydanticOutputParser(pydantic_object=RMSIntentClassification)
+
+_prompt_template = PromptTemplate(
+    template=(
+        "{module_description}\n\n"
+        "Classify the following user message into a structured response.\n\n"
+        "{format_instructions}\n\n"
+        "User message: {user_message}\n"
+    ),
+    input_variables=["user_message"],
+    partial_variables={
+        "module_description": MODULE_DOMAIN_DESCRIPTION,
+        "format_instructions": _parser.get_format_instructions(),
+    },
+)
+
+
+# =============================================================================
+# LLM CLASSIFIER
+# =============================================================================
+
+
+def classify_rms_intent(user_message: str) -> RMSIntentClassification:
+    """Classify the user's intent using the LLM with PydanticOutputParser."""
+    llm = get_llm_non_streaming()
+
+    try:
+        prompt_value = _prompt_template.invoke({"user_message": user_message})
+        llm_response = llm.invoke(prompt_value)
+        # llm_response is an AIMessage; the JSON is in .content
+        raw_text = getattr(llm_response, "content", "") or ""
+        parsed = _parser.parse(raw_text)
+        return parsed
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return keyword_fallback(user_message)
+
+
+# =============================================================================
+# KEYWORD FALLBACK
+# =============================================================================
+
+
+def keyword_fallback(user_message: str) -> RMSIntentClassification:
+    """
+    Keyword-based fallback classifier when LLM is unavailable.
+    Returns LOW confidence and assumes in-domain.
+    """
+    msg_lower = user_message.lower()
+
+    # Priority: APPROVER > CREATOR > REVIEWER
+    for keyword in APPROVER_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="APPROVER",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    for keyword in CREATOR_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="CREATOR",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    for keyword in FILLER_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="REVIEWER",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    for keyword in QUERY_KEYWORDS:
+        if keyword in msg_lower:
+            return RMSIntentClassification(
+                domain="IN_DOMAIN",
+                collection="rms_timesheet",
+                persona="REVIEWER",
+                confidence="LOW",
+                reasoning="Keyword fallback used; LLM classifier unavailable.",
+            )
+
+    # No match — default to reviewer
+    return RMSIntentClassification(
+        domain="IN_DOMAIN",
+        collection="rms_timesheet",
+        persona="REVIEWER",
+        confidence="LOW",
+        reasoning="Keyword fallback used; LLM classifier unavailable.",
+    )
