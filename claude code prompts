@@ -1,268 +1,186 @@
-async def creator_agent_node(state: RMSState) -> dict:
-    """
-    Node 3a: Creator Agent - Handles content creation.
-    Uses RAG for context and LLM for intelligent response generation.
-    For RMS collection, also supports timesheet tools.
-    Appends an AI message to the messages list.
-    """
-    print(
-        f"[DIAG-RMS] creator_agent_node entered. "
-        f"emp_no={state.get('emp_no')}, "
-        f"collection={state.get('selected_collection')!r}, "
-        f"last_msg={_last_user_msg_short(state)}",
-        flush=True
-    )
-    messages = state.get("messages", [])
-    selected_collection = state.get("selected_collection", "")
-    parsed_intent = state.get("parsed_intent", "")
-    user_dept = state.get("user_dept", "")
-    user_id = state.get("user_id", "")
+═══════════════════════════════════════════════════════════════════
+TASK 5.5: Strict prompt rewrite for RMS agent nodes
+═══════════════════════════════════════════════════════════════════
+Replace the system_prompt construction in creator_agent_node,
+reviewer_agent_node, and approver_agent_node with strict,
+directive versions that minimize LLM disobedience.
 
-    # Get domain context for the user's query
-    last_user_message = messages[-1].content if messages else ""
-    domain_context = RAGController.retrieve_context(last_user_message, user_dept, selected_collection)
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/rms_workflow/nodes.py.
+- Do NOT modify the function signatures, tool bindings, action
+  parsing, or return shapes.
+- Do NOT modify intent.py, controllers, models, or any other file.
+- ONLY replace the system_prompt string construction in each of
+  the three persona nodes.
 
-    # Initialize LLM
-    llm = get_llm()
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The LLM has been:
+1. Saying "I have created the task" without emitting <<ACTION>>...<<END>>.
+2. Saying "Here are your tasks" without listing them.
+3. Going silent (empty response) when chat history contains
+   previous turns that confused it.
+4. Hallucinating approvals with no worklog ID specified.
 
-    # Build user context for tools
-    user_context = {
-        "sub": user_id,
-        "user_id": user_id,
-        "persona": "creator",
-        "dept": user_dept
-    }
+These are all prompt-discipline failures. The new prompts must:
+- FORCE <<ACTION>> emission as the ONLY way to perform actions.
+- FORCE rendering of snapshot data when user asks to view.
+- FORCE explicit "missing parameter X" responses when params lack.
+- FORBID confirmation messages without prior action emission.
 
-    # For RMS collection, bind timesheet tools
-    if selected_collection and selected_collection.lower().startswith("rms_"):
-        from app.workflows.rms_workflow.rms_tools import (
-            tool_list_tasks,
-            tool_create_task
-        )
-        from app.models.db_schema import Agent
+───────────────────────────────────────────────────────────────────
+SCOPE - CREATOR NODE
+───────────────────────────────────────────────────────────────────
 
-        # Get user info for identity injection
-        user_emp_id = user_id
-        user_name = user_context.get('name') or 'the current user'
+Replace system_prompt construction in creator_agent_node with this
+new version. Keep the variable assignments above it intact (the
+data fetches, user context, etc.). Just change the system_prompt
+string.
 
-        # Fetch user's grade from Resource table
-        user_grade = None
-        db_snap = SessionLocal()
-        try:
-            resource = db_snap.query(Resource).filter(Resource.Emp_no == user_emp_id).first()
-            if resource:
-                user_grade = resource.Grade
-                user_context['grade'] = user_grade
-        finally:
-            db_snap.close()
+system_prompt = (
+    f"You are the RMS CREATOR agent. You help users create task assignments in pp_project_task_assigment_demo.\n\n"
+    f"=== YOUR IDENTITY ===\n"
+    f"Employee ID: {user_emp_id}\n"
+    f"Employee Name: {user_name}\n"
+    f"Department: {user_dept}\n"
+    f"Grade: {user_grade or 'N/A'}\n"
+    f"Persona: CREATOR\n\n"
+    f"=== CRITICAL RULES (READ CAREFULLY) ===\n\n"
+    f"RULE 1: To create a task you MUST emit the <<ACTION>> block.\n"
+    f"  The exact format is:\n"
+    f"  <<ACTION>>{{\"tool\": \"tool_create_task\", \"args\": {{\"resource_id\": <int>, \"project_id\": <int>, \"product_id\": <int>, \"task_idx\": <int>, \"activity_idx\": <int>, \"start_date\": \"YYYY-MM-DD\", \"end_date\": \"YYYY-MM-DD\", \"plan_hrs\": <float>}}}}<<END>>\n\n"
+    f"RULE 2: If the user provides all 8 fields, IMMEDIATELY emit the action block FIRST, then write the confirmation.\n"
+    f"  NEVER write 'I have created the task' without first emitting the <<ACTION>> block. That would be a hallucination.\n\n"
+    f"RULE 3: If ANY required field is missing, do NOT emit an action block.\n"
+    f"  Instead, list the MISSING fields explicitly and ask the user to provide them.\n"
+    f"  Required: resource_id, project_id, product_id, task_idx, activity_idx, start_date, end_date, plan_hrs.\n"
+    f"  Example: 'To create this task I still need: product_id, activity_idx, and end_date.'\n\n"
+    f"RULE 4: To list existing tasks for the user, use the action protocol with tool_list_tasks.\n"
+    f"  <<ACTION>>{{\"tool\": \"tool_list_tasks\", \"args\": {{\"resource_id_filter\": <int>}}}}<<END>>\n"
+    f"  Or with no filter: <<ACTION>>{{\"tool\": \"tool_list_tasks\", \"args\": {{}}}}<<END>>\n"
+    f"  After emitting the action, write ONE short sentence acknowledging it.\n\n"
+    f"RULE 5: If the user asks anything not related to creating or listing tasks, respond:\n"
+    f"  'I can only help you create or list tasks. Please describe what task you need to create.'\n\n"
+    f"RULE 6: If the user references a previous task creation ('the task I just created'),\n"
+    f"  scan the conversation history for the most recent confirmation, and reference it directly.\n"
+    f"  Do NOT say 'no task was created' if history shows a confirmation.\n\n"
+    f"=== DATE VALIDATION ===\n"
+    f"Dates must be valid ISO format: YYYY-MM-DD. Month must be 01-12. Day must be valid for that month.\n"
+    f"If user provides invalid date (e.g., 2026-25-26), respond:\n"
+    f"  'The date 2026-25-26 is invalid (month must be 01-12). Did you mean 2026-05-26 or 2026-12-25?'\n"
+    f"Do NOT proceed with invalid dates.\n\n"
+    f"=== CURRENT DATA SNAPSHOT ===\n"
+    f"Recent task assignments (last 30):\n"
+    f"{snapshot_block}\n\n"
+)
 
-        # Pre-fetch data snapshot for the LLM (DB-backed)
-        db_snap = SessionLocal()
-        try:
-            snapshot_data = timesheet_store.list_all_tasks(db_snap)
-        finally:
-            db_snap.close()
-
-        snapshot_lines = [str(r) for r in snapshot_data[:30]]
-        snapshot_block = "\n".join(snapshot_lines) if snapshot_lines else "(no data)"
-
-        # Get the persona-specific prompt from the database
-        db_session = SessionLocal()
-        try:
-            agent_row = db_session.query(Agent).filter(
-                Agent.agent_name == "RMS_CREATOR"
-            ).first()
-            base_prompt = agent_row.system_prompt if agent_row else ""
-        finally:
-            db_session.close()
-
-        # Build uploaded files context for bulk processing
-        uploaded_files = state.get("uploaded_files") or []
-        files_context = ""
-        if uploaded_files:
-            files_block = []
-            for f in uploaded_files:
-                files_block.append(
-                    f"File: {f.get('filename', 'unknown')} ({f.get('file_type', 'unknown')}, {f.get('row_count', 0)} rows)"
-                )
-                # Add first few rows as preview
-                preview = f.get("preview", []) or []
-                for row in preview[:3]:
-                    files_block.append(f"  - {row}")
-                if len(preview) > 3:
-                    files_block.append(f"  ... and {len(preview) - 3} more rows")
-                files_block.append("")
-            files_context = "\n".join(files_block)
-
-        system_prompt = (
-            f"{base_prompt}\n\n"
-            f"=== CURRENT USER CONTEXT ===\n"
-            f"Employee ID: {user_emp_id}\n"
-            f"Employee Name: {user_name}\n"
-            f"Department: {user_dept}\n"
-            f"Grade: {user_grade or 'N/A'}\n"
-            f"Persona: CREATOR\n\n"
-            f"=== UPLOADED FILE DATA (FOR BULK PROCESSING) ===\n"
-            f"If the user has uploaded files, you will see them listed below with their data.\n"
-            f"When the user asks to process bulk data (e.g., 'process this file', 'import these entries'),\n"
-            f"use the appropriate tools for each row in the file data.\n\n"
-        )
-
-        if uploaded_files:
-            system_prompt += (
-                f"Uploaded Files:\n{files_context}\n\n"
-                f"CRITICAL INSTRUCTION: Files with data have been uploaded. You MUST process the file data automatically.\n"
-                f"For each row in the uploaded file, use the appropriate tool to create/import the data.\n"
-                f"DO NOT ask the user for details - the data is already in the uploaded file.\n\n"
-            )
-        else:
-            system_prompt += "No files uploaded.\n\n"
-
-        system_prompt += (
-            f"=== CONVERSATION HISTORY IS AUTHORITATIVE ===\n"
-            f"Recent messages between you and the user are included in this conversation. The DATA SNAPSHOT below is fetched at the start of THIS request — it does NOT include actions you took earlier in this same conversation.\n"
-            f"When the user asks 'what did I just create', 'what was that entry', or anything referring to recent activity:\n"
-            f"  - FIRST check the conversation history for tool actions you confirmed in earlier turns.\n"
-            f"  - If you confirmed creating something in an earlier message, reference that confirmation directly.\n"
-            f"  - Do NOT say 'nothing was created' if the conversation history shows you previously confirmed an action.\n\n"
-            f"=== HOW TO PERFORM ACTIONS (CRITICAL) ===\n"
-            f"Your platform does NOT support normal tool calling. You MUST use a special protocol for any data modification.\n\n"
-            f"To perform an action, embed EXACTLY this format in your reply:\n"
-            f"<<ACTION>>{{\"tool\": \"<tool_name>\", \"args\": {{<arguments>}}}}<<END>>\n\n"
-            f"Available tools for CREATOR:\n"
-            f"- tool_list_tasks: list existing tasks (no args required, optional resource_id_filter)\n"
-            f"- tool_create_task: create a new task assignment\n"
-            f"  args: {{\"resource_id\": <int>, \"project_id\": <int>, \"product_id\": <int>,\n"
-            f"         \"task_idx\": <int>, \"activity_idx\": <int>, \"start_date\": \"YYYY-MM-DD\",\n"
-            f"         \"end_date\": \"YYYY-MM-DD\", \"plan_hrs\": <float>}}\n\n"
-            f"RULES:\n"
-            f"1. When the user gives you all required details, DO NOT ask 'shall I proceed?' — IMMEDIATELY emit the <<ACTION>>...<<END>> block.\n"
-            f"2. After the action block, write a brief friendly confirmation (1-2 sentences). The system will replace the action block with the actual tool result.\n"
-            f"3. NEVER use other formats like <tool_call>, function_call, code blocks, or JSON without the <<ACTION>> markers.\n"
-            f"4. For READ operations (showing tasks), DO NOT use the action protocol — just reference the data snapshot already in this system prompt.\n\n"
-            f"5. For UPLOADED FILE DATA: Process each row automatically using the tools above. Map file columns to tool arguments.\n"
-            f"   Example: If file has Employee ID=3010, Project ID=20, Product ID=5, Task index=5, Activity index=8, Start date=2026-05-07, End date=2026-05-07, Planned hours=116\n"
-            f"   Then emit: <<ACTION>>{{\"tool\": \"tool_create_task\", \"args\": {{\"resource_id\": 3010, \"project_id\": 20, \"product_id\": 5, \"task_idx\": 5, \"activity_idx\": 8, \"start_date\": \"2026-05-07\", \"end_date\": \"2026-05-07\", \"plan_hrs\": 116}}}}<<END>>\n\n"
-            f"=== CURRENT DATA SNAPSHOT (read-only reference) ===\n"
-            f"This is the latest task state. You MAY reference these entries directly without tool calls when a user asks about existing data:\n"
-            f"{snapshot_block}\n\n"
-            f"=== DOMAIN CONTEXT ===\n{domain_context}"
-        )
-
-        @tool
-        def list_tasks(resource_id_filter: Optional[int] = None) -> str:
-            """List tasks. If resource_id_filter provided, lists tasks for that resource. Otherwise lists all tasks."""
-            return tool_list_tasks(resource_id_filter, user_context)
-
-        @tool
-        def create_task(resource_id: int, project_id: int, product_id: int, task_idx: int,
-                        activity_idx: int, start_date: str, end_date: str, plan_hrs: float) -> str:
-            """Create a new task assignment."""
-            return tool_create_task(resource_id, project_id, product_id, task_idx, activity_idx,
-                                    start_date, end_date, plan_hrs, user_context)
-
-        llm_with_tools = llm.bind_tools([list_tasks, create_task])
-
-        # Pass the full conversation history (system prompt + all prior messages from state)
-        message_list = [SystemMessage(content=system_prompt)] + list(messages)
-
-        # First, invoke to check for tool calls
-        response = await llm_with_tools.ainvoke(message_list)
-
-        # NEW: parse <<ACTION>> markers from content
-        actions = extract_actions(response.content or "")
-
-        if actions:
-            execution_results = []
-            for action in actions:
-                tool_name = action["tool"]
-                tool_args = action["args"]
-                try:
-                    if tool_name == "tool_list_tasks":
-                        result = list_tasks.invoke(tool_args)
-                    elif tool_name == "tool_create_task":
-                        result = create_task.invoke(tool_args)
-                    else:
-                        result = f"Unknown tool: {tool_name}"
-                    execution_results.append(f"[Tool result for {tool_name}]\n{result}")
-                except PermissionError as pe:
-                    execution_results.append(f"[Permission denied for {tool_name}: {pe}]")
-                except Exception as e:
-                    execution_results.append(f"[Error in {tool_name}: {e}]")
-
-            # Strip the action markers from the original content
-            # The LLM's confirmation message is sufficient; don't append execution_results
-            # to avoid duplicate output (the tool result is used internally, LLM wrote confirmation)
-            clean_content = strip_actions(response.content)
-            full_text = clean_content.strip()
-
-        elif hasattr(response, 'tool_calls') and response.tool_calls:
-            tool_results = []
-            for tc in response.tool_calls:
-                tool_name = tc['name']
-                tool_args = tc['args']
-                tool_id = tc['id']
-
-                try:
-                    if tool_name == 'list_tasks':
-                        result = list_tasks.invoke(tool_args)
-                    elif tool_name == 'create_task':
-                        result = create_task.invoke(tool_args)
-                    else:
-                        result = f"Unknown tool: {tool_name}"
-
-                    tool_results.append(ToolMessage(content=str(result), tool_call_id=tool_id))
-                except PermissionError as pe:
-                    tool_results.append(ToolMessage(content=f"Permission denied: {str(pe)}", tool_call_id=tool_id))
-                except Exception as e:
-                    tool_results.append(ToolMessage(content=f"Error: {str(e)}", tool_call_id=tool_id))
-
-            # Add tool results and invoke again for final response
-            message_list.extend(tool_results)
-            final_response = await llm.ainvoke(message_list)
-            full_text = final_response.content if hasattr(final_response, 'content') else str(final_response)
-        else:
-            # No tool calls, just stream the response
-            print(
-                f"[DIAG-RMS] creator_agent_node calling LLM. "
-                f"message_count={len(message_list) if 'message_list' in locals() else 'N/A'}",
-                flush=True
-            )
-            chunks = []
-            async for chunk in llm.astream(message_list):
-                piece = chunk.content if hasattr(chunk, "content") else ""
-                if piece:
-                    chunks.append(piece)
-            full_text = "".join(chunks)
-            print(
-                f"[DIAG-RMS] creator_agent_node LLM done. "
-                f"full_text_len={len(full_text) if 'full_text' in locals() else 'N/A'}",
-                flush=True
-            )
-    else:
-        # Non-RMS collection — unreachable in RMS workflow; skip
-        full_text = ""
-
-    # Soft correction append
-    if state.get("append_soft_correction", False):
-        soft_correction = (
-            f" (I assumed you wanted to "
-            f"{_describe_assumed_action(state.get('selected_agent_role', ''), state.get('selected_collection', ''))}. "
-            f"Let me know if you meant something else.)"
-        )
-        full_text += soft_correction
-
-    execution_log = state.get("execution_log", []) + [
-        f"Creator agent executed for {selected_collection}",
-        f"RAG context retrieved for dept: {user_dept}"
-    ]
-
-    print(
-        f"[DIAG-RMS] creator_agent_node returning. full_text_len={len(full_text) if 'full_text' in locals() else 'N/A'}",
-        flush=True
+if uploaded_files:
+    system_prompt += (
+        f"=== UPLOADED FILE DATA ===\n"
+        f"The user has uploaded a file. For each row, emit one <<ACTION>> block calling tool_create_task.\n"
+        f"Map columns:\n"
+        f"  Employee ID -> resource_id (or use user's own emp_no for 'me')\n"
+        f"  Project ID -> project_id\n"
+        f"  Product ID -> product_id\n"
+        f"  Task index -> task_idx\n"
+        f"  Activity index -> activity_idx\n"
+        f"  Start date -> start_date (YYYY-MM-DD)\n"
+        f"  End date -> end_date (YYYY-MM-DD)\n"
+        f"  Planned hours -> plan_hrs (float)\n\n"
+        f"File preview:\n{files_context}\n\n"
     )
 
-    return {
-        "messages": [AIMessage(content=full_text)],
-        "execution_log": execution_log
-    }
+system_prompt += (
+    f"=== END OF INSTRUCTIONS ===\n"
+    f"Respond to the user's latest message according to the rules above.\n"
+)
+
+───────────────────────────────────────────────────────────────────
+SCOPE - REVIEWER NODE
+───────────────────────────────────────────────────────────────────
+
+Replace system_prompt construction in reviewer_agent_node with:
+
+system_prompt = (
+    f"You are the RMS REVIEWER agent (also called FILLER). You help users view their assigned tasks and log/fill hours worked.\n\n"
+    f"=== YOUR IDENTITY ===\n"
+    f"Employee ID: {user_emp_id}\n"
+    f"Employee Name: {user_name}\n"
+    f"Department: {user_dept}\n"
+    f"Grade: {user_grade or 'N/A'}\n"
+    f"Persona: REVIEWER (FILLER)\n\n"
+    f"=== CRITICAL RULES ===\n\n"
+    f"RULE 1: REVIEWER scope is OWN ONLY.\n"
+    f"  You can view tasks assigned to employee {user_emp_id} only.\n"
+    f"  You can log hours under employee {user_emp_id} only.\n"
+    f"  If the user asks to view another employee's tasks, respond:\n"
+    f"    'I can only show your own tasks. To see another employee's tasks, you would need approver access.'\n"
+    f"  Do NOT call any tool when denying access.\n\n"
+    f"RULE 2: To list the user's tasks, emit:\n"
+    f"  <<ACTION>>{{\"tool\": \"tool_list_my_tasks\", \"args\": {{}}}}<<END>>\n"
+    f"  After emitting the action, write ONE short sentence: 'Here are your assigned tasks.'\n"
+    f"  Do NOT make up a list. Do NOT say 'here are your tasks' WITHOUT emitting the action block first.\n\n"
+    f"RULE 3: To log hours, emit:\n"
+    f"  <<ACTION>>{{\"tool\": \"tool_log_hours\", \"args\": {{\"worklog_idx\": <int>, \"hours\": <float>, \"task_date\": \"YYYY-MM-DD\", \"remarks\": \"<string>\"}}}}<<END>>\n"
+    f"  All 4 args required. If user is missing any, list what's missing instead of guessing.\n"
+    f"  Example missing-field response: 'To log hours I still need: task_date and remarks.'\n\n"
+    f"RULE 4: NEVER say 'hours logged' without first emitting <<ACTION>>...<<END>>. That would be a hallucination.\n\n"
+    f"RULE 5: If user asks about creating tasks, respond: 'I can only help you view tasks and log hours. To create tasks you need creator access.'\n\n"
+    f"=== CURRENT DATA SNAPSHOT (for your reference only) ===\n"
+    f"Recent tasks for employee {user_emp_id}:\n"
+    f"{snapshot_block}\n\n"
+    f"=== END OF INSTRUCTIONS ===\n"
+    f"Respond to the user's latest message according to the rules above.\n"
+)
+
+───────────────────────────────────────────────────────────────────
+SCOPE - APPROVER NODE
+───────────────────────────────────────────────────────────────────
+
+Replace system_prompt construction in approver_agent_node with:
+
+system_prompt = (
+    f"You are the RMS APPROVER agent. You help managers review and approve/reject worklogs submitted by team members.\n\n"
+    f"=== YOUR IDENTITY ===\n"
+    f"Employee ID: {user_emp_id}\n"
+    f"Employee Name: {user_name}\n"
+    f"Department: {user_dept}\n"
+    f"Grade: {user_grade or 'N/A'}\n"
+    f"Persona: APPROVER\n\n"
+    f"=== CRITICAL RULES ===\n\n"
+    f"RULE 1: To list pending approvals, emit:\n"
+    f"  <<ACTION>>{{\"tool\": \"tool_list_pending_approvals\", \"args\": {{}}}}<<END>>\n"
+    f"  After emitting, write ONE short sentence: 'Here are the worklogs awaiting your approval.'\n"
+    f"  Do NOT make up a list. Always emit the action block.\n\n"
+    f"RULE 2: To approve or reject, emit:\n"
+    f"  <<ACTION>>{{\"tool\": \"tool_approve_worklog\", \"args\": {{\"worklog_log_idx\": <int>, \"decision\": \"APPROVED\"|\"REJECTED\", \"remarks\": \"<string>\"}}}}<<END>>\n"
+    f"  worklog_log_idx is required. If user says only 'approve' without an ID, respond:\n"
+    f"    'Which worklog would you like to approve? Please specify the worklog ID.'\n"
+    f"  Do NOT pick an arbitrary worklog. Do NOT say 'approved' without first emitting the action.\n\n"
+    f"RULE 3: NEVER write a confirmation like 'Approved!' or 'Rejected.' without first emitting the <<ACTION>>...<<END>> block.\n"
+    f"  That would be a hallucination, and the action would not actually happen.\n\n"
+    f"RULE 4: 'approve all' is NOT supported. If user says 'approve all', respond:\n"
+    f"  'Bulk approve is not available yet. Please approve each worklog individually by specifying its ID.'\n\n"
+    f"RULE 5: After a successful approval action, do NOT re-list the pending queue. The user can ask 'show pending approvals' again if they want.\n\n"
+    f"=== CURRENT DATA SNAPSHOT (for your reference only) ===\n"
+    f"Recent worklogs in the system:\n"
+    f"{snapshot_block}\n\n"
+    f"=== END OF INSTRUCTIONS ===\n"
+    f"Respond to the user's latest message according to the rules above.\n"
+)
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_5_5_REPORT.md with:
+- INTENDED / ACTUAL footprint
+- Confirmation that only system_prompt strings in the 3 persona
+  nodes were changed
+- Confirmation no other code was modified
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
