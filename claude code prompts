@@ -1,82 +1,197 @@
-"""
-RMS Intent Classification
-=========================
-LLM-driven classifier with keyword-fallback for RMS workflow routing.
+═══════════════════════════════════════════════════════════════════
+TASK 5.2: Rewrite RMS intent classifier prompt
+═══════════════════════════════════════════════════════════════════
+Replace the current minimal prompt with a comprehensive, example-
+driven prompt that correctly disambiguates RMS personas and
+collections.
 
-The classifier returns an RMSIntentClassification with:
-  - domain: "IN_DOMAIN" or "OUT_OF_DOMAIN"
-  - collection: "rms_timesheet", "rms_projectplan", or ""
-  - persona: "CREATOR", "REVIEWER", "APPROVER", or ""
-  - confidence: "HIGH", "MEDIUM", or "LOW"
-  - reasoning: short explanation
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/rms_workflow/intent.py.
+- Do NOT modify the Pydantic schema (RMSIntentClassification).
+- Do NOT modify the keyword_fallback function.
+- Do NOT modify classify_rms_intent's structure — only replace the
+  template content within _prompt_template.
+- Do NOT modify any other file.
+- Output INTENDED FOOTPRINT at start.
+- List modified files at end.
 
-Uses PydanticOutputParser for structured output, which works with any LLM
-provider that can produce JSON-formatted text. This is more portable than
-relying on provider-native structured-output APIs (which our internal LLM
-does not fully implement).
-"""
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Current classifier prompt is too thin — just a one-line module
+description + format instructions. Results in frequent
+misclassifications: "show my tasks" routed to rms_projectplan,
+"log hours" routed to CREATOR persona, etc.
 
-from pydantic import BaseModel, Field
-from typing import Literal
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import PromptTemplate
+The new prompt must encode our specific persona/collection model
+with examples that match real user phrasings.
 
-from app.core.llm import get_llm_non_streaming
-from app.workflows.rms_workflow.prompts import (
-    APPROVER_KEYWORDS,
-    CREATOR_KEYWORDS,
-    FILLER_KEYWORDS,
-    QUERY_KEYWORDS,
-)
+OUR ACTUAL DESIGN:
+- rms_timesheet is the primary collection. Used for: viewing
+  assigned tasks, filling worklog hours, approving worklogs.
+- rms_projectplan is for PROJECT MANAGER use only — creating
+  formal project plans, scheduling phases, allocating team capacity.
+  Currently not implemented; classifier should ONLY route here if
+  message explicitly mentions "project plan", "project schedule",
+  "project structure", or similar project-manager language.
+  By default, ambiguous task-related messages go to rms_timesheet.
 
-# =============================================================================
-# MODULE DOMAIN DESCRIPTION
-# =============================================================================
+PERSONAS:
+- CREATOR: creates task assignments (for self or for reportees).
+  Example: "create a task for me on project 5", "assign 8 hours to
+  task 3 starting Monday for me".
+- REVIEWER (aka FILLER): views assigned tasks AND logs/fills hours
+  against them. Example: "show my tasks", "log 8 hours today",
+  "fill timesheet for task 5", "what are my pending entries".
+- APPROVER: reviews and approves/rejects others' filled worklogs.
+  Example: "show pending approvals", "approve worklog 12",
+  "reject worklog 5 with reason late submission".
 
-MODULE_DOMAIN_DESCRIPTION = """The RMS (Resource Management System) module handles timesheet logging and project planning.
+CRITICAL DISTINCTIONS:
+- "log/fill hours" = REVIEWER (filling hours against an existing
+  task), NOT CREATOR. "Logging hours" is always reviewer regardless
+  of phrasing.
+- "create task" = CREATOR (creating a new task assignment).
+- "show my tasks" = REVIEWER (viewing assigned tasks, default action
+  before filling hours).
+- "approve" / "reject" + worklog identifier = APPROVER.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+Replace _prompt_template in intent.py with the new prompt below.
+Keep partial_variables block intact (module_description and
+format_instructions still get injected).
+
+Update MODULE_DOMAIN_DESCRIPTION to be more detailed (preserve the
+existing variable name so partial_variables still works).
+
+Here is the new template content. Use it literally:
+
+NEW MODULE_DOMAIN_DESCRIPTION constant value:
+"""The RMS (Resource Management System) module handles task assignments
+and timesheet logging for a software/engineering company.
+
 Available collections:
-  - rms_timesheet: log hours, view tasks, approve worklogs, review team timesheets.
-  - rms_projectplan: create tasks, plan project work, manage project structure.
-Available personas: CREATOR (creates entries), REVIEWER (reviews own data and submits), APPROVER (approves others' submissions)."""
+- rms_timesheet: PRIMARY collection. Used for viewing assigned tasks,
+  filling/logging worklog hours, and approving submitted worklogs.
+  This is where day-to-day work tracking happens.
+- rms_projectplan: Project Manager workflows ONLY. Used for creating
+  formal project plans, scheduling phases, defining project structure.
+  Currently NOT implemented in our system. Only route here if the
+  message explicitly uses project-planning language like "create
+  project plan", "set up project schedule", "define project phases".
 
-# =============================================================================
-# PYDANTIC MODEL
-# =============================================================================
+Available personas:
+- CREATOR: Creates new task assignments. Example actions: assigning a
+  task to themselves or to a reportee with project ID, product ID,
+  task index, planned hours, and date range.
+- REVIEWER (also called FILLER): Views their assigned tasks and logs
+  hours worked against them. They do NOT create tasks. Their default
+  action when they say "show tasks" is to see what's assigned so they
+  can fill hours. Logging hours / filling timesheets is ALWAYS the
+  REVIEWER persona.
+- APPROVER: Reviews completed worklogs from team members and approves
+  or rejects them. Senior team leads have this role for their reportees.
 
+CRITICAL DISAMBIGUATION RULES:
+1. "log hours", "fill hours", "fill timesheet", "log 8 hours today",
+   "log time on task X" -> ALWAYS REVIEWER + rms_timesheet, NEVER
+   CREATOR. Logging hours is not the same as creating a task.
+2. "show my tasks", "what tasks do I have", "list my assignments",
+   "my pending entries", "what's on my plate today" -> REVIEWER +
+   rms_timesheet (viewing assignments to fill hours against).
+3. "create task", "assign task to <person>", "set up a new task for
+   me on project X" -> CREATOR + rms_timesheet (default — unless
+   message specifically uses project-planning language).
+4. "approve worklog 5", "reject worklog 3", "show pending approvals",
+   "approve all" -> APPROVER + rms_timesheet.
+5. "create project plan", "set up project schedule for project X",
+   "define project phases" -> CREATOR + rms_projectplan (rare).
+6. Anything not related to tasks, timesheets, projects, or worklogs ->
+   OUT_OF_DOMAIN. This includes weather, jokes, general questions,
+   personal queries, other modules' topics."""
 
-class RMSIntentClassification(BaseModel):
-    """Structured output for RMS intent classification."""
-
-    domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"] = Field(
-        description='Whether the user message falls within RMS scope.'
-    )
-    collection: str = Field(
-        description='Which RMS collection the request targets: "rms_timesheet", "rms_projectplan", or empty if out of domain.'
-    )
-    persona: str = Field(
-        description='Which persona the request targets: "CREATOR", "REVIEWER", "APPROVER", or empty if out of domain.'
-    )
-    confidence: Literal["HIGH", "MEDIUM", "LOW"] = Field(
-        description='Confidence level in the classification.'
-    )
-    reasoning: str = Field(
-        description='One-sentence explanation of the classification.'
-    )
-
-
-# =============================================================================
-# PARSER & PROMPT TEMPLATE (module-level — built once at import time)
-# =============================================================================
-
-_parser = PydanticOutputParser(pydantic_object=RMSIntentClassification)
+NEW _prompt_template definition (replaces existing):
 
 _prompt_template = PromptTemplate(
-    template=(
-        "{module_description}\n\n"
-        "Classify the following user message into a structured response.\n\n"
-        "{format_instructions}\n\n"
-        "User message: {user_message}\n"
-    ),
+    template="""You are an intent classifier for the RMS (Resource Management System) module.
+
+{module_description}
+
+Now classify the following user message. Use the rules above carefully — especially the disambiguation rules.
+
+EXAMPLES:
+
+User: "show my tasks"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Listing assigned tasks for filling hours - REVIEWER action."}}
+
+User: "what are my pending tasks"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Asking to view assigned tasks - REVIEWER."}}
+
+User: "log 8 hours today on task 5"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Logging hours against a task is REVIEWER, not CREATOR."}}
+
+User: "fill timesheet for today"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Filling timesheet is REVIEWER persona."}}
+
+User: "I worked 6 hours on the auth feature today, please log it"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "REVIEWER", "confidence": "HIGH", "reasoning": "Logging worked hours - REVIEWER."}}
+
+User: "create a task for me on project 5 product 10 task 3 from monday to friday with 16 planned hours"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "CREATOR", "confidence": "HIGH", "reasoning": "Creating a new task assignment - CREATOR."}}
+
+User: "assign task 7 to Athira for project 100"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "CREATOR", "confidence": "HIGH", "reasoning": "Assigning task to a reportee - CREATOR."}}
+
+User: "I need to add a new task"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "CREATOR", "confidence": "HIGH", "reasoning": "Adding a new task - CREATOR."}}
+
+User: "show pending approvals"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Viewing pending worklogs for approval - APPROVER."}}
+
+User: "approve worklog 12"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Approving a worklog - APPROVER."}}
+
+User: "reject worklog 5 with reason late submission"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Rejecting a worklog - APPROVER."}}
+
+User: "approve all pending"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_timesheet", "persona": "APPROVER", "confidence": "HIGH", "reasoning": "Bulk approval - APPROVER."}}
+
+User: "create a project plan for the new mobile app"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_projectplan", "persona": "CREATOR", "confidence": "MEDIUM", "reasoning": "Explicit project-planning language - rms_projectplan."}}
+
+User: "set up project schedule for Q3 deliverables"
+Output: {{"domain": "IN_DOMAIN", "collection": "rms_projectplan", "persona": "CREATOR", "confidence": "MEDIUM", "reasoning": "Project schedule setup - rms_projectplan."}}
+
+User: "what is the weather today"
+Output: {{"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Not related to RMS at all."}}
+
+User: "tell me a joke"
+Output: {{"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Conversational request unrelated to RMS."}}
+
+User: "what's my salary"
+Output: {{"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Salary is HRMS module, not RMS."}}
+
+User: "approve material requisition 5"
+Output: {{"domain": "OUT_OF_DOMAIN", "collection": "", "persona": "", "confidence": "HIGH", "reasoning": "Material requisition is MRR module, not RMS."}}
+
+CONFIDENCE CALIBRATION:
+- HIGH: Message clearly matches one of the example patterns or its variants. No ambiguity.
+- MEDIUM: Message is reasonably clear but could be interpreted multiple ways, OR uses rms_projectplan language (which is rare).
+- LOW: Message is vague or barely-related. Likely better classified as OUT_OF_DOMAIN.
+
+Now classify this message:
+
+User message: {user_message}
+
+{format_instructions}
+
+Respond ONLY with valid JSON matching the schema. No prose before or after the JSON.""",
     input_variables=["user_message"],
     partial_variables={
         "module_description": MODULE_DOMAIN_DESCRIPTION,
@@ -84,87 +199,16 @@ _prompt_template = PromptTemplate(
     },
 )
 
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_5_2_REPORT.md with:
+- INTENDED / ACTUAL footprint.
+- Confirmation that only intent.py was modified.
+- Confirmation that Pydantic schema and keyword_fallback are unchanged.
+- A note that MODULE_DOMAIN_DESCRIPTION was significantly expanded.
+- The new _prompt_template fully shown.
 
-# =============================================================================
-# LLM CLASSIFIER
-# =============================================================================
-
-
-def classify_rms_intent(user_message: str) -> RMSIntentClassification:
-    """Classify the user's intent using the LLM with PydanticOutputParser."""
-    llm = get_llm_non_streaming()
-
-    try:
-        prompt_value = _prompt_template.invoke({"user_message": user_message})
-        llm_response = llm.invoke(prompt_value)
-        # llm_response is an AIMessage; the JSON is in .content
-        raw_text = getattr(llm_response, "content", "") or ""
-        parsed = _parser.parse(raw_text)
-        return parsed
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return keyword_fallback(user_message)
-
-
-# =============================================================================
-# KEYWORD FALLBACK
-# =============================================================================
-
-
-def keyword_fallback(user_message: str) -> RMSIntentClassification:
-    """
-    Keyword-based fallback classifier when LLM is unavailable.
-    Returns LOW confidence and assumes in-domain.
-    """
-    msg_lower = user_message.lower()
-
-    # Priority: APPROVER > CREATOR > REVIEWER
-    for keyword in APPROVER_KEYWORDS:
-        if keyword in msg_lower:
-            return RMSIntentClassification(
-                domain="IN_DOMAIN",
-                collection="rms_timesheet",
-                persona="APPROVER",
-                confidence="LOW",
-                reasoning="Keyword fallback used; LLM classifier unavailable.",
-            )
-
-    for keyword in CREATOR_KEYWORDS:
-        if keyword in msg_lower:
-            return RMSIntentClassification(
-                domain="IN_DOMAIN",
-                collection="rms_timesheet",
-                persona="CREATOR",
-                confidence="LOW",
-                reasoning="Keyword fallback used; LLM classifier unavailable.",
-            )
-
-    for keyword in FILLER_KEYWORDS:
-        if keyword in msg_lower:
-            return RMSIntentClassification(
-                domain="IN_DOMAIN",
-                collection="rms_timesheet",
-                persona="REVIEWER",
-                confidence="LOW",
-                reasoning="Keyword fallback used; LLM classifier unavailable.",
-            )
-
-    for keyword in QUERY_KEYWORDS:
-        if keyword in msg_lower:
-            return RMSIntentClassification(
-                domain="IN_DOMAIN",
-                collection="rms_timesheet",
-                persona="REVIEWER",
-                confidence="LOW",
-                reasoning="Keyword fallback used; LLM classifier unavailable.",
-            )
-
-    # No match — default to reviewer
-    return RMSIntentClassification(
-        domain="IN_DOMAIN",
-        collection="rms_timesheet",
-        persona="REVIEWER",
-        confidence="LOW",
-        reasoning="Keyword fallback used; LLM classifier unavailable.",
-    )
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
