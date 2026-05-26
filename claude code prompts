@@ -1,63 +1,48 @@
-═══════════════════════════════════════════════════════════════════
-TASK 5.4: Force rms_timesheet routing in RMS classifier
-═══════════════════════════════════════════════════════════════════
+# TASK 5.4: Force rms_timesheet routing in RMS classifier
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/rms_workflow/intent.py
-- Do NOT modify any other file
-- Do NOT remove rms_projectplan from the schema
-- Add ONE override at the end of classify_rms_intent before
-  returning, forcing collection to rms_timesheet for ANY classification
-  that picked rms_projectplan.
+## Change Summary
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-The rms_projectplan workflow is not implemented yet. The LLM
-classifier sometimes picks it for messages that should go to
-rms_timesheet (e.g., "i need to create a task"). This blocks
-legitimate users with rms_timesheet CREATOR access.
+Added a temporary override in `classify_rms_intent` that forces `collection = "rms_timesheet"` for every `IN_DOMAIN` classification, regardless of what the LLM or keyword fallback returns. This prevents unimplemented `rms_projectplan` routes from reaching the router.
 
-Temporary fix: classifier output for collection is forced to
-rms_timesheet regardless of LLM decision. When rms_projectplan is
-implemented later, remove this override.
+## File Modified
 
-───────────────────────────────────────────────────────────────────
-SCOPE
-───────────────────────────────────────────────────────────────────
-In app/workflows/rms_workflow/intent.py, modify classify_rms_intent.
+- `app/workflows/rms_workflow/intent.py`
 
-Just before each return statement (including in the keyword fallback
-path, the repair path, the primary parser path), add:
+## Changes Made
 
-    # TEMPORARY OVERRIDE: rms_projectplan not implemented.
-    # Force all IN_DOMAIN classifications to rms_timesheet.
-    # Remove this when rms_projectplan workflow is built.
-    if result.domain == "IN_DOMAIN":
-        result.collection = "rms_timesheet"
+### 1. Added `_force_timesheet_collection` helper (line 244-252)
 
-Where `result` is the local variable name for the parsed
-classification.
-
-To avoid repetition, you may extract this into a helper:
-
+```python
 def _force_timesheet_collection(result: RMSIntentClassification) -> RMSIntentClassification:
+    """TEMPORARY OVERRIDE: force IN_DOMAIN classifications to rms_timesheet.
+
+    rms_projectplan is not yet implemented. Remove this helper and its
+    call-sites once rms_projectplan is fully built.
+    """
     if result.domain == "IN_DOMAIN":
         result.collection = "rms_timesheet"
     return result
+```
 
-And call it at each return point.
+### 2. Updated `classify_rms_intent` docstring (line 255-262)
 
-Also update the docstring of classify_rms_intent to note this
-override.
+Added a NOTE documenting the temporary override behavior and the condition for removal.
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_5_4_REPORT.md with the helper function and confirmation
-that every return path in classify_rms_intent calls it.
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+### 3. Applied override at every return path in `classify_rms_intent`
+
+| Return Path | Line | Call |
+|-------------|------|------|
+| Primary LLM parse | 275 | `return _force_timesheet_collection(result)` |
+| JSON repair success | 284 | `return _force_timesheet_collection(parsed)` |
+| Keyword fallback | 295 | `return _force_timesheet_collection(result)` |
+
+## Constraints Verified
+
+- **Only `intent.py` modified** - no other files changed
+- **`rms_projectplan` retained** in schema, domain description, and prompt examples
+- **All 3 return paths** in `classify_rms_intent` go through `_force_timesheet_collection`
+
+## Notes
+
+- `keyword_fallback` already defaults to `rms_timesheet`, but the override is still applied for correctness and future-proofing
+- When `rms_projectplan` is implemented: delete `_force_timesheet_collection` and remove the wrapper calls, returning results directly
