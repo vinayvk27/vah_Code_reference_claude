@@ -1,49 +1,11 @@
-show pending approvals
+Hi! What can I help you with?
+i need to create a task
 V
 🤖
+You don't have creator access to rms projectplan. Please contact your administrator if you need this permission.
 
-Here are the worklogs currently awaiting your approval.
+create task
+V
+🤖
+You don't have creator access to rms projectplan. Please contact your administrator if you need this permission.
 
-=== DEBUG: Resolved context for emp_no 2830 ===
-  group_idx = 32
-  role_ids = [9]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 3 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:62951 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-User context built for: 2830 (Venkatesh. S)
-
-=== DEBUG: Resolved context for emp_no 2830 ===
-  group_idx = 32
-  role_ids = [9]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 3 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:62956 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 2830 (Venkatesh. S)
-
-=== DEBUG: Resolved context for emp_no 2830 ===
-  group_idx = 32
-  role_ids = [9]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 3 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:62957 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:63035 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=show pending approvals
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='approver', collection='rms_timesheet'
