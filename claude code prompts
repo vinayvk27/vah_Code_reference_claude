@@ -1,20 +1,19 @@
-=== END DEBUG ===
-INFO:     10.5.1.58:56861 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:56907 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=show my tasks
+INFO:     10.5.1.58:57714 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:57765 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show my tasks
 [DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=3428, collection='rms_timesheet', last_msg=show my tasks
+[DIAG-RMS] reviewer_agent_node entered. emp_no=2291, collection='rms_timesheet', last_msg=show my tasks
 Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
 [RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=28
-INFO:     10.5.1.58:57065 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=log 4 hours today on task 1
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=3428, collection='rms_timesheet', last_msg=log 4 hours today on task 1
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=62
-INFO:     10.5.1.58:57126 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=create a task for project 5
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=0
+INFO:     10.5.1.58:58405 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=create a task for my self, project 100,product 10, task index 5, activity 1,from
 [DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have creator access to rms timesheet. Please contact your administrator if you need this permission."
+[DIAG-RMS] creator_agent_node entered. emp_no=2291, collection='rms_timesheet', last_msg=create a task for my self, project 100,product 10, task index 5, activity 1,from
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] creator_agent_node returning. full_text_len=0
+INFO:     10.5.1.58:58508 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show all pending approvals
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='approver', collection='rms_timesheet'
+[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have approver access to rms timesheet. Please contact your administrator if you need this permission."
