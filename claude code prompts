@@ -1,37 +1,121 @@
-# TASK 5.0-DIAG: RMS Workflow Diagnostics Report
+═══════════════════════════════════════════════════════════════════
+TASK 5.1-MAP: Document current RMS implementation
+═══════════════════════════════════════════════════════════════════
+Read-only inspection task. Produce a single MD file describing what
+actually exists in the RMS code right now. No code changes.
 
-## INTENDED Footprint
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- READ-ONLY task. Do NOT modify any file.
+- Only produce the MD file deliverable.
+- If any code change seems needed, STOP and report instead of changing.
 
-- **File touched**: `app/workflows/rms_workflow/nodes.py` only
-- **No other files modified**: HRMS, MRR, controllers, routes, models, services — all untouched
-- **No logic changes**: Only `print()` statements added/updated; all business logic identical
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+We need a single ground-truth document describing what the RMS
+workflow currently does, before designing test cases. Stop assuming
+based on memory. Read the code, document what is there.
 
-## Functions Where Prints Were Added/Updated
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
 
-| Function | Print Label | Type | Line |
-|---|---|---|---|
-| `_last_user_msg_short` | *(new helper)* | Module-level helper for DIAG prints | 51 |
-| `parse_intent_node` | `[DIAG-RMS] parse_intent_node entered` | Updated (added `last_msg` field) | 292 |
-| `permission_check_node` | `[DIAG-RMS] permission_check_node entered` | Updated (added `collection` field) | 183 |
-| `permission_blocked_node` | `[DIAG-RMS] permission_blocked_node entered` | Already correct — left as-is | 153 |
-| `creator_agent_node` | `[DIAG-RMS] creator_agent_node entered` | Updated (simplified format per spec) | 373 |
-| `creator_agent_node` | `[DIAG-RMS] creator_agent_node calling LLM` | New (before astream) | 591 |
-| `creator_agent_node` | `[DIAG-RMS] creator_agent_node LLM done` | New (after astream) | 602 |
-| `creator_agent_node` | `[DIAG-RMS] creator_agent_node returning` | New (at function end) | 625 |
-| `reviewer_agent_node` | `[DIAG-RMS] reviewer_agent_node entered` | Updated (simplified format per spec) | 648 |
-| `reviewer_agent_node` | `[DIAG-RMS] reviewer_agent_node calling LLM` | New (before astream) | 864 |
-| `reviewer_agent_node` | `[DIAG-RMS] reviewer_agent_node LLM done` | New (after astream) | 875 |
-| `reviewer_agent_node` | `[DIAG-RMS] reviewer_agent_node returning` | New (at function end) | 898 |
-| `approver_agent_node` | `[DIAG-RMS] approver_agent_node entered` | Updated (simplified format per spec) | 921 |
-| `approver_agent_node` | `[DIAG-RMS] approver_agent_node about to call LLM` | Already present in astream branch | 1126 |
-| `approver_agent_node` | `[DIAG-RMS] approver_agent_node done` | Already present after astream | 1137 |
-| `approver_agent_node` | `[DIAG-RMS] approver_agent_node returning` | New (at function end) | 1159 |
+Inspect these files (do not modify them):
 
-## Confirmation
+- app/workflows/rms_workflow/nodes.py
+- app/workflows/rms_workflow/intent.py
+- app/workflows/rms_workflow/graph.py
+- app/workflows/rms_workflow/prompts.py
+- app/workflows/rms_workflow/rms_tools.py
+- app/workflows/rms_workflow/tools.py
+- app/workflows/rms_workflow/state.py
+- app/workflows/rms_workflow/config.py (if exists)
+- scripts/seed_dpah_tables.py (look for RMS_* agent seeds)
 
-- **No logic modified**: All changes are `print()` statements with `flush=True`
-- **No imports added**: `_last_user_msg_short` imports `HumanMessage` locally inside the function
-- **No imports removed**
-- **No functional code changed**
-- **File count**: 1 file touched (`app/workflows/rms_workflow/nodes.py`)
-- **Total DIAG-RMS prints**: 16 (across 6 functions)
+Produce a single file: TASK_5_1_MAP_REPORT.md
+
+The file must contain these sections:
+
+# RMS Implementation Map
+
+## 1. Personas and Agents
+List every RMS_* agent that gets seeded in scripts/seed_dpah_tables.py:
+- agent_name
+- collection_id (and what collection name that maps to)
+- expected persona (derived from name suffix: CREATOR / REVIEWER / APPROVER)
+
+## 2. Tools Available Per Persona
+
+For each agent node (creator_agent_node, reviewer_agent_node,
+approver_agent_node):
+- List EVERY @tool decorator inside the function body.
+- For each tool: name, parameters, brief docstring, which collection
+  triggers it being bound (e.g. "only bound when selected_collection
+  starts with rms_").
+- Specifically: list tools available in rms_tools.py that are
+  imported and bound in each persona's node body.
+
+## 3. State Machine / Routing in graph.py
+- List every node registered in the StateGraph.
+- List every conditional edge (from -> to with the router function).
+- Note whether there is a checkpointer attached (probably none).
+
+## 4. Database Tables Referenced
+For each SQL statement found in the RMS code (search nodes.py,
+rms_tools.py, tools.py):
+- Table name
+- Operation (SELECT / INSERT / UPDATE / DELETE)
+- One-line description of purpose (e.g. "list pending worklogs for
+  approver")
+
+For each ORM query found (db.query(SomeModel) patterns):
+- Model class name and table name
+- One-line description
+
+## 5. Worklog Approval Mechanism
+- Where in the code does approval happen?
+- Is it triggered by an LLM tool call, by a parsed command (like MRR's
+  _parse_approval_command), or by something else?
+- What columns get updated and to what values?
+
+## 6. Reportee / Reporting-Authority Filtering
+- Search the RMS code for any reference to "reporting_to" or
+  "manager" or "reportee" or similar.
+- Document where (if anywhere) the code filters tasks/worklogs by
+  reporting relationship.
+- If no such filtering exists, say so explicitly.
+
+## 7. Intent Classifier Output Shape
+- What field names does parse_intent_node set in state?
+- What are the valid values for selected_collection (e.g.
+  "rms_timesheet", "rms_projectplan")?
+- What are the valid values for selected_agent_role (e.g.
+  "creator", "reviewer", "approver")?
+
+## 8. Seed Data
+For each RMS_* agent in dpah_role_agent_access table seeded via
+seed_dpah_tables.py:
+- Role IDs that have it
+- Group IDs that have it
+
+## 9. Gaps / Inconsistencies Noted
+- Any TODO / FIXME / XXX comments in RMS code.
+- Any obvious mismatches between persona name and what tools are
+  actually bound (e.g., reviewer with no read tools, or approver
+  with creator-style tools).
+- Any dead code paths (e.g., legacy "if selected_collection == ..." 
+  conditions that look obsolete).
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+Single file: TASK_5_1_MAP_REPORT.md at project root.
+
+Be factual, not interpretive. Quote actual code snippets where
+helpful. Keep it scannable.
+
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
