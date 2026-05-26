@@ -1,74 +1,74 @@
--- ============================================================
--- RMS Test Setup - EAG team
--- ============================================================
+=== END DEBUG ===
+INFO:     10.5.1.58:55275 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 3428 (Vinay Neelam)
 
--- Step 1: Map RMS module (module_id=1) to your testers' groups (7 and 32).
-INSERT IGNORE INTO dpah_module_usergroups (module_id, group_idx, is_active, assigned_by)
-VALUES
-  (1, 7, 1, 'system'),
-  (1, 32, 1, 'system');
+=== DEBUG: Resolved context for emp_no 3428 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:55276 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:55372 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=show my tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_projectplan'
+[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have reviewer access to rms projectplan. Please contact your administrator if you need this permission."
+INFO:     10.5.1.58:55643 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=log 4 hours today on task
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have creator access to rms timesheet. Please contact your administrator if you need this permission."
+INFO:     10.5.1.58:55761 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3428, last_msg=create a task for project 5
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_projectplan'
+[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have creator access to rms projectplan. Please contact your administrator if you need this permission."
+User context built for: 2291 (Vikash Kumar Singh)
 
--- Step 2: Add testers to dpah_user_roles.
--- Juniors (role_id = 7)
-INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
-VALUES
-  ('3428', 7, 'system'),
-  ('3010', 7, 'system'),
-  ('3117', 7, 'system'),
-  ('20570', 7, 'system'),
-  ('2633', 7, 'system'),
-  ('60113', 7, 'system');
+=== DEBUG: Resolved context for emp_no 2291 ===
+  group_idx = 32
+  role_ids = [8]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:55957 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 2291 (Vikash Kumar Singh)
 
--- Mids (role_id = 8)
-INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
-VALUES
-  ('2291', 8, 'system'),
-  ('1572', 8, 'system');
+=== DEBUG: Resolved context for emp_no 2291 ===
+  group_idx = 32
+  role_ids = [8]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:55958 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 2291 (Vikash Kumar Singh)
 
--- Senior / RA (role_id = 9)
-INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
-VALUES
-  ('2830', 9, 'system');
-
--- Step 3: Clear ALL existing RMS_TIMESHEET_* access for groups 7 and 32.
--- This gives us a clean slate.
-DELETE FROM dpah_role_agent_access
-WHERE group_id IN (7, 32)
-  AND agent_id IN (
-      SELECT agent_id FROM dpah_agents
-      WHERE agent_name LIKE 'RMS_TIMESHEET_%'
-  );
-
--- Step 4: Grant access per the new model.
-
--- Junior (role 7) in group 7 -> REVIEWER only
-INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-SELECT 7, 7, a.agent_id, 'system'
-FROM dpah_agents a
-WHERE a.agent_name = 'RMS_TIMESHEET_REVIEWER';
-
--- Junior (role 7) in group 32 -> REVIEWER only
-INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-SELECT 7, 32, a.agent_id, 'system'
-FROM dpah_agents a
-WHERE a.agent_name = 'RMS_TIMESHEET_REVIEWER';
-
--- Mid (role 8) in group 32 -> CREATOR + REVIEWER
-INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-SELECT 8, 32, a.agent_id, 'system'
-FROM dpah_agents a
-WHERE a.agent_name IN ('RMS_TIMESHEET_CREATOR', 'RMS_TIMESHEET_REVIEWER');
-
--- Senior (role 9) in group 32 -> CREATOR + REVIEWER + APPROVER
-INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-SELECT 9, 32, a.agent_id, 'system'
-FROM dpah_agents a
-WHERE a.agent_name IN ('RMS_TIMESHEET_CREATOR', 'RMS_TIMESHEET_REVIEWER', 'RMS_TIMESHEET_APPROVER');
-
--- Step 5: Verify
-SELECT raa.role_id, raa.group_id, a.agent_name
-FROM dpah_role_agent_access raa
-JOIN dpah_agents a ON a.agent_id = raa.agent_id
-WHERE a.agent_name LIKE 'RMS_TIMESHEET_%'
-  AND raa.group_id IN (7, 32)
-ORDER BY raa.role_id, raa.group_id, a.agent_name;
+=== DEBUG: Resolved context for emp_no 2291 ===
+  group_idx = 32
+  role_ids = [8]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 2 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:55959 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:56022 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show my tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_projectplan'
+[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have reviewer access to rms projectplan. Please contact your administrator if you need this permission."
