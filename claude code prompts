@@ -1,332 +1,37 @@
-"""
-Timesheet Store - DB-backed service for RMS timesheet workflow.
-Replaces the in-memory DataFrame with MariaDB queries.
-"""
+# ============================================================
+# RMS Demo Tables (Dev copies - never touch production data)
+# ============================================================
+class PpTaskAssignment(Base):
+    """Demo table for task assignments - pp_project_task_assigment_demo"""
+    __tablename__ = "pp_project_task_assigment_demo"
 
-from datetime import date
-from typing import Optional, List, Any, Dict
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-
-from app.models.db_schema import PpTaskAssignment, PpWorklog
-
-
-def _format_date(d: Any) -> Optional[str]:
-    """Convert date object to YYYY-MM-DD string."""
-    if d is None:
-        return None
-    if isinstance(d, date):
-        return d.strftime('%Y-%m-%d')
-    return str(d)
-
-
-def list_tasks_for_resource(db: Session, resource_id: int) -> List[Dict[str, Any]]:
-    """
-    List all tasks assigned to a specific resource.
-
-    Args:
-        db: Database session
-        resource_id: The resource (employee) ID
-
-    Returns:
-        List of task dicts
-    """
-    results = db.query(PpTaskAssignment).filter(
-        PpTaskAssignment.Resource == resource_id
-    ).all()
-
-    tasks = []
-    for row in results:
-        task = {
-            "task_id": row.WorkLogIdx,
-            "resource_id": row.Resource,
-            "project_id": row.ProjectIdx,
-            "product_id": row.ProductIdx,
-            "task_idx": row.TaskIdx,
-            "activity_idx": row.ActivityIdx,
-            "start_date": _format_date(row.StartDate),
-            "end_date": _format_date(row.EndDate),
-            "plan_hours": row.PlanHrs,
-            "is_completed": row.IsCompleted,
-            "created_by": row.created_by,
-            "created_date": _format_date(row.created_date),
-            "task_name": f"Task #{row.TaskIdx}"  # Placeholder name
-        }
-        tasks.append(task)
-
-    return tasks
+    WorkLogIdx = Column(Integer, primary_key=True, autoincrement=True)
+    Resource = Column(Integer, nullable=False)
+    PlanIdx = Column(Integer)
+    ProjectIdx = Column(Integer)
+    ProductIdx = Column(Integer)
+    TaskIdx = Column(Integer)
+    ActivityIdx = Column(Integer)
+    StartDate = Column(Date)
+    EndDate = Column(Date)
+    PlanHrs = Column(Float)
+    IsCompleted = Column(SmallInteger, default=0)
+    created_by = Column(String(10))
+    created_date = Column(Date)
 
 
-def list_all_tasks(db: Session) -> List[Dict[str, Any]]:
-    """
-    List all tasks (for creator/admin view).
+class PpWorklog(Base):
+    """Demo table for worklogs - pp_worklogs_demo"""
+    __tablename__ = "pp_worklogs_demo"
 
-    Args:
-        db: Database session
-
-    Returns:
-        List of task dicts
-    """
-    results = db.query(PpTaskAssignment).all()
-
-    tasks = []
-    for row in results:
-        task = {
-            "task_id": row.WorkLogIdx,
-            "resource_id": row.Resource,
-            "project_id": row.ProjectIdx,
-            "product_id": row.ProductIdx,
-            "task_idx": row.TaskIdx,
-            "activity_idx": row.ActivityIdx,
-            "start_date": _format_date(row.StartDate),
-            "end_date": _format_date(row.EndDate),
-            "plan_hours": row.PlanHrs,
-            "is_completed": row.IsCompleted,
-            "created_by": row.created_by,
-            "created_date": _format_date(row.created_date),
-            "task_name": f"Task #{row.TaskIdx}"  # Placeholder name
-        }
-        tasks.append(task)
-
-    return tasks
-
-
-def create_task(
-    db: Session,
-    resource_id: int,
-    project_id: int,
-    product_id: int,
-    task_idx: int,
-    activity_idx: int,
-    start_date: str,
-    end_date: str,
-    plan_hrs: float,
-    created_by: str
-) -> Dict[str, Any]:
-    """
-    Create a new task assignment.
-
-    Args:
-        db: Database session
-        resource_id: The resource (employee) ID to assign task to
-        project_id: Project ID
-        product_id: Product ID
-        task_idx: Task index
-        activity_idx: Activity index
-        start_date: Start date (YYYY-MM-DD string)
-        end_date: End date (YYYY-MM-DD string)
-        plan_hrs: Planned hours
-        created_by: Emp ID of the creator
-
-    Returns:
-        The new task dict
-    """
-    from datetime import datetime
-
-    new_task = PpTaskAssignment(
-        Resource=resource_id,
-        PlanIdx=None,  # Not used for now
-        ProjectIdx=project_id,
-        ProductIdx=product_id,
-        TaskIdx=task_idx,
-        ActivityIdx=activity_idx,
-        StartDate=datetime.strptime(start_date, '%Y-%m-%d').date() if isinstance(start_date, str) else start_date,
-        EndDate=datetime.strptime(end_date, '%Y-%m-%d').date() if isinstance(end_date, str) else end_date,
-        PlanHrs=plan_hrs,
-        IsCompleted=0,
-        created_by=created_by,
-        created_date=datetime.now().date()
-    )
-
-    db.add(new_task)
-    db.commit()
-    db.refresh(new_task)
-
-    return {
-        "task_id": new_task.WorkLogIdx,
-        "resource_id": new_task.Resource,
-        "project_id": new_task.ProjectIdx,
-        "product_id": new_task.ProductIdx,
-        "task_idx": new_task.TaskIdx,
-        "activity_idx": new_task.ActivityIdx,
-        "start_date": _format_date(new_task.StartDate),
-        "end_date": _format_date(new_task.EndDate),
-        "plan_hours": new_task.PlanHrs,
-        "is_completed": new_task.IsCompleted,
-        "created_by": new_task.created_by,
-        "created_date": _format_date(new_task.created_date),
-        "task_name": f"Task #{new_task.TaskIdx}"
-    }
-
-
-def list_worklogs(
-    db: Session,
-    resource_id: Optional[int] = None,
-    is_approved: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """
-    List worklogs, optionally filtered by resource and/or approval status.
-
-    Args:
-        db: Database session
-        resource_id: Filter by resource ID (optional)
-        is_approved: Filter by approval status (optional):
-                     - None: all worklogs
-                     - "PENDING": only pending (IsApproved IS NULL)
-                     - "APPROVED": approved worklogs
-                     - "REJECTED": rejected worklogs
-
-    Returns:
-        List of worklog dicts with joined task info
-    """
-    query = (
-        db.query(PpWorklog, PpTaskAssignment)
-        .outerjoin(PpTaskAssignment, PpWorklog.WorkLogIdx == PpTaskAssignment.WorkLogIdx)
-    )
-
-    if resource_id is not None:
-        query = query.filter(PpWorklog.Resource == resource_id)
-
-    if is_approved == "PENDING":
-        query = query.filter(PpWorklog.IsApproved.is_(None))
-    elif is_approved == "APPROVED":
-        query = query.filter(PpWorklog.IsApproved == 1)
-    elif is_approved == "REJECTED":
-        query = query.filter(PpWorklog.IsApproved == 0)
-
-    rows = query.all()
-
-    results = []
-    for wl, task in rows:
-        status = "PENDING" if wl.IsApproved is None else ("APPROVED" if wl.IsApproved == 1 else "REJECTED")
-        results.append({
-            "worklog_id": wl.Idx,
-            "task_id": wl.WorkLogIdx,
-            "resource_id": wl.Resource,
-            "task_name": f"Task #{task.TaskIdx}" if task else f"Task #?",
-            "project_id": task.ProjectIdx if task else None,
-            "task_date": _format_date(wl.TaskDate),
-            "hours": (wl.TimeSpentInSec / 3600.0) if wl.TimeSpentInSec else 0,
-            "is_approved": status,
-            "approved_by": wl.ApprovedBy,
-            "remarks": wl.UserRemarks or "",
-            "approver_remarks": wl.ApproverRemarks or "",
-            "date_of_entry": _format_date(wl.DateOfEntry)
-        })
-    return results
-
-
-def add_worklog(
-    db: Session,
-    worklog_idx: int,
-    resource_id: int,
-    task_date: str,
-    hours: float,
-    remarks: str
-) -> Dict[str, Any]:
-    """
-    Add a new worklog entry.
-
-    Args:
-        db: Database session
-        worklog_idx: The task's WorkLogIdx to log hours against
-        resource_id: The resource (employee) ID
-        task_date: Date of the work (YYYY-MM-DD string)
-        hours: Hours worked
-        remarks: User remarks
-
-    Returns:
-        The new worklog dict
-    """
-    from datetime import datetime
-
-    time_spent_sec = int(hours * 3600)
-
-    new_worklog = PpWorklog(
-        WorkLogIdx=worklog_idx,
-        TaskDate=datetime.strptime(task_date, '%Y-%m-%d').date() if isinstance(task_date, str) else task_date,
-        TimeSpentInSec=time_spent_sec,
-        DateOfEntry=datetime.now().date(),
-        IsApproved=None,  # Pending by default
-        ApprovedBy=None,
-        ApprovedDate=None,
-        UserRemarks=remarks,
-        ApproverRemarks=None,
-        Resource=resource_id
-    )
-
-    db.add(new_worklog)
-    db.commit()
-    db.refresh(new_worklog)
-
-    return {
-        "worklog_id": new_worklog.Idx,
-        "task_id": new_worklog.WorkLogIdx,
-        "resource_id": new_worklog.Resource,
-        "task_date": _format_date(new_worklog.TaskDate),
-        "hours": hours,
-        "is_approved": "PENDING",
-        "approved_by": None,
-        "remarks": new_worklog.UserRemarks,
-        "date_of_entry": _format_date(new_worklog.DateOfEntry)
-    }
-
-
-def approve_worklog(
-    db: Session,
-    worklog_log_idx: int,
-    approver_id: int,
-    decision: str,
-    remarks: str
-) -> Dict[str, Any]:
-    """
-    Approve or reject a worklog.
-
-    Args:
-        db: Database session
-        worklog_log_idx: The worklog Idx to approve/reject
-        approver_id: The approver's employee ID
-        decision: "APPROVED" or "REJECTED"
-        remarks: Approver remarks
-
-    Returns:
-        Updated worklog dict
-    """
-    from datetime import datetime
-
-    worklog = db.query(PpWorklog).filter(PpWorklog.Idx == worklog_log_idx).first()
-
-    if not worklog:
-        return {"error": f"Worklog {worklog_log_idx} not found"}
-
-    # Set approval status
-    if decision.upper() == "APPROVED":
-        worklog.IsApproved = 1
-    elif decision.upper() == "REJECTED":
-        worklog.IsApproved = 0
-    else:
-        return {"error": f"Invalid decision '{decision}'. Must be 'APPROVED' or 'REJECTED'."}
-
-    worklog.ApprovedBy = approver_id
-    worklog.ApprovedDate = datetime.now().date()
-    if remarks:
-        worklog.ApproverRemarks = remarks
-
-    db.commit()
-    db.refresh(worklog)
-
-    return {
-        "worklog_id": worklog.Idx,
-        "task_id": worklog.WorkLogIdx,
-        "resource_id": worklog.Resource,
-        "task_date": _format_date(worklog.TaskDate),
-        "hours": worklog.TimeSpentInSec / 3600.0 if worklog.TimeSpentInSec else 0,
-        "is_approved": "APPROVED" if worklog.IsApproved == 1 else "REJECTED",
-        "approved_by": worklog.ApprovedBy,
-        "remarks": worklog.UserRemarks,
-        "approver_remarks": worklog.ApproverRemarks,
-        "date_of_entry": _format_date(worklog.DateOfEntry)
-    }
-
-
-** it is there inside services not dao
+    Idx = Column(Integer, primary_key=True, autoincrement=True)
+    WorkLogIdx = Column(Integer, nullable=False)
+    TaskDate = Column(Date)
+    TimeSpentInSec = Column(Integer)
+    DateOfEntry = Column(Date)
+    IsApproved = Column(Integer, nullable=True)  # NULL=pending, 1=approved, 0=rejected
+    ApprovedBy = Column(Integer)
+    ApprovedDate = Column(Date)
+    UserRemarks = Column(Text)
+    ApproverRemarks = Column(Text)
+    Resource = Column(Integer)
