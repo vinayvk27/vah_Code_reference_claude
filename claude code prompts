@@ -1,37 +1,74 @@
-# ============================================================
-# RMS Demo Tables (Dev copies - never touch production data)
-# ============================================================
-class PpTaskAssignment(Base):
-    """Demo table for task assignments - pp_project_task_assigment_demo"""
-    __tablename__ = "pp_project_task_assigment_demo"
+-- ============================================================
+-- RMS Test Setup - EAG team
+-- ============================================================
 
-    WorkLogIdx = Column(Integer, primary_key=True, autoincrement=True)
-    Resource = Column(Integer, nullable=False)
-    PlanIdx = Column(Integer)
-    ProjectIdx = Column(Integer)
-    ProductIdx = Column(Integer)
-    TaskIdx = Column(Integer)
-    ActivityIdx = Column(Integer)
-    StartDate = Column(Date)
-    EndDate = Column(Date)
-    PlanHrs = Column(Float)
-    IsCompleted = Column(SmallInteger, default=0)
-    created_by = Column(String(10))
-    created_date = Column(Date)
+-- Step 1: Map RMS module (module_id=1) to your testers' groups (7 and 32).
+INSERT IGNORE INTO dpah_module_usergroups (module_id, group_idx, is_active, assigned_by)
+VALUES
+  (1, 7, 1, 'system'),
+  (1, 32, 1, 'system');
 
+-- Step 2: Add testers to dpah_user_roles.
+-- Juniors (role_id = 7)
+INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
+VALUES
+  ('3428', 7, 'system'),
+  ('3010', 7, 'system'),
+  ('3117', 7, 'system'),
+  ('20570', 7, 'system'),
+  ('2633', 7, 'system'),
+  ('60113', 7, 'system');
 
-class PpWorklog(Base):
-    """Demo table for worklogs - pp_worklogs_demo"""
-    __tablename__ = "pp_worklogs_demo"
+-- Mids (role_id = 8)
+INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
+VALUES
+  ('2291', 8, 'system'),
+  ('1572', 8, 'system');
 
-    Idx = Column(Integer, primary_key=True, autoincrement=True)
-    WorkLogIdx = Column(Integer, nullable=False)
-    TaskDate = Column(Date)
-    TimeSpentInSec = Column(Integer)
-    DateOfEntry = Column(Date)
-    IsApproved = Column(Integer, nullable=True)  # NULL=pending, 1=approved, 0=rejected
-    ApprovedBy = Column(Integer)
-    ApprovedDate = Column(Date)
-    UserRemarks = Column(Text)
-    ApproverRemarks = Column(Text)
-    Resource = Column(Integer)
+-- Senior / RA (role_id = 9)
+INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
+VALUES
+  ('2830', 9, 'system');
+
+-- Step 3: Clear ALL existing RMS_TIMESHEET_* access for groups 7 and 32.
+-- This gives us a clean slate.
+DELETE FROM dpah_role_agent_access
+WHERE group_id IN (7, 32)
+  AND agent_id IN (
+      SELECT agent_id FROM dpah_agents
+      WHERE agent_name LIKE 'RMS_TIMESHEET_%'
+  );
+
+-- Step 4: Grant access per the new model.
+
+-- Junior (role 7) in group 7 -> REVIEWER only
+INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT 7, 7, a.agent_id, 'system'
+FROM dpah_agents a
+WHERE a.agent_name = 'RMS_TIMESHEET_REVIEWER';
+
+-- Junior (role 7) in group 32 -> REVIEWER only
+INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT 7, 32, a.agent_id, 'system'
+FROM dpah_agents a
+WHERE a.agent_name = 'RMS_TIMESHEET_REVIEWER';
+
+-- Mid (role 8) in group 32 -> CREATOR + REVIEWER
+INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT 8, 32, a.agent_id, 'system'
+FROM dpah_agents a
+WHERE a.agent_name IN ('RMS_TIMESHEET_CREATOR', 'RMS_TIMESHEET_REVIEWER');
+
+-- Senior (role 9) in group 32 -> CREATOR + REVIEWER + APPROVER
+INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT 9, 32, a.agent_id, 'system'
+FROM dpah_agents a
+WHERE a.agent_name IN ('RMS_TIMESHEET_CREATOR', 'RMS_TIMESHEET_REVIEWER', 'RMS_TIMESHEET_APPROVER');
+
+-- Step 5: Verify
+SELECT raa.role_id, raa.group_id, a.agent_name
+FROM dpah_role_agent_access raa
+JOIN dpah_agents a ON a.agent_id = raa.agent_id
+WHERE a.agent_name LIKE 'RMS_TIMESHEET_%'
+  AND raa.group_id IN (7, 32)
+ORDER BY raa.role_id, raa.group_id, a.agent_name;
