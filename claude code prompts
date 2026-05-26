@@ -1,11 +1,63 @@
-Hi! What can I help you with?
-i need to create a task
-V
-🤖
-You don't have creator access to rms projectplan. Please contact your administrator if you need this permission.
+═══════════════════════════════════════════════════════════════════
+TASK 5.4: Force rms_timesheet routing in RMS classifier
+═══════════════════════════════════════════════════════════════════
 
-create task
-V
-🤖
-You don't have creator access to rms projectplan. Please contact your administrator if you need this permission.
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/rms_workflow/intent.py
+- Do NOT modify any other file
+- Do NOT remove rms_projectplan from the schema
+- Add ONE override at the end of classify_rms_intent before
+  returning, forcing collection to rms_timesheet for ANY classification
+  that picked rms_projectplan.
 
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+The rms_projectplan workflow is not implemented yet. The LLM
+classifier sometimes picks it for messages that should go to
+rms_timesheet (e.g., "i need to create a task"). This blocks
+legitimate users with rms_timesheet CREATOR access.
+
+Temporary fix: classifier output for collection is forced to
+rms_timesheet regardless of LLM decision. When rms_projectplan is
+implemented later, remove this override.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+In app/workflows/rms_workflow/intent.py, modify classify_rms_intent.
+
+Just before each return statement (including in the keyword fallback
+path, the repair path, the primary parser path), add:
+
+    # TEMPORARY OVERRIDE: rms_projectplan not implemented.
+    # Force all IN_DOMAIN classifications to rms_timesheet.
+    # Remove this when rms_projectplan workflow is built.
+    if result.domain == "IN_DOMAIN":
+        result.collection = "rms_timesheet"
+
+Where `result` is the local variable name for the parsed
+classification.
+
+To avoid repetition, you may extract this into a helper:
+
+def _force_timesheet_collection(result: RMSIntentClassification) -> RMSIntentClassification:
+    if result.domain == "IN_DOMAIN":
+        result.collection = "rms_timesheet"
+    return result
+
+And call it at each return point.
+
+Also update the docstring of classify_rms_intent to note this
+override.
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_5_4_REPORT.md with the helper function and confirmation
+that every return path in classify_rms_intent calls it.
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
