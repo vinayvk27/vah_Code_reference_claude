@@ -1,3 +1,5 @@
+select EMP_NO,Name,groupidx,department,grade ,reportingto from resources where department ='eag' and isActive =1 and reportingto='venkatesh.subr132433amani@datapatterns.co.in';
+
 # Emp_no, Name, GroupIDx, Department, Grade, ReportingTo
 '1572', 'Venkateswara Rao Burle', '32', 'EAG', 'S4', 'venkatesh.subramani@datapa324tterns.co.in'
 '20570', 'Hemish Yagalla', '32', 'EAG', 'AT', 'venkatesh.subramani@datap4234atterns.co.in'
