@@ -1,11 +1,145 @@
-INFO:     10.5.1.58:50968 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:51041 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-MRR] parse_intent_node entered. emp_no=16, pending_mrr_data_present=False, message_count=2
-[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=approver, collection=mrr_general
-[DIAG-MRR] approver_agent_node entered. emp_no=16
+═══════════════════════════════════════════════════════════════════
+TASK 5.0-DIAG: Comprehensive RMS workflow diagnostics
+═══════════════════════════════════════════════════════════════════
+Add DIAG prints to RMS workflow so a full flow test produces a
+complete trace. Will be removed in a cleanup task once verified.
 
-show pending approvals
-V
-🤖
-You have no pending manager approvals at this time.
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/rms_workflow/nodes.py.
+- Do NOT modify HRMS, MRR, controllers, routes, or any other file.
+- Do NOT change any logic. ONLY add print statements.
+- If a print with the SAME label already exists at the top of a
+  function, leave it alone — do NOT duplicate.
+- If anything requires touching out-of-scope code, STOP and report.
 
+Output INTENDED FOOTPRINT at start.
+Output `git diff --stat HEAD` at end.
+
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
+
+In app/workflows/rms_workflow/nodes.py, add a print as the VERY
+FIRST line of each function below (after the docstring if any),
+using flush=True.
+
+If the function already has a [DIAG-RMS] print from earlier work,
+either leave it as-is (if it captures similar info) or replace
+with the version below.
+
+a. parse_intent_node:
+   print(
+       f"[DIAG-RMS] parse_intent_node entered. emp_no={state.get('emp_no')}, "
+       f"last_msg={_last_user_msg_short(state)}",
+       flush=True
+   )
+
+b. permission_check_node:
+   print(
+       f"[DIAG-RMS] permission_check_node entered. "
+       f"parsed_intent={state.get('parsed_intent')}, "
+       f"persona={state.get('selected_agent_role')!r}, "
+       f"collection={state.get('selected_collection')!r}",
+       flush=True
+   )
+
+c. permission_blocked_node:
+   print(
+       f"[DIAG-RMS] permission_blocked_node entered. "
+       f"denial_message={state.get('denial_message')!r}",
+       flush=True
+   )
+
+d. creator_agent_node:
+   print(
+       f"[DIAG-RMS] creator_agent_node entered. "
+       f"emp_no={state.get('emp_no')}, "
+       f"collection={state.get('selected_collection')!r}, "
+       f"last_msg={_last_user_msg_short(state)}",
+       flush=True
+   )
+
+e. reviewer_agent_node:
+   print(
+       f"[DIAG-RMS] reviewer_agent_node entered. "
+       f"emp_no={state.get('emp_no')}, "
+       f"collection={state.get('selected_collection')!r}, "
+       f"last_msg={_last_user_msg_short(state)}",
+       flush=True
+   )
+
+f. approver_agent_node:
+   print(
+       f"[DIAG-RMS] approver_agent_node entered. "
+       f"emp_no={state.get('emp_no')}, "
+       f"collection={state.get('selected_collection')!r}, "
+       f"last_msg={_last_user_msg_short(state)}",
+       flush=True
+   )
+
+Add a module-level helper at the top of nodes.py (just after
+imports, before any function definitions):
+
+def _last_user_msg_short(state) -> str:
+    """Returns the last HumanMessage content, truncated to 80 chars,
+    for diagnostic logging only."""
+    try:
+        from langchain_core.messages import HumanMessage
+        msgs = state.get("messages") or []
+        for m in reversed(msgs):
+            if isinstance(m, HumanMessage):
+                content = str(getattr(m, "content", "") or "")
+                return content[:80].replace("\n", " ")
+        return "(no user msg)"
+    except Exception:
+        return "(error reading messages)"
+
+Also add inside creator_agent_node, immediately BEFORE the LLM
+streaming loop starts (search for `llm.astream` or `await llm`):
+
+   print(
+       f"[DIAG-RMS] creator_agent_node calling LLM. "
+       f"message_count={len(message_list) if 'message_list' in locals() else 'N/A'}",
+       flush=True
+   )
+
+And immediately AFTER the streaming loop ends:
+
+   print(
+       f"[DIAG-RMS] creator_agent_node LLM done. "
+       f"full_text_len={len(full_text) if 'full_text' in locals() else 'N/A'}",
+       flush=True
+   )
+
+Same two prints in reviewer_agent_node and approver_agent_node
+around their respective LLM calls.
+
+If the LLM call site isn't easy to locate (different structure per
+node), instead add a single print at the END of each agent_node:
+
+   print(
+       f"[DIAG-RMS] {func_name} returning. full_text_len={...}",
+       flush=True
+   )
+
+Whichever is cleaner.
+
+───────────────────────────────────────────────────────────────────
+OUT OF SCOPE — DO NOT TOUCH
+───────────────────────────────────────────────────────────────────
+- HRMS, MRR workflows
+- Controllers, routes, models, services
+- Any logic changes
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_5_0_DIAG_REPORT.md with:
+- INTENDED / ACTUAL footprint
+- List of functions where prints were added/updated
+- Confirmation that no logic was modified
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
