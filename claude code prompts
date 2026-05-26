@@ -1,28 +1,140 @@
-Hi! What can I help you with?
-show my tasks
-V
-🤖
+═══════════════════════════════════════════════════════════════════
+TASK 5.3: Robust JSON parsing for RMS classifier
+═══════════════════════════════════════════════════════════════════
+LLM occasionally emits malformed JSON (duplicate keys, missing
+commas). Currently this triggers full fallback to keyword matching
+with LOW confidence. Add a layer that cleans common LLM JSON
+mistakes before falling back.
 
-Here are your currently assigned tasks:
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Only touch app/workflows/rms_workflow/intent.py.
+- Do NOT modify the Pydantic schema, the prompt template, or
+  classify_rms_intent's overall structure.
+- Do NOT modify keyword_fallback.
+- Do NOT modify any other file.
+- Output INTENDED FOOTPRINT at start.
+- List modified files at end.
 
-1. **Task #5** (Task ID: 20)
-   - Project ID: 100
-   - Plan Hours: 16.0
-   - Period: 2026-05-25 to 2026-05-30
-   - Status: In Progress
+───────────────────────────────────────────────────────────────────
+CONTEXT
+───────────────────────────────────────────────────────────────────
+Observed malformed JSON examples from the LLM:
+  - {"persona": "persona": "CREATOR", ...}  (duplicate key)
+  - {"confidence": "HIGH", "MEDIUM", ...}  (two values for one key)
 
-2. **Task #5** (Task ID: 21)
-   - Project ID: 100
-   - Plan Hours: 16.0
-   - Period: 2026-05-25 to 2026-05-30
-   - Status: In Progress
+These are LLM hiccups, not structural prompt failures. The classifier
+should attempt to repair them before giving up.
 
-Let me know if you'd like to log hours for any of these tasks!
+───────────────────────────────────────────────────────────────────
+SCOPE
+───────────────────────────────────────────────────────────────────
 
-INFO:     10.5.1.58:56711 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show my tasks
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=2291, collection='rms_timesheet', last_msg=show my tasks
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=375
+Add a helper function _repair_classifier_json(raw_text: str) before
+classify_rms_intent. Then call it inside classify_rms_intent's
+try/except as a second attempt before falling back to keyword.
+
+The helper should:
+1. Strip markdown code fences (```json ... ``` or ``` ... ```).
+2. Strip leading/trailing whitespace.
+3. Find the first '{' and last '}' to extract the JSON object.
+4. Apply these specific fixes (in order):
+   a. Remove duplicate keys: search for pattern like '"X": "X":' and
+      replace with '"X":'. Use a regex: r'"(\w+)":\s*"\1":'.
+   b. Fix duplicate-value-for-one-key like '"confidence": "HIGH", "MEDIUM"':
+      detect this pattern and keep only the first value. Use regex:
+      r'"(\w+)":\s*"([^"]+)",\s*"([^"]+)"(?=\s*[,}])'  ->  r'"\1": "\2"'.
+   c. Try json.loads on the cleaned string.
+
+If the helper successfully parses, return the parsed dict. Otherwise
+return None.
+
+Update classify_rms_intent to use the helper:
+
+def classify_rms_intent(user_message: str) -> RMSIntentClassification:
+    llm = get_llm_non_streaming()
+    try:
+        prompt_value = _prompt_template.invoke({"user_message": user_message})
+        llm_response = llm.invoke(prompt_value)
+        raw_text = getattr(llm_response, "content", "") or ""
+
+        # First attempt: standard parsing.
+        try:
+            return _parser.parse(raw_text)
+        except Exception as first_error:
+            # Second attempt: try to repair the JSON.
+            print(f"[RMS-CLASSIFIER] First parse failed, attempting repair...", flush=True)
+            repaired_dict = _repair_classifier_json(raw_text)
+            if repaired_dict is not None:
+                try:
+                    parsed = RMSIntentClassification(**repaired_dict)
+                    print(f"[RMS-CLASSIFIER] Repair succeeded. Classification: {parsed.persona} / {parsed.collection}", flush=True)
+                    return parsed
+                except Exception as second_error:
+                    print(f"[RMS-CLASSIFIER] Repair attempt failed Pydantic validation: {second_error}", flush=True)
+
+            # Both attempts failed; raise to trigger keyword fallback.
+            raise first_error
+    except Exception as e:
+        print(f"[RMS-CLASSIFIER] Falling back to keyword matching: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return keyword_fallback(user_message)
+
+The _repair_classifier_json function:
+
+def _repair_classifier_json(raw_text: str):
+    """
+    Attempt to repair common LLM JSON malformations.
+    Returns dict if successful, None otherwise.
+    """
+    import json
+    import re
+
+    if not raw_text:
+        return None
+
+    # Strip markdown fences
+    text = raw_text.strip()
+    if text.startswith("```"):
+        # Remove leading fence
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        # Remove trailing fence
+        text = re.sub(r'\s*```\s*$', '', text)
+
+    # Extract just the JSON object
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace == -1 or last_brace == -1 or last_brace < first_brace:
+        return None
+    text = text[first_brace:last_brace + 1]
+
+    # Fix duplicate keys: "X": "X": "value"  ->  "X": "value"
+    text = re.sub(r'"(\w+)":\s*"\1"\s*:', r'"\1":', text)
+
+    # Fix double-value-for-one-key: "X": "A", "B" (where "B" should be dropped or merged)
+    # Match a key:value followed by another quoted string that's not a key (i.e., not followed by colon).
+    # Pattern: "key": "val1", "val2"(?= [,}])
+    text = re.sub(
+        r'"(\w+)":\s*"([^"]+)",\s*"([^"]+)"(\s*[,}])',
+        r'"\1": "\2"\4',
+        text
+    )
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_5_3_REPORT.md with:
+- INTENDED / ACTUAL footprint
+- The new _repair_classifier_json function
+- The updated classify_rms_intent function
+- Confirmation no other code paths modified
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
