@@ -1,9 +1,4 @@
-from app.workflows.rms_workflow.intent import classify_rms_intent
-msgs = [
-    "create a task for myself, project 100, product 10, task index 5, activity 1, from 2026-05-25 to 2026-05-30, planned 16 hours",
-    "show my tasks",
-    "log 8 hours on task 1 for 2026-05-26 with remark design work",
-]
-for m in msgs:
-    r = classify_rms_intent(m)
-    print(f"{m[:50]!r}: domain={r.domain}, collection={r.collection!r}, persona={r.persona!r}, confidence={r.confidence}")
+(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.workflows.rms_workflow.intent import classify_rms_intent; msgs = ['create a task for myself, project 100, product 10, task index 5, activity 1, from 2026-05-25 to 2026-05-30, planned 16 hours', 'show my tasks', 'log 8 hours on task 1 for 2026-05-26 with remark design work']; [print('%r: domain=%s, collection=%r, persona=%r, confidence=%s' % (m[:50], classify_rms_intent(m).domain, classify_rms_intent(m).collection, classify_rms_intent(m).persona, classify_rms_intent(m).confidence)) for m in msgs]"
+'create a task for myself, project 100, product 10,': domain=IN_DOMAIN, collection='rms_timesheet', persona='CREATOR', confidence=HIGH
+'show my tasks': domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH
+'log 8 hours on task 1 for 2026-05-26 with remark d': domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH
