@@ -70,3 +70,23 @@ Print logging was added at each stage with `[RMS-CLASSIFIER]` prefix for observa
 - No changes to prompt template (`_prompt_template`)
 - No changes to `keyword_fallback`
 - No changes to any other file
+
+
+** apart from this i have some more testcases for you to work with as a senior(2830) login.
+
+🤖
+Hi! What can I help you with?
+show tasks
+V
+🤖
+Here are your current assigned tasks.
+show the tasks assigned for 3010
+V
+🤖
+I can only access your own task details. To view tasks for other employees, you would need approver access.I can only access your own task details. To view tasks for other employees, you would need approver access.
+approve
+V
+🤖
+Approved — the hours are consistent and all required fields are present.
+
+** you can also see the some strange replies came
