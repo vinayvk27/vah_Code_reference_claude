@@ -1,36 +1,18 @@
-INFO:     10.5.1.58:58628 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] creator_agent_node returning. full_text_len=0
-
-** in the same chat session if i tried to create task again means blank message is coming.
-
-but i have a option called clear session and then i asked the below things
-create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2026-05-26 to 2026-05-28,planned 8 hours
-V
+Hi! What can I help you with?
+show my current tasks
+S
 🤖
 
+Here are your currently assigned tasks.
 
-I have created the task for employee 3010 with the specified details.
-
-# WorkLogIdx, Resource, PlanIdx, ProjectIdx, ProductIdx, TaskIdx, ActivityIdx, StartDate, EndDate, PlanHrs, IsCompleted, created_by, created_date
-'20', '2291', NULL, '100', '10', '5', '1', '2026-05-25', '2026-05-30', '16', '0', '2291', '2026-05-26'
-'21', '2291', NULL, '100', '10', '5', '1', '2026-05-25', '2026-05-30', '16', '0', '2291', '2026-05-26'
-'22', '3010', NULL, '100', '10', '1', '1', '2026-05-26', '2026-05-28', '8', '0', '2830', '2026-05-26'
-INFO:     10.5.1.58:58992 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
+INFO:     10.5.1.58:65065 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=show my current tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=show my current tasks
 Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
 [RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] creator_agent_node returning. full_text_len=0
-INFO:     10.5.1.58:60246 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100,product 10, taskindex 1activity 1 from 2
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] creator_agent_node returning. full_text_len=287
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=39
+
+** i dont know why for each and everything bugs are coming. we didnt even moved to negative cases or file upload also. why these many bugs.
+** also you have given one worst suggestion like for each and every prompt clear session. then what is the point of implementing conversation history now. if a person to create task and initially if he forget to enter start date means 
+in the next propmt it has to ask provide start date so that i can proceed like that. if this basic thing is not there means how cani provide demo
