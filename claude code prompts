@@ -180,3 +180,12 @@
 
         if any(bad_word in full_response.lower() for bad_word in ChatController.FORBIDDEN_OUTBOUND):
             full_response = "[REDACTED BY DPAH GUARDRAIL: Confidential Information Detected]"
+
+
+INFO:     10.5.1.58:50547 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:50592 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=show pending approvals
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='approver', collection='rms_timesheet'
+[DIAG-RMS] approver_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=show pending approvals
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
