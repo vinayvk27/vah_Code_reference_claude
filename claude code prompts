@@ -1,4 +1,182 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.workflows.rms_workflow.intent import classify_rms_intent; msgs = ['create a task for myself, project 100, product 10, task index 5, activity 1, from 2026-05-25 to 2026-05-30, planned 16 hours', 'show my tasks', 'log 8 hours on task 1 for 2026-05-26 with remark design work']; [print('%r: domain=%s, collection=%r, persona=%r, confidence=%s' % (m[:50], classify_rms_intent(m).domain, classify_rms_intent(m).collection, classify_rms_intent(m).persona, classify_rms_intent(m).confidence)) for m in msgs]"
-'create a task for myself, project 100, product 10,': domain=IN_DOMAIN, collection='rms_timesheet', persona='CREATOR', confidence=HIGH
-'show my tasks': domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH
-'log 8 hours on task 1 for 2026-05-26 with remark d': domain=IN_DOMAIN, collection='rms_timesheet', persona='REVIEWER', confidence=HIGH
+@staticmethod
+    async def stream_chat_with_orchestrator(
+        db: Session,
+        user: dict,
+        raw_token: str,
+        request_data: dict
+    ):
+        module_name = (request_data.get("module_name") or "RMS").upper()
+        agent_role = request_data.get("agent_role") or None
+        user_msg_text = request_data.get("message", "")
+        thread_id = request_data.get("thread_id")
+
+        if any(bad_word in user_msg_text.lower() for bad_word in ChatController.FORBIDDEN_INBOUND):
+            yield json.dumps({"error": "SECURITY FLAG: Message blocked by Inbound Guardrail."})
+            return
+
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
+
+        yield json.dumps({"type": "meta", "thread_id": thread_id})
+
+        # FORM PERMISSION CHECK: moved to per-workflow handlers
+        # in Tasks 4.2-4.4. chat_controller is identity-only now.
+
+        if module_name == "HRMS":
+            graph = ChatController.get_hrms_graph()
+        elif module_name in ["SCM", "MRR"]:
+            graph = ChatController.get_mrr_graph()
+        else:
+            graph = ChatController.get_rms_graph()
+
+        user_dept = user.get("dept", "Operations")
+
+        config = {"configurable": {"thread_id": thread_id}}
+
+        initial_state = {
+            "user_id": user["emp_no"],
+            "emp_no": user["emp_no"],
+            "group_idx": user.get("group_idx", 0),
+            "role_ids": user.get("role_ids", []),
+            "role_names": user.get("role_names", []),
+            "selected_module": module_name,
+            "user_info": user,
+            "user_dept": user_dept,
+            "selected_collection": module_name,
+            "selected_agent_role": agent_role,
+            "parsed_intent": "",
+            "classifier_confidence": "",
+            "append_soft_correction": False,
+            "has_permission": False,
+            "messages": [],
+            "execution_log": []
+        }
+
+        from langchain_core.messages import HumanMessage, AIMessage
+        chat_history = request_data.get("chat_history") or []
+        if chat_history:
+            chat_history = chat_history[-10:]
+            for msg in chat_history:
+                role = (msg.get("role") or "").lower()
+                content = msg.get("content") or ""
+                if not content:
+                    continue
+                if role == "user":
+                    initial_state["messages"].append(HumanMessage(content=content))
+                elif role == "assistant":
+                    initial_state["messages"].append(AIMessage(content=content))
+
+        initial_state["messages"].append(HumanMessage(content=user_msg_text))
+
+        full_response = ""
+        pending_buffer = ""
+        in_action = False
+
+        async for event in graph.astream_events(initial_state, config=config, version="v1"):
+            event_kind = event.get("event")
+
+            if event_kind == "on_chat_model_stream":
+                chunk_text = event["data"]["chunk"].content or ""
+                if not chunk_text:
+                    continue
+                pending_buffer += chunk_text
+
+                while "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
+                    form_spec, remaining = extract_form_spec(pending_buffer)
+                    if form_spec is None:
+                        break  
+                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                    pending_buffer = remaining
+
+                while pending_buffer:
+                    if not in_action:
+                        start_idx = pending_buffer.find("<<ACTION")
+                        if start_idx == -1:
+                            tail_check = pending_buffer[-12:]
+                            if "<<FORM" in tail_check or "<<ENDF" in tail_check:
+                                break
+                            if len(pending_buffer) > 12:
+                                safe_chunk = pending_buffer[:-12]
+                                pending_buffer = pending_buffer[-12:]
+                                full_response += safe_chunk
+                                yield json.dumps({"type": "chunk", "text": safe_chunk})
+                            break
+                        else:
+                            before = pending_buffer[:start_idx]
+                            pending_buffer = pending_buffer[start_idx:]
+                            if before:
+                                full_response += before
+                                yield json.dumps({"type": "chunk", "text": before})
+                            in_action = True
+                    else:
+                        end_idx = pending_buffer.find("<<END>>")
+                        if end_idx == -1:
+                            break
+                        else:
+                            pending_buffer = pending_buffer[end_idx + len("<<END>>"):]
+                            in_action = False
+
+            # NEW: Listen for Generative UI JSON Widgets AND Static Messages from MRR Workflow
+            elif event_kind == "on_chain_end":
+                output = event.get("data", {}).get("output")
+                node_name = event.get("name")
+                
+                static_output_nodes = [
+                    # MRR static-output nodes (no LLM streaming):
+                    "handle_header", "handle_items", "evaluate_and_route",
+                    "welcome_node", "issuer_agent_node",
+                    "auto_verifier_node", "auto_verifier",
+                    "mrr_approver_agent", "mrr_approver_agent_node",
+                    "mrr_erp_approver_agent", "mrr_erp_approver_agent_node",
+                    # MRR Excel upload path (Task 4.7):
+                    "excel_handler", "excel_handler_node",
+                    "submit_mrr", "submit_mrr_node",
+                    "cancel_mrr", "cancel_mrr_node",
+                    "creator_router_entry",
+                    # Permission-blocked from RMS/HRMS/MRR (no LLM call):
+                    "permission_blocked", "permission_blocked_node",
+                    # NOTE: agent nodes (creator/reviewer/approver) intentionally
+                    # excluded — they stream via on_chat_model_stream, adding them
+                    # here causes duplicated output.
+                    ]
+                
+                if node_name in static_output_nodes and isinstance(output, dict) and "messages" in output:
+                    for msg in output["messages"]:
+                        if hasattr(msg, "content") and isinstance(msg.content, str):
+                            content = msg.content
+                            
+                            # Safely extract the <<FORM>> JSON out of the static string
+                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
+                                # 1. Yield any text before the form
+                                before_form = content.split("<<FORM>>")[0]
+                                if before_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
+                                
+                                # 2. Parse and yield the Form
+                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
+                                try:
+                                    form_spec = json.loads(form_str)
+                                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                                except Exception as e:
+                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
+                                
+                                # 3. Yield any text after the form
+                                after_form = content.split("<<ENDFORM>>")[1]
+                                if after_form.strip():
+                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
+                            else:
+                                # No form tags, just yield as standard text
+                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
+
+        if pending_buffer and not in_action:
+            if "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
+                form_spec, remaining = extract_form_spec(pending_buffer)
+                if form_spec is not None:
+                    yield json.dumps({"type": "form", "form_spec": form_spec})
+                    pending_buffer = remaining
+            if pending_buffer:
+                full_response += pending_buffer
+                yield json.dumps({"type": "chunk", "text": pending_buffer})
+
+        if any(bad_word in full_response.lower() for bad_word in ChatController.FORBIDDEN_OUTBOUND):
+            full_response = "[REDACTED BY DPAH GUARDRAIL: Confidential Information Detected]"
