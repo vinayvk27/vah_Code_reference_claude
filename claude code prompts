@@ -1,19 +1,19 @@
-INFO:     10.5.1.58:57714 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:57765 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show my tasks
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=2291, collection='rms_timesheet', last_msg=show my tasks
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=0
-INFO:     10.5.1.58:58405 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=create a task for my self, project 100,product 10, task index 5, activity 1,from
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] creator_agent_node entered. emp_no=2291, collection='rms_timesheet', last_msg=create a task for my self, project 100,product 10, task index 5, activity 1,from
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] creator_agent_node returning. full_text_len=0
-INFO:     10.5.1.58:58508 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2291, last_msg=show all pending approvals
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='approver', collection='rms_timesheet'
-[DIAG-RMS] permission_blocked_node entered. denial_message="You don't have approver access to rms timesheet. Please contact your administrator if you need this permission."
+from app.workflows.rms_workflow.intent import classify_rms_intent
+
+test_messages = [
+    "show my tasks",
+    "log 4 hours today on task 1",
+    "create a task for project 5",
+    "create a task for myself, project 100, product 10, task index 5, activity 1, from 2026-05-25 to 2026-05-30, planned 16 hours",
+    "log 8 hours on task 1 for 2026-05-26 with remark design work",
+    "show pending approvals",
+    "approve worklog 5",
+    "tell me a joke",
+    "could you release it",
+]
+
+for msg in test_messages:
+    result = classify_rms_intent(msg)
+    print(f"\n--- {msg!r}")
+    print(f"  domain={result.domain}, collection={result.collection!r}, persona={result.persona!r}, confidence={result.confidence}")
+    print(f"  reasoning: {result.reasoning}")
