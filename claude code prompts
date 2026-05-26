@@ -1,191 +1,254 @@
-@staticmethod
-    async def stream_chat_with_orchestrator(
-        db: Session,
-        user: dict,
-        raw_token: str,
-        request_data: dict
-    ):
-        module_name = (request_data.get("module_name") or "RMS").upper()
-        agent_role = request_data.get("agent_role") or None
-        user_msg_text = request_data.get("message", "")
-        thread_id = request_data.get("thread_id")
+async def approver_agent_node(state: RMSState) -> dict:
+    """
+    Node 3c: Approver Agent - Handles final approval/rejection.
+    Uses RAG for context and LLM for intelligent response generation.
+    For RMS collection, also supports timesheet tools (read + approve).
+    Appends an AI message to the messages list.
+    """
+    print(
+        f"[DIAG-RMS] approver_agent_node entered. "
+        f"emp_no={state.get('emp_no')}, "
+        f"collection={state.get('selected_collection')!r}, "
+        f"last_msg={_last_user_msg_short(state)}",
+        flush=True
+    )
+    messages = state.get("messages", [])
+    selected_collection = state.get("selected_collection", "")
+    parsed_intent = state.get("parsed_intent", "")
+    user_dept = state.get("user_dept", "")
+    user_id = state.get("user_id", "")
 
-        if any(bad_word in user_msg_text.lower() for bad_word in ChatController.FORBIDDEN_INBOUND):
-            yield json.dumps({"error": "SECURITY FLAG: Message blocked by Inbound Guardrail."})
-            return
+    # Get domain context for the user's query
+    last_user_message = messages[-1].content if messages else ""
+    domain_context = RAGController.retrieve_context(last_user_message, user_dept, selected_collection)
 
-        if not thread_id:
-            thread_id = str(uuid.uuid4())
+    # Initialize LLM
+    llm = get_llm()
 
-        yield json.dumps({"type": "meta", "thread_id": thread_id})
+    # Build user context for tools
+    user_context = {
+        "sub": user_id,
+        "user_id": user_id,
+        "persona": "approver",
+        "dept": user_dept
+    }
 
-        # FORM PERMISSION CHECK: moved to per-workflow handlers
-        # in Tasks 4.2-4.4. chat_controller is identity-only now.
+    # For RMS collection, bind timesheet tools (approve for approver)
+    if selected_collection and selected_collection.lower().startswith("rms_"):
+        from app.workflows.rms_workflow.rms_tools import (
+            tool_list_pending_approvals,
+            tool_approve_worklog
+        )
+        from app.models.db_schema import Agent
 
-        if module_name == "HRMS":
-            graph = ChatController.get_hrms_graph()
-        elif module_name in ["SCM", "MRR"]:
-            graph = ChatController.get_mrr_graph()
+        # Get user info for identity injection
+        user_emp_id = user_id
+        user_name = user_context.get('name') or 'the current user'
+
+        # Fetch user's grade from Resource table
+        user_grade = None
+        db_snap = SessionLocal()
+        try:
+            resource = db_snap.query(Resource).filter(Resource.Emp_no == user_emp_id).first()
+            if resource:
+                user_grade = resource.Grade
+                user_context['grade'] = user_grade
+        finally:
+            db_snap.close()
+
+        # Pre-fetch data snapshot for the LLM (DB-backed)
+        db_snap = SessionLocal()
+        try:
+            snapshot_data = timesheet_store.list_worklogs(db_snap)
+        finally:
+            db_snap.close()
+
+        snapshot_lines = [str(r) for r in snapshot_data[:30]]
+        snapshot_block = "\n".join(snapshot_lines) if snapshot_lines else "(no data)"
+
+        # Get the persona-specific prompt from the database
+        db_session = SessionLocal()
+        try:
+            agent_row = db_session.query(Agent).filter(
+                Agent.agent_name == "RMS_APPROVER"
+            ).first()
+            base_prompt = agent_row.system_prompt if agent_row else ""
+        finally:
+            db_session.close()
+
+        # Build uploaded files context for bulk processing
+        uploaded_files = state.get("uploaded_files") or []
+        files_context = ""
+        if uploaded_files:
+            files_block = []
+            for f in uploaded_files:
+                files_block.append(
+                    f"File: {f.get('filename', 'unknown')} ({f.get('file_type', 'unknown')}, {f.get('row_count', 0)} rows)"
+                )
+                preview = f.get("preview", []) or []
+                for row in preview[:3]:
+                    files_block.append(f"  - {row}")
+                if len(preview) > 3:
+                    files_block.append(f"  ... and {len(preview) - 3} more rows")
+                files_block.append("")
+            files_context = "\n".join(files_block)
+
+        system_prompt = (
+            f"{base_prompt}\n\n"
+            f"=== CURRENT USER CONTEXT ===\n"
+            f"Employee ID: {user_emp_id}\n"
+            f"Employee Name: {user_name}\n"
+            f"Department: {user_dept}\n"
+            f"Grade: {user_grade or 'N/A'}\n"
+            f"Persona: APPROVER\n\n"
+            f"=== UPLOADED FILE DATA (FOR BULK APPROVAL) ===\n"
+            f"If the user has uploaded a file with worklogs to approve, you will see it listed below.\n"
+            f"When the user asks to process bulk approvals from a file, use tool_approve_worklog for each row.\n\n"
+        )
+
+        if uploaded_files:
+            system_prompt += f"Uploaded Files:\n{files_context}\n"
         else:
-            graph = ChatController.get_rms_graph()
+            system_prompt += "No files uploaded.\n\n"
 
-        user_dept = user.get("dept", "Operations")
+        system_prompt += (
+            f"=== CONVERSATION HISTORY IS AUTHORITATIVE ===\n"
+            f"Recent messages between you and the user are included in this conversation. The DATA SNAPSHOT below is fetched at the start of THIS request — it does NOT include actions you took earlier in this same conversation.\n"
+            f"When the user asks 'what did I just approve', 'what was that entry', or anything referring to recent activity:\n"
+            f"  - FIRST check the conversation history for tool actions you confirmed in earlier turns.\n"
+            f"  - If you confirmed approving/rejecting in an earlier message, reference that confirmation directly.\n"
+            f"  - Do NOT say 'nothing was approved' if the conversation history shows you previously confirmed an action.\n\n"
+            f"=== HOW TO PERFORM ACTIONS (CRITICAL) ===\n"
+            f"Your platform does NOT support normal tool calling. You MUST use a special protocol.\n\n"
+            f"Format: <<ACTION>>{{\"tool\": \"<name>\", \"args\": {{...}}}}<<END>>\n\n"
+            f"Available tools for APPROVER:\n"
+            f"- tool_list_pending_approvals: list worklogs awaiting approval\n"
+            f"- tool_approve_worklog: approve or reject a worklog\n"
+            f"  args: {{\"worklog_log_idx\": <int>, \"decision\": \"APPROVED\"|\"REJECTED\", \"remarks\": \"<string>\"}}\n\n"
+            f"RULES:\n"
+            f"1. When user says 'approve worklog X' or 'reject worklog X', IMMEDIATELY emit the <<ACTION>>...<<END>> block.\n"
+            f"2. Do NOT ask for confirmation — execute the decision.\n"
+            f"3. After the block, briefly explain the decision rationale (1-2 sentences).\n"
+            f"4. For READ queries, just reference the data snapshot — no action block.\n\n"
+            f"Example: User says 'Approve worklog 7'\n"
+            f"Reply:\n"
+            f"<<ACTION>>{{\"tool\": \"tool_approve_worklog\", \"args\": {{\"worklog_log_idx\": 7, \"decision\": \"APPROVED\", \"remarks\": \"Approved\"}}}}<<END>>\n"
+            f"Approved — hours match planned values and all required fields are present.\n\n"
+            f"=== CURRENT DATA SNAPSHOT (read-only reference) ===\n"
+            f"This is the latest worklog state. You MAY reference these entries directly:\n"
+            f"{snapshot_block}\n\n"
+            f"=== DOMAIN CONTEXT ===\n{domain_context}"
+        )
 
-        config = {"configurable": {"thread_id": thread_id}}
+        @tool
+        def list_pending_approvals() -> str:
+            """List worklogs awaiting approval."""
+            return tool_list_pending_approvals(user_context)
 
-        initial_state = {
-            "user_id": user["emp_no"],
-            "emp_no": user["emp_no"],
-            "group_idx": user.get("group_idx", 0),
-            "role_ids": user.get("role_ids", []),
-            "role_names": user.get("role_names", []),
-            "selected_module": module_name,
-            "user_info": user,
-            "user_dept": user_dept,
-            "selected_collection": module_name,
-            "selected_agent_role": agent_role,
-            "parsed_intent": "",
-            "classifier_confidence": "",
-            "append_soft_correction": False,
-            "has_permission": False,
-            "messages": [],
-            "execution_log": []
-        }
+        @tool
+        def approve_worklog(worklog_log_idx: int, decision: str, remarks: str) -> str:
+            """Approve or reject a worklog.
+            decision must be 'APPROVED' or 'REJECTED'."""
+            return tool_approve_worklog(worklog_log_idx, decision, remarks, user_context)
 
-        from langchain_core.messages import HumanMessage, AIMessage
-        chat_history = request_data.get("chat_history") or []
-        if chat_history:
-            chat_history = chat_history[-10:]
-            for msg in chat_history:
-                role = (msg.get("role") or "").lower()
-                content = msg.get("content") or ""
-                if not content:
-                    continue
-                if role == "user":
-                    initial_state["messages"].append(HumanMessage(content=content))
-                elif role == "assistant":
-                    initial_state["messages"].append(AIMessage(content=content))
+        llm_with_tools = llm.bind_tools([list_pending_approvals, approve_worklog])
 
-        initial_state["messages"].append(HumanMessage(content=user_msg_text))
+        # Pass the full conversation history (system prompt + all prior messages from state)
+        message_list = [SystemMessage(content=system_prompt)] + list(messages)
 
-        full_response = ""
-        pending_buffer = ""
-        in_action = False
+        response = await llm_with_tools.ainvoke(message_list)
 
-        async for event in graph.astream_events(initial_state, config=config, version="v1"):
-            event_kind = event.get("event")
+        # Parse <<ACTION>> markers
+        actions = extract_actions(response.content or "")
 
-            if event_kind == "on_chat_model_stream":
-                chunk_text = event["data"]["chunk"].content or ""
-                if not chunk_text:
-                    continue
-                pending_buffer += chunk_text
-
-                while "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
-                    form_spec, remaining = extract_form_spec(pending_buffer)
-                    if form_spec is None:
-                        break  
-                    yield json.dumps({"type": "form", "form_spec": form_spec})
-                    pending_buffer = remaining
-
-                while pending_buffer:
-                    if not in_action:
-                        start_idx = pending_buffer.find("<<ACTION")
-                        if start_idx == -1:
-                            tail_check = pending_buffer[-12:]
-                            if "<<FORM" in tail_check or "<<ENDF" in tail_check:
-                                break
-                            if len(pending_buffer) > 12:
-                                safe_chunk = pending_buffer[:-12]
-                                pending_buffer = pending_buffer[-12:]
-                                full_response += safe_chunk
-                                yield json.dumps({"type": "chunk", "text": safe_chunk})
-                            break
-                        else:
-                            before = pending_buffer[:start_idx]
-                            pending_buffer = pending_buffer[start_idx:]
-                            if before:
-                                full_response += before
-                                yield json.dumps({"type": "chunk", "text": before})
-                            in_action = True
+        if actions:
+            execution_results = []
+            for action in actions:
+                tool_name = action["tool"]
+                tool_args = action["args"]
+                try:
+                    if tool_name == "tool_list_pending_approvals":
+                        result = list_pending_approvals.invoke(tool_args)
+                    elif tool_name == "tool_approve_worklog":
+                        result = approve_worklog.invoke(tool_args)
                     else:
-                        end_idx = pending_buffer.find("<<END>>")
-                        if end_idx == -1:
-                            break
-                        else:
-                            pending_buffer = pending_buffer[end_idx + len("<<END>>"):]
-                            in_action = False
+                        result = f"Unknown tool: {tool_name}"
+                    execution_results.append(f"[Tool result for {tool_name}]\n{result}")
+                except PermissionError as pe:
+                    execution_results.append(f"[Permission denied for {tool_name}: {pe}]")
+                except Exception as e:
+                    execution_results.append(f"[Error in {tool_name}: {e}]")
 
-            # NEW: Listen for Generative UI JSON Widgets AND Static Messages from MRR Workflow
-            elif event_kind == "on_chain_end":
-                output = event.get("data", {}).get("output")
-                node_name = event.get("name")
-                
-                static_output_nodes = [
-                    # MRR static-output nodes (no LLM streaming):
-                    "handle_header", "handle_items", "evaluate_and_route",
-                    "welcome_node", "issuer_agent_node",
-                    "auto_verifier_node", "auto_verifier",
-                    "mrr_approver_agent", "mrr_approver_agent_node",
-                    "mrr_erp_approver_agent", "mrr_erp_approver_agent_node",
-                    # MRR Excel upload path (Task 4.7):
-                    "excel_handler", "excel_handler_node",
-                    "submit_mrr", "submit_mrr_node",
-                    "cancel_mrr", "cancel_mrr_node",
-                    "creator_router_entry",
-                    # Permission-blocked from RMS/HRMS/MRR (no LLM call):
-                    "permission_blocked", "permission_blocked_node",
-                    # NOTE: agent nodes (creator/reviewer/approver) intentionally
-                    # excluded — they stream via on_chat_model_stream, adding them
-                    # here causes duplicated output.
-                    ]
-                
-                if node_name in static_output_nodes and isinstance(output, dict) and "messages" in output:
-                    for msg in output["messages"]:
-                        if hasattr(msg, "content") and isinstance(msg.content, str):
-                            content = msg.content
-                            
-                            # Safely extract the <<FORM>> JSON out of the static string
-                            if "<<FORM>>" in content and "<<ENDFORM>>" in content:
-                                # 1. Yield any text before the form
-                                before_form = content.split("<<FORM>>")[0]
-                                if before_form.strip():
-                                    yield json.dumps({"type": "chunk", "text": before_form + "\n\n"})
-                                
-                                # 2. Parse and yield the Form
-                                form_str = content.split("<<FORM>>")[1].split("<<ENDFORM>>")[0]
-                                try:
-                                    form_spec = json.loads(form_str)
-                                    yield json.dumps({"type": "form", "form_spec": form_spec})
-                                except Exception as e:
-                                    yield json.dumps({"type": "chunk", "text": f"Error parsing form widget: {e}"})
-                                
-                                # 3. Yield any text after the form
-                                after_form = content.split("<<ENDFORM>>")[1]
-                                if after_form.strip():
-                                    yield json.dumps({"type": "chunk", "text": after_form + "\n\n"})
-                            else:
-                                # No form tags, just yield as standard text
-                                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
+            # Strip the action markers from the original content
+            # The LLM's confirmation message is sufficient; don't append execution_results
+            clean_content = strip_actions(response.content)
+            full_text = clean_content.strip()
 
-        if pending_buffer and not in_action:
-            if "<<FORM>>" in pending_buffer and "<<ENDFORM>>" in pending_buffer:
-                form_spec, remaining = extract_form_spec(pending_buffer)
-                if form_spec is not None:
-                    yield json.dumps({"type": "form", "form_spec": form_spec})
-                    pending_buffer = remaining
-            if pending_buffer:
-                full_response += pending_buffer
-                yield json.dumps({"type": "chunk", "text": pending_buffer})
+        elif hasattr(response, 'tool_calls') and response.tool_calls:
+            tool_results = []
+            for tc in response.tool_calls:
+                tool_name = tc['name']
+                tool_args = tc['args']
+                tool_id = tc['id']
 
-        if any(bad_word in full_response.lower() for bad_word in ChatController.FORBIDDEN_OUTBOUND):
-            full_response = "[REDACTED BY DPAH GUARDRAIL: Confidential Information Detected]"
+                try:
+                    if tool_name == 'list_pending_approvals':
+                        result = list_pending_approvals.invoke(tool_args)
+                    elif tool_name == 'approve_worklog':
+                        result = approve_worklog.invoke(tool_args)
+                    else:
+                        result = f"Unknown tool: {tool_name}"
 
+                    tool_results.append(ToolMessage(content=str(result), tool_call_id=tool_id))
+                except PermissionError as pe:
+                    tool_results.append(ToolMessage(content=f"Permission denied: {str(pe)}", tool_call_id=tool_id))
+                except Exception as e:
+                    tool_results.append(ToolMessage(content=f"Error: {str(e)}", tool_call_id=tool_id))
 
-INFO:     10.5.1.58:50547 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:50592 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=show pending approvals
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='approver', collection='rms_timesheet'
-[DIAG-RMS] approver_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=show pending approvals
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+            message_list.extend(tool_results)
+            final_response = await llm.ainvoke(message_list)
+            full_text = final_response.content if hasattr(final_response, 'content') else str(final_response)
+        else:
+            chunks = []
+            print(
+                f"[DIAG-RMS] approver_agent_node about to call LLM. "
+                f"messages_count={len(message_list)}, "
+                f"system_prompt_len={len(system_prompt) if 'system_prompt' in locals() else 'N/A'}",
+                flush=True
+            )
+            async for chunk in llm.astream(message_list):
+                piece = chunk.content if hasattr(chunk, "content") else ""
+                if piece:
+                    chunks.append(piece)
+            full_text = "".join(chunks)
+            print(
+                f"[DIAG-RMS] approver_agent_node done. full_text_len={len(full_text)}",
+                flush=True
+            )
+    else:
+        # Non-RMS collection — unreachable in RMS workflow; skip
+        full_text = ""
+
+    # Soft correction append
+    if state.get("append_soft_correction", False):
+        soft_correction = (
+            f" (I assumed you wanted to "
+            f"{_describe_assumed_action(state.get('selected_agent_role', ''), state.get('selected_collection', ''))}. "
+            f"Let me know if you meant something else.)"
+        )
+        full_text += soft_correction
+
+    execution_log = state.get("execution_log", []) + [
+        f"Approver agent executed for {selected_collection}",
+        f"RAG context retrieved for dept: {user_dept}"
+    ]
+
+    print(
+        f"[DIAG-RMS] approver_agent_node returning. full_text_len={len(full_text) if 'full_text' in locals() else 'N/A'}",
+        flush=True
+    )
+
+    return {
+        "messages": [AIMessage(content=full_text)],
+        "execution_log": execution_log
+    }
