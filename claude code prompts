@@ -1,24 +1,21 @@
--- Step 1: Add CTO emp 6 as Senior (role 9)
+-- Add CTO emp 5 as Senior (role 9)
 INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
-VALUES ('06', 9, 'system');
+VALUES ('5', 9, 'system');
 
--- (Some systems strip leading zero. If your emp_id column stores as '6' not '06', use:)
--- INSERT IGNORE INTO dpah_user_roles (emp_id, role_id, assigned_by)
--- VALUES ('6', 9, 'system');
-
--- Step 2: Map MRR module (5) to CTO's group_idx 30
+-- Map MRR module (5) to CTO's group_idx 30
 INSERT IGNORE INTO dpah_module_usergroups (module_id, group_idx, is_active, assigned_by)
 VALUES (5, 30, 1, 'system');
 
--- Step 3: Grant CTO (Senior, group 30) access to MRR_GENERAL_MANAGER_APPROVER
+-- Grant CTO (Senior, group 30) access to manager approver agent
 INSERT IGNORE INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
 SELECT 9, 30, a.agent_id, 'system'
 FROM dpah_agents a
 WHERE a.agent_name = 'MRR_GENERAL_MANAGER_APPROVER';
 
--- Step 4: Verify
+-- Verify
 SELECT raa.role_id, raa.group_id, a.agent_name
 FROM dpah_role_agent_access raa
 JOIN dpah_agents a ON a.agent_id = raa.agent_id
-WHERE a.agent_name LIKE 'MRR_%'
-  AND raa.group_id = 30;
+WHERE raa.group_id = 30 AND a.agent_name LIKE 'MRR_%';
+
+SELECT * FROM dpah_user_roles WHERE emp_id IN ('5', '06', '6');
