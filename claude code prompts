@@ -1,21 +1,50 @@
-═══════════════════════════════════════════════════════════════════
-TASK 5.8-FIX: Add creator_needs_file to static_output_nodes
-═══════════════════════════════════════════════════════════════════
+Hi! What can I help you with?
+process this file
+ test_mrr.xlsx
+A
+🤖
+```json
+{
+  "domain": "IN_DOMAIN",
+  "collection": "mrr_general",
+  "persona": "CREATOR",
+  "confidence": "LOW",
+  "reasoning": "The phrase 'process this file' likely refers to creating a material requisition via file upload, which is a creator action, but the intent is ambiguous and lacks specific material det**Material Requisition — Review Before Submit**
 
-CRITICAL CONSTRAINT
-- Only touch app/controllers/chat_controller.py
-- Only add the new node name to the existing static_output_nodes list
-- Do NOT modify any other logic
+MRR Number: DPE/MRR/1/26-27
+Requestor: emp 1065
+Department: SDG
+Project: YEA2719 — PSDU TYPE -1 UNIT
+Phase: DESIGN AND DEVELOPMENT
+Requisition Type: RETURNABLE
+Need by: 2026-06-15
+Description: PSDU TYPE -1 UNIT
+Comments: Urgent test order
 
-CHANGE
-In stream_chat_with_orchestrator, find the static_output_nodes list.
-Add two strings to it:
-  "creator_needs_file"
-  "creator_needs_file_node"
+**Line Items:**
+  1. DP-RM-CAB-03100 — UOM: NOS
+     Qty: 100.0 | Available: 359.4
+     Unit Cost (LPP): 50.00 | Subtotal: 5000.00
+     Return by: 2026-08-18T00:00:00
 
-Place them in the MRR section of the list (next to excel_handler,
-submit_mrr, cancel_mrr).
+  2. DP-RM-CAB-02620 — UOM: MTR
+     Qty: 200.0 | Available: 87.9
+     Unit Cost (LPP): 10.68 | Subtotal: 2136.40
+     Return by: 2026-08-14T00:00:00
 
-DELIVERABLE
-Show the modified list. Confirm no other changes.
-═══════════════════════════════════════════════════════════════════
+**Total Cost: 7,136.40**
+
+Please confirm or cancel below:
+
+
+
+Your MRR **DPE/MRR/1/26-27** has been submitted.
+Total cost: ₹7,136.40
+
+Running verification...
+
+Your requisition (total cost: ₹7136.40) has been submitted for manager approval.
+
+ails."
+}
+```
