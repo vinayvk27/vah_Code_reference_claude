@@ -1,87 +1,106 @@
-═══════════════════════════════════════════════════════════════════
-TASK 5.8: Guard against broken form_flow path in MRR creator
-═══════════════════════════════════════════════════════════════════
-When user types a create-MRR phrase without uploading an Excel file,
-return a friendly message asking for the file. Do NOT route to the
-broken form_flow path that emits malformed widget JSON.
+# TASK 5.8 REPORT — Guard Against Broken form_flow Path in MRR Creator
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/material_workflow/nodes.py.
-- Modify ONLY creator_path_router (or the function that decides
-  whether to route to excel_handler vs form_flow).
-- Do NOT modify the form_flow code itself — just bypass it.
-- Do NOT modify any other file.
+## Files Modified
 
-───────────────────────────────────────────────────────────────────
-SCOPE
-───────────────────────────────────────────────────────────────────
+| File | Changes |
+|---|---|
+| `app/workflows/material_workflow/nodes.py` | Modified `creator_path_router` default branch; added `creator_needs_file_node` |
+| `app/workflows/material_workflow/graph.py` | Imported `creator_needs_file_node`; registered node + edge |
 
-In creator_path_router (look for the routing logic that decides
-"excel_handler" vs "form_flow"):
+**No other files were modified.** The `form_flow` node and its broken code remain registered and unchanged.
 
-Currently it routes:
-- If uploaded_files present → excel_handler
-- Else → form_flow (BROKEN)
+---
 
-Change to:
-- If uploaded_files present → excel_handler
-- Else → return a message "Please upload an Excel file with the MRR
-  details. The Excel format should include: Project Number,
-  Requisition Type, Need By Date, Description, Comments, Item Name,
-  Requested Quantity, Return Date." and end the flow.
+## The New Node Function
 
-The cleanest way: add a new terminal node "creator_needs_file" that
-emits this message, and route to it instead of form_flow when no
-files are uploaded.
+**File:** `app/workflows/material_workflow/nodes.py` (line ~1340)
 
-If the routing function returns a string identifying the next node,
-add a new conditional case for the no-file scenario.
-
-If easier, just add a node-level guard inside creator_path_router
-that returns a message directly when has_pending=False and no files.
-
-───────────────────────────────────────────────────────────────────
-SUGGESTED IMPLEMENTATION
-───────────────────────────────────────────────────────────────────
-
-In creator_path_router (or wherever it decides routing):
-
-  if uploaded_files:
-      return "excel_handler"
-  else:
-      # form_flow is currently broken; redirect to a helpful message
-      return "creator_needs_file"
-
-Then add a new node "creator_needs_file" that emits:
-
-async def creator_needs_file_node(state: MaterialRequisitionState) -> dict:
+```python
+def creator_needs_file_node(state: MaterialRequisitionState) -> dict:
+    """
+    Terminal node: emitted when a creator tries to create an MRR
+    without uploading an Excel file.  The form_flow path is
+    currently broken for this case, so we short-circuit with a
+    friendly message instead.
+    """
+    print(f"[DIAG-MRR] creator_needs_file_node entered.", flush=True)
     msg = (
         "To create a material requisition, please upload an Excel file with these columns: "
         "Project Number, Requisition Type, Need By Date, Description, Comments, "
         "Item Name, Requested Quantity, Return Date.\n\n"
         "Once uploaded, type 'process this mrr' and I'll handle the rest."
     )
-    return {"messages": [AIMessage(content=msg)]}
+    return {
+        "messages": [AIMessage(content=msg)],
+        "execution_log": state.get("execution_log", []) + [
+            "Creator needs file: no uploaded_files; redirected to instructions."
+        ]
+    }
+```
 
-And register it in the graph:
-- graph.add_node("creator_needs_file", creator_needs_file_node)
-- graph.add_edge("creator_needs_file", END)
+---
 
-This requires graph.py to also be touched. ONLY add the node and
-edge — do not modify any other existing nodes or edges.
+## Routing Change in `creator_path_router`
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_5_8_REPORT.md with:
-- Files modified (should be nodes.py and graph.py only)
-- The new node function
-- The new graph node registration and edge
-- Confirmation that form_flow node and its broken code is still
-  registered (just not reached for this case) so we don't break
-  anything else
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+**File:** `app/workflows/material_workflow/nodes.py` (line ~1073)
+
+**Before:**
+```python
+    # Default — form flow
+    print(f"[DIAG-MRR] creator_path_router -> form_flow", flush=True)
+    return "form_flow"
+```
+
+**After:**
+```python
+    # No files and no confirm/cancel — ask user to upload Excel
+    # (form_flow is currently broken for this case; bypass it)
+    print(f"[DIAG-MRR] creator_path_router -> creator_needs_file", flush=True)
+    return "creator_needs_file"
+```
+
+---
+
+## Graph Registration
+
+**File:** `app/workflows/material_workflow/graph.py`
+
+**Import added (line ~29):**
+```python
+    creator_needs_file_node,
+```
+
+**Node registered (line ~138):**
+```python
+    # Task 5.8: new terminal node for missing-file case
+    graph_builder.add_node("creator_needs_file", creator_needs_file_node)
+```
+
+**Conditional edge added to router mapping (line ~173):**
+```python
+            "creator_needs_file": "creator_needs_file",
+```
+
+**Terminal edge added (line ~231):**
+```python
+    graph_builder.add_edge("creator_needs_file", END)
+```
+
+---
+
+## Confirmation: `form_flow` Node Still Registered
+
+The `form_flow` routing key (`"form_flow": "parse_user_input"`) still exists in the conditional edges dict on line ~172 of `graph.py`. The `form_flow` path is simply no longer reached from `creator_path_router` when no files are uploaded — it remains registered for any other code path that might route to it. No `form_flow` node code was modified or removed.
+
+---
+
+## Routing Summary
+
+```
+creator_path_router():
+  if pending and confirmed  → "submit_mrr"
+  if pending and cancelled  → "cancel_mrr"
+  if uploaded_files present → "excel_handler"
+  else (no files)           → "creator_needs_file"  ← NEW
+  (old default)             → "form_flow"           ← still in graph, not reachable here
+```
