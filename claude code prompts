@@ -48,3 +48,19 @@ Your requisition (total cost: ₹7136.40) has been submitted for manager approva
 ails."
 }
 ```
+
+Hi! What can I help you with?
+show erp pending
+P
+🤖
+{
+  "domain": "IN_DOMAIN",
+  "collection": "mrr_general",
+  "persona": "ERP_APPROVER",
+  "confidence": "HIGH",
+  "reasoning": "The user is explicitly requesting to view pending items at the 'ERP' stage, which corresponds to the responsibilities of the ERP_APPROVER persona within the mrr_general coYou have no pending ERP approvals at this time.
+
+llection."
+}
+
+** also one main thing i observed till now for approval i mam using coo login only i.e 16 and prj. but for cto login i.e 5 and hdd it is not even displaying modules also in the frontend.we need to debug this. both bugs are priority
