@@ -1,180 +1,24 @@
-# TASK 5.6 REPORT: Replace LLM Intent Classifier with Keyword Classifier for MRR
+═══════════════════════════════════════════════════════════════════
+TASK 5.6-FIX: Lowercase persona values in MRR keyword classifier
+═══════════════════════════════════════════════════════════════════
 
-## INTENDED / ACTUAL Footprint
+CRITICAL CONSTRAINT
+- Only touch app/workflows/material_workflow/intent.py
+- ONLY change the persona string values from UPPERCASE to lowercase
+  in the _build_in_domain calls
+- Do NOT change any other logic, keyword lists, function structure,
+  or anything else
 
-| Item | Intended | Actual | Match |
-|------|----------|--------|-------|
-| Files modified | `intent.py`, `prompts.py` | `intent.py`, `prompts.py` | YES |
-| Files NOT modified | `nodes.py`, `graph.py`, `state.py` | Confirmed untouched | YES |
-| Pydantic model unchanged | `MRRIntentClassification` with 5 fields | Unchanged (lines 83–100) | YES |
-| Function signature identical | `classify_mrr_intent(user_message: str) -> MRRIntentClassification` | Identical (line 140) | YES |
-| No LLM calls | Deterministic keyword matching | Verified — zero LLM imports | YES |
-| Keyword constants preserved | Same names as before, replaced values | All 5 constant names preserved | YES |
+CHANGES
+In classify_mrr_intent:
+- "ERP_APPROVER" → "erp_approver"
+- "ISSUER" → "issuer"
+- "APPROVER" → "approver"
+- "CREATOR" → "creator" (in both Step 5 and Step 6 default)
 
-## Modified Files
+All four persona string literals must become lowercase to match
+what permission_check_node compares against.
 
-1. **`app/workflows/material_workflow/intent.py`** — Full rewrite of classify logic
-2. **`app/workflows/material_workflow/prompts.py`** — Updated keyword lists (lines 17–36) for consistency
-
-## Files NOT Modified
-
-- `nodes.py` — Only imports `classify_mrr_intent` (line 122), not affected
-- `graph.py` — Not touched
-- `state.py` — Not touched
-- Any other file — Not touched
-
-## Full New `classify_mrr_intent` Function
-
-```python
-def classify_mrr_intent(user_message: str) -> MRRIntentClassification:
-    """
-    Keyword-based intent classifier for MRR.
-    No LLM call — deterministic.
-    """
-    text = _normalize(user_message)
-
-    if not text:
-        return _build_out_of_domain("Empty message")
-
-    # Step 1: Out-of-domain check (so unrelated requests are rejected).
-    for kw in OUT_OF_DOMAIN_KEYWORDS:
-        if kw in text:
-            return _build_out_of_domain(f"Matched out-of-domain keyword: {kw}")
-
-    # Step 2: ERP approver (most specific).
-    for kw in ERP_APPROVER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain(
-                collection="mrr_general",
-                persona="ERP_APPROVER",
-                confidence="HIGH",
-                reasoning=f"Matched ERP approver keyword: {kw}",
-            )
-
-    # Step 3: Issuer.
-    for kw in ISSUER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain(
-                collection="mrr_general",
-                persona="ISSUER",
-                confidence="HIGH",
-                reasoning=f"Matched issuer keyword: {kw}",
-            )
-
-    # Step 4: Approver (manager).
-    for kw in APPROVER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain(
-                collection="mrr_general",
-                persona="APPROVER",
-                confidence="HIGH",
-                reasoning=f"Matched approver keyword: {kw}",
-            )
-
-    # Step 5: Creator.
-    for kw in CREATOR_KEYWORDS:
-        if kw in text:
-            return _build_in_domain(
-                collection="mrr_general",
-                persona="CREATOR",
-                confidence="HIGH",
-                reasoning=f"Matched creator keyword: {kw}",
-            )
-
-    # Step 6: Default — assume creator (low confidence) for any
-    # MRR-context message that didn't match other personas. The
-    # permission check downstream will handle whether the user
-    # actually has creator access.
-    return _build_in_domain(
-        collection="mrr_general",
-        persona="CREATOR",
-        confidence="LOW",
-        reasoning="No keyword matched; defaulting to creator (lowest-privilege).",
-    )
-```
-
-## Helper Functions
-
-### `_normalize(message: str) -> str`
-Lowercases, strips whitespace, replaces punctuation with spaces for word-boundary matching, collapses internal whitespace.
-
-### `_build_in_domain(collection, persona, confidence, reasoning) -> MRRIntentClassification`
-Factory for IN_DOMAIN results with `collection="mrr_general"`.
-
-### `_build_out_of_domain(reasoning) -> MRRIntentClassification`
-Factory for OUT_OF_DOMAIN results with empty `collection` and `persona`.
-
-## Full Keyword Lists
-
-### OUT_OF_DOMAIN_KEYWORDS
-```python
-["weather", "joke", "salary", "leave", "payslip",
- "hello", "hi there", "good morning", "good evening",
- "who are you", "what can you do", "help me"]
-```
-
-### ISSUER_KEYWORDS
-```python
-["issue stock", "issue material", "issue items",
- "stock issue", "release stock", "release to floor",
- "ready for issue", "items to issue", "pending issue"]
-```
-
-### ERP_APPROVER_KEYWORDS
-```python
-["erp approve", "erp approval", "erp pending",
- "show erp approvals", "show erp pending", "erp queue",
- "approve from erp", "final approval", "final approve",
- "ready for erp", "release to erp"]
-```
-
-### APPROVER_KEYWORDS
-```python
-["approve all", "approve pending",
- "show pending approvals", "show pending approval",
- "show approvals", "pending approvals", "approval queue",
- "reject", "approve mrr", "approve requisition",
- "approve ", "decline "]
-```
-
-### CREATOR_KEYWORDS
-```python
-["create mrr", "create requisition",
- "new mrr", "new requisition",
- "raise mrr", "raise requisition",
- "submit mrr", "submit requisition",
- "upload mrr", "process mrr",
- "process this mrr", "process this excel",
- "process this file", "upload material requisition",
- "process file", "import this"]
-```
-
-## Pydantic Model — UNCHANGED
-
-```python
-class MRRIntentClassification(BaseModel):
-    domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"]
-    collection: str
-    persona: str
-    confidence: Literal["HIGH", "MEDIUM", "LOW"]
-    reasoning: str
-```
-
-Field names, types, and persona values (`"CREATOR"`, `"APPROVER"`, `"ERP_APPROVER"`, `"ISSUER"`) are identical to the original.
-
-## What Was Removed
-
-- `from langchain_core.output_parsers import PydanticOutputParser`
-- `from langchain_core.prompts import PromptTemplate`
-- `from app.core.llm import get_llm_non_streaming`
-- `_parser` variable (PydanticOutputParser instance)
-- `_prompt_template` variable (PromptTemplate instance)
-- Entire original `classify_mrr_intent` body (LLM call + try/except)
-- `keyword_fallback` function (absorbed into `classify_mrr_intent`)
-
-## What Was Preserved
-
-- `MRRIntentClassification` Pydantic class (exact definition)
-- `classify_mrr_intent` function name and signature
-- All keyword constant names (`CREATOR_KEYWORDS`, `APPROVER_KEYWORDS`, `ERP_APPROVER_KEYWORDS`, `ISSUER_KEYWORDS`)
-- `MODULE_DOMAIN_DESCRIPTION` string
+DELIVERABLE
+Show the modified classify_mrr_intent function in your reply.
+═══════════════════════════════════════════════════════════════════
