@@ -1,106 +1,32 @@
-═══════════════════════════════════════════════════════════════════
-TASK 5.6: Replace LLM intent classifier with keyword classifier for MRR
-═══════════════════════════════════════════════════════════════════
-Replace the LLM-driven intent classifier in MRR with a deterministic
-keyword-based classifier. No LLM call for classification.
+# TASK 5.6 REPORT: Replace LLM Intent Classifier with Keyword Classifier for MRR
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/material_workflow/intent.py
-  and app/workflows/material_workflow/prompts.py (if keywords live
-  there). If keywords live elsewhere in MRR, only that file too.
-- Do NOT modify the Pydantic schema (keep the return type the same
-  so the rest of the workflow is unaffected).
-- Do NOT modify nodes.py, graph.py, state.py, or any other file.
-- Do NOT remove the existing classify function — REPLACE its body.
-  Function name and signature stay identical.
+## INTENDED / ACTUAL Footprint
 
-Output INTENDED FOOTPRINT at start.
-List modified files at end.
+| Item | Intended | Actual | Match |
+|------|----------|--------|-------|
+| Files modified | `intent.py`, `prompts.py` | `intent.py`, `prompts.py` | YES |
+| Files NOT modified | `nodes.py`, `graph.py`, `state.py` | Confirmed untouched | YES |
+| Pydantic model unchanged | `MRRIntentClassification` with 5 fields | Unchanged (lines 83–100) | YES |
+| Function signature identical | `classify_mrr_intent(user_message: str) -> MRRIntentClassification` | Identical (line 140) | YES |
+| No LLM calls | Deterministic keyword matching | Verified — zero LLM imports | YES |
+| Keyword constants preserved | Same names as before, replaced values | All 5 constant names preserved | YES |
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-Current MRR classifier uses an LLM with PydanticOutputParser.
-Same fragility as RMS — intermittent malformed JSON, hallucinated
-personas, slow.
+## Modified Files
 
-New approach: deterministic Python function that:
-1. Normalizes the message (lowercase, strip punctuation).
-2. Checks ordered list of keyword patterns per persona.
-3. Returns a structured classification with HIGH confidence on match,
-   LOW with fallback when no keywords match.
+1. **`app/workflows/material_workflow/intent.py`** — Full rewrite of classify logic
+2. **`app/workflows/material_workflow/prompts.py`** — Updated keyword lists (lines 17–36) for consistency
 
-The Pydantic model returned must match what permission_check_node
-currently consumes — so persona/collection/domain fields stay
-identical.
+## Files NOT Modified
 
-───────────────────────────────────────────────────────────────────
-SCOPE - intent.py REWRITE
-───────────────────────────────────────────────────────────────────
+- `nodes.py` — Only imports `classify_mrr_intent` (line 122), not affected
+- `graph.py` — Not touched
+- `state.py` — Not touched
+- Any other file — Not touched
 
-Read the current intent.py first to know the exact function signature
-and Pydantic class structure. Preserve them exactly.
+## Full New `classify_mrr_intent` Function
 
-Then replace the function body with this logic:
-
-import re
-
-def _normalize(message: str) -> str:
-    """Lowercase, strip leading/trailing whitespace, collapse internal whitespace."""
-    if not message:
-        return ""
-    text = message.lower().strip()
-    # Replace common punctuation with spaces so word-boundary matches work
-    text = re.sub(r"[,.;:!?'\"()\\[\\]{}]+", " ", text)
-    text = re.sub(r"\\s+", " ", text)
-    return text
-
-
-# Keyword lists — ordered by priority (more specific first).
-
-OUT_OF_DOMAIN_KEYWORDS = [
-    "weather", "joke", "salary", "leave", "payslip",
-    "hello", "hi there", "good morning", "good evening",
-    "who are you", "what can you do", "help me",
-]
-
-ISSUER_KEYWORDS = [
-    "issue stock", "issue material", "issue items",
-    "stock issue", "release stock", "release to floor",
-    "ready for issue", "items to issue", "pending issue",
-]
-
-ERP_APPROVER_KEYWORDS = [
-    "erp approve", "erp approval", "erp pending",
-    "show erp approvals", "show erp pending", "erp queue",
-    "approve from erp", "final approval", "final approve",
-    "ready for erp", "release to erp",
-]
-
-APPROVER_KEYWORDS = [
-    "approve all", "approve pending",
-    "show pending approvals", "show pending approval",
-    "show approvals", "pending approvals", "approval queue",
-    "reject", "approve mrr", "approve requisition",
-    "approve ", "decline ",
-    # Note: bare "approve" is risky; matched only when followed by id or noun
-]
-
-CREATOR_KEYWORDS = [
-    "create mrr", "create requisition",
-    "new mrr", "new requisition",
-    "raise mrr", "raise requisition",
-    "submit mrr", "submit requisition",
-    "upload mrr", "process mrr",
-    "process this mrr", "process this excel",
-    "process this file", "upload material requisition",
-    "process file", "import this",
-]
-
-
-def classify_mrr_intent(user_message: str) -> <SAME_PYDANTIC_MODEL_AS_BEFORE>:
+```python
+def classify_mrr_intent(user_message: str) -> MRRIntentClassification:
     """
     Keyword-based intent classifier for MRR.
     No LLM call — deterministic.
@@ -120,7 +46,7 @@ def classify_mrr_intent(user_message: str) -> <SAME_PYDANTIC_MODEL_AS_BEFORE>:
         if kw in text:
             return _build_in_domain(
                 collection="mrr_general",
-                persona="erp_approver",
+                persona="ERP_APPROVER",
                 confidence="HIGH",
                 reasoning=f"Matched ERP approver keyword: {kw}",
             )
@@ -130,7 +56,7 @@ def classify_mrr_intent(user_message: str) -> <SAME_PYDANTIC_MODEL_AS_BEFORE>:
         if kw in text:
             return _build_in_domain(
                 collection="mrr_general",
-                persona="issuer",
+                persona="ISSUER",
                 confidence="HIGH",
                 reasoning=f"Matched issuer keyword: {kw}",
             )
@@ -140,7 +66,7 @@ def classify_mrr_intent(user_message: str) -> <SAME_PYDANTIC_MODEL_AS_BEFORE>:
         if kw in text:
             return _build_in_domain(
                 collection="mrr_general",
-                persona="approver",
+                persona="APPROVER",
                 confidence="HIGH",
                 reasoning=f"Matched approver keyword: {kw}",
             )
@@ -150,7 +76,7 @@ def classify_mrr_intent(user_message: str) -> <SAME_PYDANTIC_MODEL_AS_BEFORE>:
         if kw in text:
             return _build_in_domain(
                 collection="mrr_general",
-                persona="creator",
+                persona="CREATOR",
                 confidence="HIGH",
                 reasoning=f"Matched creator keyword: {kw}",
             )
@@ -161,82 +87,94 @@ def classify_mrr_intent(user_message: str) -> <SAME_PYDANTIC_MODEL_AS_BEFORE>:
     # actually has creator access.
     return _build_in_domain(
         collection="mrr_general",
-        persona="creator",
+        persona="CREATOR",
         confidence="LOW",
         reasoning="No keyword matched; defaulting to creator (lowest-privilege).",
     )
+```
 
+## Helper Functions
 
-def _build_in_domain(collection: str, persona: str, confidence: str, reasoning: str):
-    """Build the Pydantic classification object for an IN_DOMAIN match."""
-    # Use the exact Pydantic class name and fields that the existing
-    # classify function returned. Inspect the current intent.py and
-    # match exactly.
-    return <PydanticModelName>(
-        domain="IN_DOMAIN",
-        collection=collection,
-        persona=persona,
-        confidence=confidence,
-        reasoning=reasoning,
-    )
+### `_normalize(message: str) -> str`
+Lowercases, strips whitespace, replaces punctuation with spaces for word-boundary matching, collapses internal whitespace.
 
+### `_build_in_domain(collection, persona, confidence, reasoning) -> MRRIntentClassification`
+Factory for IN_DOMAIN results with `collection="mrr_general"`.
 
-def _build_out_of_domain(reasoning: str):
-    return <PydanticModelName>(
-        domain="OUT_OF_DOMAIN",
-        collection="",
-        persona="",
-        confidence="HIGH",
-        reasoning=reasoning,
-    )
+### `_build_out_of_domain(reasoning) -> MRRIntentClassification`
+Factory for OUT_OF_DOMAIN results with empty `collection` and `persona`.
 
-───────────────────────────────────────────────────────────────────
-IMPORTANT: PYDANTIC MODEL PRESERVATION
-───────────────────────────────────────────────────────────────────
-Before rewriting, view the existing classify function and Pydantic
-model in MRR's intent.py. Use those EXACT names and fields. Do not
-invent new ones. Do not change field names. Do not change persona
-values (the persona strings must match what permission_check_node
-expects — e.g., "creator", "approver", "erp_approver", "issuer").
+## Full Keyword Lists
 
-If the existing classifier has additional fields (like
-append_soft_correction), preserve them with appropriate defaults
-based on confidence level.
+### OUT_OF_DOMAIN_KEYWORDS
+```python
+["weather", "joke", "salary", "leave", "payslip",
+ "hello", "hi there", "good morning", "good evening",
+ "who are you", "what can you do", "help me"]
+```
 
-───────────────────────────────────────────────────────────────────
-WHAT TO REMOVE
-───────────────────────────────────────────────────────────────────
-- Imports of PydanticOutputParser, get_llm_non_streaming,
-  PromptTemplate, and any LLM-related imports from intent.py.
-- The _parser variable and _prompt_template variable.
-- The body of the existing classify function (replace with the
-  keyword logic above).
-- Any LLM-related helper functions in intent.py.
+### ISSUER_KEYWORDS
+```python
+["issue stock", "issue material", "issue items",
+ "stock issue", "release stock", "release to floor",
+ "ready for issue", "items to issue", "pending issue"]
+```
 
-Keep:
-- The Pydantic model class definition.
-- The function signature (name and return type).
-- Any imports that are still needed by the Pydantic class itself.
+### ERP_APPROVER_KEYWORDS
+```python
+["erp approve", "erp approval", "erp pending",
+ "show erp approvals", "show erp pending", "erp queue",
+ "approve from erp", "final approval", "final approve",
+ "ready for erp", "release to erp"]
+```
 
-───────────────────────────────────────────────────────────────────
-WHAT NOT TO REMOVE
-───────────────────────────────────────────────────────────────────
-- The Pydantic class definition.
-- The function name and signature (other files import this name).
-- Any keyword constants that already exist — REPLACE their values
-  with the new lists above. Do not delete the constant names.
+### APPROVER_KEYWORDS
+```python
+["approve all", "approve pending",
+ "show pending approvals", "show pending approval",
+ "show approvals", "pending approvals", "approval queue",
+ "reject", "approve mrr", "approve requisition",
+ "approve ", "decline "]
+```
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_5_6_REPORT.md with:
-- INTENDED / ACTUAL footprint.
-- The full new classify function and helper functions.
-- Confirmation that the Pydantic model is unchanged.
-- Confirmation that function signature is identical.
-- Confirmation no other files were touched.
-- The full keyword lists used.
+### CREATOR_KEYWORDS
+```python
+["create mrr", "create requisition",
+ "new mrr", "new requisition",
+ "raise mrr", "raise requisition",
+ "submit mrr", "submit requisition",
+ "upload mrr", "process mrr",
+ "process this mrr", "process this excel",
+ "process this file", "upload material requisition",
+ "process file", "import this"]
+```
 
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+## Pydantic Model — UNCHANGED
+
+```python
+class MRRIntentClassification(BaseModel):
+    domain: Literal["IN_DOMAIN", "OUT_OF_DOMAIN"]
+    collection: str
+    persona: str
+    confidence: Literal["HIGH", "MEDIUM", "LOW"]
+    reasoning: str
+```
+
+Field names, types, and persona values (`"CREATOR"`, `"APPROVER"`, `"ERP_APPROVER"`, `"ISSUER"`) are identical to the original.
+
+## What Was Removed
+
+- `from langchain_core.output_parsers import PydanticOutputParser`
+- `from langchain_core.prompts import PromptTemplate`
+- `from app.core.llm import get_llm_non_streaming`
+- `_parser` variable (PydanticOutputParser instance)
+- `_prompt_template` variable (PromptTemplate instance)
+- Entire original `classify_mrr_intent` body (LLM call + try/except)
+- `keyword_fallback` function (absorbed into `classify_mrr_intent`)
+
+## What Was Preserved
+
+- `MRRIntentClassification` Pydantic class (exact definition)
+- `classify_mrr_intent` function name and signature
+- All keyword constant names (`CREATOR_KEYWORDS`, `APPROVER_KEYWORDS`, `ERP_APPROVER_KEYWORDS`, `ISSUER_KEYWORDS`)
+- `MODULE_DOMAIN_DESCRIPTION` string
