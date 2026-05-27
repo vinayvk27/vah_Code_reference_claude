@@ -197,3 +197,52 @@ def classify_mrr_intent(user_message: str) -> MRRIntentClassification:
     return _build_out_of_domain(
         "No MRR-related keyword matched. Treating as out-of-domain."
     )
+
+
+def parse_intent_node(state: MaterialRequisitionState) -> dict:
+    """
+    Node 1: Classify user intent using LLM classifier.
+    Returns domain, collection, persona, confidence, and reasoning.
+    """
+    print(f"[DIAG-MRR] parse_intent_node entered. emp_no={state.get('emp_no')}, pending_mrr_data_present={state.get('pending_mrr_data') is not None}, message_count={len(state.get('messages', []))}", flush=True)
+    messages = state.get("messages", [])
+
+    # Find the last user message
+    last_user_message = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_message = str(msg.content)
+            break
+
+    if not last_user_message:
+        return {
+            "parsed_intent": "OUT_OF_DOMAIN",
+            "selected_collection": "",
+            "selected_agent_role": "",
+            "classifier_confidence": "LOW",
+            "append_soft_correction": False,
+            "execution_log": state.get("execution_log", []) + ["No user message found."]
+        }
+
+    from app.workflows.material_workflow.intent import classify_mrr_intent
+    classification = classify_mrr_intent(last_user_message)
+
+    append_soft_correction = (
+        classification.domain == "IN_DOMAIN"
+        and classification.confidence in ("MEDIUM", "LOW")
+    )
+
+    return {
+        "parsed_intent": classification.domain,
+        "selected_collection": classification.collection,
+        "selected_agent_role": classification.persona.lower() if classification.persona else "",
+        "classifier_confidence": classification.confidence,
+        "append_soft_correction": append_soft_correction,
+        "execution_log": state.get("execution_log", []) + [
+            f"Intent classified: domain={classification.domain}, "
+            f"collection={classification.collection}, "
+            f"persona={classification.persona}, "
+            f"confidence={classification.confidence}, "
+            f"reasoning={classification.reasoning}"
+        ]
+    }
