@@ -1,35 +1,34 @@
-approve all pending
-A
-🤖
-Manager approval is restricted to the COO and CTO. If you believe this is an error, contact your administrator.
+═══════════════════════════════════════════════════════════════════
+TASK 5.7: Default unmatched MRR messages to OUT_OF_DOMAIN
+═══════════════════════════════════════════════════════════════════
 
-tell about global news
-A
-🤖
-{
-  "has_minimum_daPlease fill out the project details or just type them to me:
+CRITICAL CONSTRAINT
+- Only touch app/workflows/material_workflow/intent.py
+- Change the final fallback in classify_mrr_intent.
+- Do NOT modify anything else.
 
-ta": false
-}
+CHANGE
+In classify_mrr_intent, replace the Step 6 default fallback.
 
-show erp approvals
-P
-🤖
-### Pending ERP Approvals
+Currently it ends with:
+    # Step 6: Default — assume creator (low confidence)...
+    return _build_in_domain(
+        collection="mrr_general",
+        persona="creator",
+        confidence="LOW",
+        reasoning="No keyword matched; defaulting to creator (lowest-privilege).",
+    )
 
-| Req ID | MRR No | Requestor | Total Cost | Status | Date |
-|---|---|---|---|---|---|
-| 3 | DPE/MRR/3/26-27 | 1065 | ₹65000 | PENDING | 2026-05-27 |
+Replace with:
+    # Step 6: No keyword matched — treat as out-of-domain.
+    # Creator action requires explicit phrasing per CREATOR_KEYWORDS.
+    return _build_out_of_domain(
+        "No MRR-related keyword matched. Treating as out-of-domain."
+    )
 
-*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*
+That's it. One block changes.
 
-erp approve MRR/3/26-27
-P
-🤖
-ERP-approved DPE/MRR/3/26-27. Released to store for issuance.
-
-how is weather today
-P
-🤖
-I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?
-
+DELIVERABLE
+Show the modified function in your reply. Confirm no other files
+touched.
+═══════════════════════════════════════════════════════════════════
