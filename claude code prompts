@@ -1,120 +1,1359 @@
-import requests
-import configparser
-from typing import Any, List, Optional, Dict
+# app/workflows/material_workflow/nodes.py
+"""
+Material Workflow Node Functions
+===============================
+All node functions for the Material Requisition (MRR) LangGraph workflow.
+Integrates ACL roles: CREATOR, APPROVER, ERP_APPROVER, ISSUER.
+"""
 
-# THE CRITICAL FIX: Import LLM from the core package confirmed in your screenshots
-from langchain_core.language_models.llms import LLM
+from typing import Any, Optional, Dict
+import json
+import re
+from datetime import datetime
+from sqlalchemy import text
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langgraph.graph.message import add_messages
 
-# Your existing imports
-from langchain_classic.agents.agent_types import AgentType 
-from langchain_classic.agents.initialize import initialize_agent 
-from langchain_core.tools import Tool
-from utils.logger_config import get_logger
+from app.workflows.material_workflow.state import MaterialRequisitionState
+from app.workflows.material_workflow.config import get_llm
+from app.workflows.material_workflow.agents import (
+    get_item_extractor_agent,
+    get_header_extractor_agent,
+)
+from app.workflows.material_workflow.tools import (
+    search_projects,
+    get_project_phases,
+    get_effective_item_availability,
+    get_item_details_from_db,
+)
+from app.workflows.material_workflow.prompts import (
+    get_header_widget_payload,
+    get_item_widget_payload,
+)
 
-logger = get_logger("ApproverAgent")
-config = configparser.ConfigParser()
-config.read('config.ini')
+from app.controllers.rag_controller import RAGController
+from app.dao.database import SessionLocal
+from app.models.db_schema import Resource, Agent
 
-class EnterpriseLLM(LLM):
-    """Custom LangChain LLM wrapper for your specific API endpoint."""
-    
-    # Required for LangChain compatibility
-    @property
-    def _llm_type(self) -> str:
-        return "custom_enterprise_llm"
 
-    def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
-        url = f"{config['API']['URL']}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {config['API']['KEY']}",
-            "Content-Type": "application/json"
+# =============================================================================
+# SHARED HELPER FUNCTIONS
+# =============================================================================
+
+
+def _parse_approval_command(message: str) -> dict:
+    """
+    Parses an approval command from the user's message.
+    Returns dict with:
+      'action': 'approve_one' | 'approve_all' | 'reject_one' | 'list'
+      'mrr_id': int | None
+    """
+    msg = (message or "").lower().strip()
+
+    if re.search(r'\bapprove\s+all\b', msg):
+        return {"action": "approve_all", "mrr_id": None}
+
+    match = re.search(
+        r'\b(approve|reject)\s+(?:requisition\s+)?(?:mrr/)?(\d+)(?:/[\d\-]+)?\b',
+        msg
+    )
+    if match:
+        verb = match.group(1)
+        mrr_id = int(match.group(2))
+        action = "approve_one" if verb == "approve" else "reject_one"
+        return {"action": action, "mrr_id": mrr_id}
+
+    return {"action": "list", "mrr_id": None}
+
+
+def _get_last_user_message(messages) -> str:
+    """Extract the last HumanMessage content from the messages list."""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            return str(msg.content)
+    return ""
+
+
+def _describe_assumed_action_mrr(persona: str, collection: str) -> str:
+    """Describe the assumed action for soft-correction messages."""
+    persona = (persona or "").lower()
+    collection = (collection or "").lower()
+    if persona == "creator":
+        return "create a material requisition"
+    elif persona == "approver":
+        return "approve a pending requisition"
+    elif persona == "erp_approver":
+        return "approve at the ERP stage"
+    elif persona == "issuer":
+        return "issue stock for a requisition"
+    return "do that"
+
+
+# =============================================================================
+# RBAC & ORCHESTRATION NODES
+# =============================================================================
+
+
+def parse_intent_node(state: MaterialRequisitionState) -> dict:
+    """
+    Node 1: Classify user intent using LLM classifier.
+    Returns domain, collection, persona, confidence, and reasoning.
+    """
+    print(f"[DIAG-MRR] parse_intent_node entered. emp_no={state.get('emp_no')}, pending_mrr_data_present={state.get('pending_mrr_data') is not None}, message_count={len(state.get('messages', []))}", flush=True)
+    messages = state.get("messages", [])
+
+    # Find the last user message
+    last_user_message = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_message = str(msg.content)
+            break
+
+    if not last_user_message:
+        return {
+            "parsed_intent": "OUT_OF_DOMAIN",
+            "selected_collection": "",
+            "selected_agent_role": "",
+            "classifier_confidence": "LOW",
+            "append_soft_correction": False,
+            "execution_log": state.get("execution_log", []) + ["No user message found."]
         }
-        payload = {
-            "model": config['API']['MODEL'],
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0
-        }
 
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
-            response.raise_for_status()
-            return response.json()['choices'][0]['message']['content']
-        except Exception as e:
-            logger.error(f"LLM Connection Error: {e}")
-            return "ERROR: Connection failed."
+    from app.workflows.material_workflow.intent import classify_mrr_intent
+    classification = classify_mrr_intent(last_user_message)
 
-    @property
-    def _identifying_params(self) -> Dict[str, Any]:
-        return {"model_name": config['API']['MODEL']}
-class ApproverAgent:
-    def __init__(self):
-        self.llm = EnterpriseLLM()
+    append_soft_correction = (
+        classification.domain == "IN_DOMAIN"
+        and classification.confidence in ("MEDIUM", "LOW")
+    )
 
-    def get_decision(self, item, amount):
-        limit = config['BUSINESS_RULES']['MAX_APPROVAL_LIMIT']
-        # Professional LangChain Prompting
-        prompt = f"""
-        You are a SCM Approval Agent. 
-        Analyze the following Purchase Requisition:
-        - ITEM: {item}
-        - AMOUNT: {amount}
-        - APPROVAL LIMIT: {limit}
-        
-        If AMOUNT <= {limit}, suggest APPROVED.
-        Otherwise, suggest REJECTED.
-        
-        Format: DECISION: [STATUS] | REASON: [EXPLANATION]
-        """
-        return self.llm.invoke(prompt)
-    
-    def get_react_agent(self, df):
-        """Creates a ReAct agent with strict output constraints."""
-        
-        def validate_and_approve_tool(input_text):
-            from agents.reviewer_agent import ReviewerAgent
-            result = ReviewerAgent.validate(df)
-            if result["status"] == "FAIL":
-                return f"STOP. Validation FAILED: {result['reason']}"
-            
-            # Perform the approval loop
-            final_summaries = []
-            for _, row in df.iterrows():
-                decision = self.get_decision(row['ITEM'], row['AMOUNT'])
-                final_summaries.append(f"PRQ {row['PRQ_NO']}: {decision}")
-            
-            return "Observation: SUCCESS. Processing complete. Decisions: " + " | ".join(final_summaries)
-
-        tools = [
-            Tool(
-                name="PRQ_Process_Chain",
-                func=validate_and_approve_tool,
-                # WE TELL THE AGENT THE DATA IS ALREADY THERE:
-                description="Use this tool to process the PRQs currently loaded in the system. Input can be any string (e.g., 'start'), as the tool handles the internal data."
-            )
+    return {
+        "parsed_intent": classification.domain,
+        "selected_collection": classification.collection,
+        "selected_agent_role": classification.persona.lower() if classification.persona else "",
+        "classifier_confidence": classification.confidence,
+        "append_soft_correction": append_soft_correction,
+        "execution_log": state.get("execution_log", []) + [
+            f"Intent classified: domain={classification.domain}, "
+            f"collection={classification.collection}, "
+            f"persona={classification.persona}, "
+            f"confidence={classification.confidence}, "
+            f"reasoning={classification.reasoning}"
         ]
+    }
 
-        # STRICT PROMPTING: We separate the instructions to prevent the double-output error.
-        prefix = """You are a strict SCM Assistant.
-        You MUST follow this format:
-        1. Thought: Consider the request.
-        2. Action: Use the PRQ_Process_Chain tool.
-        3. Observation: Wait for the tool output.
-        4. Final Answer: Summarize the Observation results.
-        
-        DO NOT provide a Final Answer until you have used a tool."""
 
-        suffix = """Begin!
-        Question: {input}
-        Thought: {agent_scratchpad}"""
+def permission_check_node(state: MaterialRequisitionState) -> dict:
+    """
+    Node 2: Check user permissions.
+    OUT_OF_DOMAIN requests short-circuit with a denial message,
+    EXCEPT when pending_mrr_data exists — then we bypass and route
+    to creator so confirm/cancel can be handled.
+    For IN_DOMAIN CREATOR persona, looks up agent in DB and checks Gate 2.
+    For APPROVER, ERP_APPROVER, ISSUER personas, authority is by emp_no
+    (hardcoded in approvers.py), not by role/group mapping.
+    """
+    print(f"[DIAG-MRR] permission_check_node entered. parsed_intent={state.get('parsed_intent')}, persona={state.get('selected_agent_role')}, collection={state.get('selected_collection')}", flush=True)
 
-        return initialize_agent(
-            tools=tools,
-            llm=self.llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            verbose=True,
-            handle_parsing_errors=True,
-            agent_kwargs={
-                'prefix': prefix,
-                'suffix': suffix
+    from app.controllers.auth_controller import AuthController
+    from app.workflows.material_workflow.approvers import (
+        is_manager_approver, is_erp_approver, is_issuer
+    )
+
+    parsed_intent = state.get("parsed_intent", "")
+    selected_agent_role = state.get("selected_agent_role", "")
+    selected_collection = state.get("selected_collection", "")
+    emp_no = state.get("emp_no", "")
+    group_idx = state.get("group_idx", 0)
+    role_ids = state.get("role_ids", [])
+
+    execution_log = state.get("execution_log", [])
+
+    # If user has a pending MRR submission, bypass OUT_OF_DOMAIN classification.
+    # Their message is presumed to be confirm/cancel context for the pending op.
+    pending = state.get("pending_mrr_data")
+    if parsed_intent == "OUT_OF_DOMAIN" and pending:
+        execution_log.append("Out-of-domain bypassed because pending_mrr_data exists; treating as creator path.")
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "selected_agent_role": "creator",
+            "selected_collection": "mrr_general",
+            "execution_log": execution_log
+        }
+
+    # OUT_OF_DOMAIN short-circuits (no pending data)
+    if parsed_intent == "OUT_OF_DOMAIN":
+        execution_log.append("Out-of-domain request; routing to blocked node.")
+        return {
+            "has_permission": False,
+            "denial_message": (
+                "I can only help with MRR tasks like creating material "
+                "requisitions, approving requests, and issuing stock. "
+                "Could you rephrase your request?"
+            ),
+            "execution_log": execution_log
+        }
+
+    # IN_DOMAIN: validate classifier output
+    if not selected_collection or not selected_agent_role:
+        execution_log.append("Classifier returned incomplete result; denying.")
+        return {
+            "has_permission": False,
+            "denial_message": (
+                "I wasn't able to understand your request. "
+                "Could you rephrase it?"
+            ),
+            "execution_log": execution_log
+        }
+
+    # APPROVER, ERP_APPROVER, ISSUER: bypass Gate 2 DB check.
+    # Authority for these is by emp_no, not by role/group mapping.
+    if selected_agent_role == "approver":
+        if not is_manager_approver(emp_no):
+            execution_log.append(
+                f"Approver denied: emp_no {emp_no} not in MANAGER_APPROVERS list."
+            )
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    "Manager approval is restricted to the COO and CTO. "
+                    "If you believe this is an error, contact your administrator."
+                ),
+                "execution_log": execution_log
             }
+        execution_log.append(
+            f"Approver granted (by approvers.py list): emp_no {emp_no}"
         )
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+
+    if selected_agent_role == "erp_approver":
+        if not is_erp_approver(emp_no):
+            execution_log.append(
+                f"ERP approver denied: emp_no {emp_no} not in ERP_APPROVERS list."
+            )
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    "ERP approval is restricted to the ERP HOD. "
+                    "If you believe this is an error, contact your administrator."
+                ),
+                "execution_log": execution_log
+            }
+        execution_log.append(
+            f"ERP approver granted (by approvers.py list): emp_no {emp_no}"
+        )
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+
+    if selected_agent_role == "issuer":
+        if not is_issuer(emp_no):
+            execution_log.append(
+                f"Issuer denied: emp_no {emp_no} not in ISSUERS list."
+            )
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    "The store issuance feature is not yet active."
+                ),
+                "execution_log": execution_log
+            }
+        execution_log.append(
+            f"Issuer granted (by approvers.py list): emp_no {emp_no}"
+        )
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+
+    # CREATOR persona: standard Gate 2 DB check.
+    # Build expected_agent_name: {MODULE}_{COLLECTION_SUFFIX}_{PERSONA}
+    collection_suffix = selected_collection.upper().replace("MRR_", "")
+    expected_agent_name = f"MRR_{collection_suffix}_{selected_agent_role.upper()}"
+
+    db = SessionLocal()
+    try:
+        from app.models.db_schema import Agent
+        agent_row = db.query(Agent).filter(
+            Agent.agent_name == expected_agent_name,
+            Agent.is_active == 1
+        ).first()
+
+        if not agent_row:
+            execution_log.append(f"Agent {expected_agent_name} not found in DB.")
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    f"The {selected_agent_role} role for {selected_collection} "
+                    f"is not available."
+                ),
+                "execution_log": execution_log
+            }
+
+        agent_or_none = AuthController.check_agent_access(
+            emp_no=emp_no,
+            group_idx=group_idx,
+            role_ids=role_ids,
+            agent_id=agent_row.agent_id,
+            db=db
+        )
+
+        if agent_or_none is None:
+            execution_log.append(
+                f"Permission DENIED: user lacks {expected_agent_name}."
+            )
+            return {
+                "has_permission": False,
+                "denial_message": (
+                    f"You don't have {selected_agent_role.lower()} access to "
+                    f"{selected_collection.replace('_', ' ')}. "
+                    f"Please contact your administrator if you need this permission."
+                ),
+                "execution_log": execution_log
+            }
+
+        execution_log.append(f"Permission GRANTED: {expected_agent_name}")
+        return {
+            "has_permission": True,
+            "denial_message": None,
+            "execution_log": execution_log
+        }
+    finally:
+        db.close()
+
+
+def permission_blocked_node(state: MaterialRequisitionState) -> dict:
+    """Handle permission-denied scenarios."""
+    print(f"[DIAG-MRR] permission_blocked_node entered. denial_message={state.get('denial_message')!r}", flush=True)
+    denial_message = state.get("denial_message")
+
+    if denial_message:
+        response_text = denial_message
+    else:
+        response_text = (
+            "I can only help with MRR tasks like creating material "
+            "requisitions, approving requests, and issuing stock. "
+            "Could you rephrase your request?"
+        )
+
+    return {
+        "messages": [AIMessage(content=response_text)],
+        "execution_log": state.get("execution_log", []) + ["Permission blocked"]
+    }
+
+
+def welcome_node(state: MaterialRequisitionState) -> dict:
+    """Greets the user based on their specific roles."""
+    emp_no = state.get("emp_no", "")
+    user_info = state.get("user_info", {})
+    user_name = user_info.get("name", emp_no)
+
+    message = (
+        f"Hello **{user_name}** ({emp_no})! Welcome to MRR.\n\n"
+        "How can I help you today? You can say things like:\n"
+        "* \"I want to create a new material request\"\n"
+        "* \"Show me pending approvals\""
+    )
+    return {"messages": [AIMessage(content=message)]}
+
+
+# =============================================================================
+# FORM STATE MACHINE NODES (mrr_creator flow)
+# =============================================================================
+
+
+def parse_user_input(state: MaterialRequisitionState) -> dict:
+    """Parses widget submissions and safely updates LangGraph state."""
+    latest_message = state["messages"][-1].content
+
+    updates = {}
+
+    # PROPER STATE UPDATE: Return the new values instead of modifying state directly
+    if not state.get("current_step"):
+        updates["current_step"] = "HEADER"
+        updates["items"] = []
+        updates["total_cost"] = 0.0
+
+    try:
+        payload = json.loads(latest_message)
+        if isinstance(payload, dict) and payload.get("action") == "widget_submit":
+            updates["latest_submission"] = payload
+            return updates
+    except Exception:
+        pass
+
+    updates["latest_submission"] = None
+    return updates
+
+
+def handle_header(state: MaterialRequisitionState) -> dict:
+    submission = state.get("latest_submission")
+    msg = state["messages"][-1].content
+
+    # 1. Handle Widget Submission (if user used the form)
+    if submission and submission.get("widget_id") == "mrr_header_form":
+        return {
+            "form_state": submission.get("data", {}),
+            "current_step": "ITEMS",
+            "messages": [AIMessage(content="Header details saved. Please add items or upload an Excel sheet.")]
+        }
+
+    # 2. Natural Language Extraction
+    try:
+        extractor = get_header_extractor_agent()
+        extracted = extractor.invoke(msg)
+
+        if extracted.has_minimum_data and extracted.project_id:
+            updates = {
+                "form_state": {
+                    "project_id": extracted.project_id,
+                    "phase_id": extracted.phase_id,
+                    "warehouse": extracted.warehouse,
+                    "requisition_type": extracted.requisition_type,
+                    "need_by_date": extracted.need_by_date,
+                    "remarks": extracted.remarks
+                },
+                "current_step": "ITEMS"
+            }
+
+            # --- PROCESS ITEMS IN PROMPT ---
+            if extracted.items and len(extracted.items) > 0:
+                cart_items = []
+                total_cost = 0.0
+
+                for ext_item in extracted.items:
+                    item_data = get_item_details_from_db(ext_item.keyword)
+                    if item_data:
+                        line_total = ext_item.qty * item_data["unit_price_rs"]
+                        cart_items.append({
+                            "item_name": item_data["item_name"],
+                            "item_id": item_data["item_id"],
+                            "qty": ext_item.qty,
+                            "unit_price_rs": item_data["unit_price_rs"],
+                            "total": line_total
+                        })
+                        total_cost += line_total
+
+                if cart_items:
+                    updates["items"] = cart_items
+                    updates["total_cost"] = total_cost
+                    updates["messages"] = [
+                        AIMessage(content=f"Got it! Started request for Project **{extracted.project_id}**.\n\n\u2705 Automatically added **{len(cart_items)} items** to your cart. Total: **\u20b9{total_cost}**.\n\nYou can add more items or type **'Submit'** to finish.")
+                    ]
+                    return updates
+
+            # Fallback if no items were found in prompt
+            updates["messages"] = [AIMessage(content=f"Got it! Started request for Project **{extracted.project_id}** (Phase: **{extracted.phase_id}**).\n\nWhat items would you like to add?")]
+            return updates
+
+    except Exception as e:
+        print(f"Extraction Error: {e}")
+
+    # 3. Default: Show Form
+    return {
+        "messages": [
+            AIMessage(content="Please fill out the project details or just type them to me:"),
+            AIMessage(content=get_header_widget_payload())
+        ]
+    }
+
+
+def handle_items(state: MaterialRequisitionState) -> dict:
+    msg = state["messages"][-1].content
+    uploaded_files = state.get("uploaded_files", [])
+
+    # 1. Handle Excel Bulk Uploads
+    if uploaded_files:
+        new_items = state.get("items", [])
+        total_added = 0
+
+        for file in uploaded_files:
+            for row in file.get("data", []):
+                # Map common excel column names
+                item_code = row.get("item_code") or row.get("ItemCode") or row.get("Part Number")
+                qty_raw = row.get("qty") or row.get("Quantity") or row.get("Qty")
+
+                if item_code and qty_raw:
+                    try:
+                        qty = float(qty_raw)
+                        # Query the database for live price and availability
+                        item_data = get_item_details_from_db(str(item_code))
+
+                        if item_data:
+                            new_item = {
+                                "item_name": item_data["item_name"],
+                                "item_id": item_data["item_id"],
+                                "qty": qty,
+                                "unit_price_rs": item_data["unit_price_rs"],
+                                "total": qty * item_data["unit_price_rs"]
+                            }
+                            new_items.append(new_item)
+                            total_added += 1
+                    except Exception:
+                        pass # Skip invalid or missing rows
+
+        if total_added > 0:
+            new_total = sum(i["total"] for i in new_items)
+            return {
+                "items": new_items,
+                "total_cost": new_total,
+                "messages": [AIMessage(content=f"\u2705 Processed Excel file! Added {total_added} valid items to your cart. Total cost is now \u20b9{new_total}.\n\nYou can add more items or type 'Submit' to finish.")]
+            }
+        else:
+            return {"messages": [AIMessage(content="I couldn't find any valid items or quantities in that file. Please ensure your columns are named 'ItemCode' and 'Qty'.")]}
+
+    # 2. Handle Text Submission
+    if "submit" in msg.lower() or "done" in msg.lower():
+        if not state.get("items"):
+            return {"messages": [AIMessage(content="Your cart is empty. Please add an item first.")]}
+        return {"current_step": "EVALUATING"}
+
+    # 3. Handle Item Lookup
+    try:
+        # Extract the keyword (e.g., '04617') using the LLM
+        extraction = get_item_extractor_agent().invoke(msg)
+        item_data = get_item_details_from_db(extraction.keyword)
+
+        if not item_data:
+            return {"messages": [AIMessage(content=f"I couldn't find any item matching '{extraction.keyword}' in the catalog.")]}
+
+        # Return the Widget with REAL data (Price and Qty)
+        return {
+            "messages": [
+                AIMessage(content=f"Found item: **{item_data['item_name']}**"),
+                AIMessage(content=get_item_widget_payload(item_data))
+            ]
+        }
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"Error searching for item: {str(e)}")]}
+
+
+def evaluate_and_route(state: MaterialRequisitionState) -> dict:
+    """Final node: Saves the completed requisition to MySQL and determines routing."""
+    total = state.get("total_cost", 0.0)
+    decision = "PENDING_MANAGER" if total >= 2000 else "PENDING_ERP"
+
+    header_data = state.get("form_state", {})
+    items = state.get("items", [])
+    user_id = state.get("emp_no", state.get("user_id", "system"))
+
+    db = SessionLocal()
+    try:
+        # 1. Insert Header into mrr_matrequisitionheader
+        header_query = text("""
+            INSERT INTO mrr_matrequisitionheader (
+                MATREQUISITIONNO, STATUS, VERIFICATION_STATUS, VERIFICATION_DATE,
+                APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE,
+                SUPPLIERID, SUPPLIERSITEID, REQTRANSACTIONTYPE, COMMENTS,
+                DEPARTMENTID, REQUESTORID, REQUISITIONDATE, TOTALCOST, PROJECTID, PHASEID
+            ) VALUES (
+                :mrrno, :status, NULL, NULL,
+                NULL, NULL,
+                NULL, NULL,
+                0, 0, 'MATERIAL REQUISITION', '',
+                1, :user, NOW(), :total, :proj, :phase
+            )
+        """)
+        # Generate MRR number
+        seq_result = db.execute(text("SELECT IFNULL(MAX(MATREQUISITIONID), 0) + 1 AS next_id FROM mrr_matrequisitionheader")).first()
+        next_id = seq_result.next_id if seq_result else 1
+        mrr_no = f"MRR/{next_id}/25-26"
+
+        result = db.execute(header_query, {
+            "mrrno": mrr_no,
+            "status": "ENTERED",
+            "total": total,
+            "proj": header_data.get("project_id", "N/A"),
+            "phase": header_data.get("phase_id", "N/A"),
+            "user": user_id,
+        })
+
+        # Get the newly generated header ID
+        header_id = result.lastrowid
+
+        # 2. Insert Lines into mrr_matrequisitionlines
+        if items:
+            line_query = text("""
+                INSERT INTO mrr_matrequisitionlines (
+                    MATREQUISITIONID, ITEMID, ITEMNAME, REQUANTITY, ITEMCOST,
+                    UOMID, ITEMREVISIONID, ISSUEQTY, RETURNQUANTITY, CLOSEREASON
+                ) VALUES (
+                    :hid, :iid, :iname, :qty, :itemcost,
+                    0, 0, 0, 0, ''
+                )
+            """)
+            for item in items:
+                db.execute(line_query, {
+                    "hid": header_id,
+                    "iid": item.get("item_id", "0"),
+                    "iname": item.get("item_name", ""),
+                    "qty": item.get("qty", 0),
+                    "itemcost": item.get("total", 0),
+                })
+
+        db.commit()
+
+        # Store the new_requisition_id for auto-verifier
+        return {
+            "routing_decision": decision,
+            "current_step": "END",
+            "new_requisition_id": header_id,
+            "messages": [AIMessage(content=f"Requisition saved with ID: {header_id} (MRR No: {mrr_no})")]
+        }
+
+    except Exception as e:
+        db.rollback()
+        return {
+            "current_step": "END",
+            "messages": [AIMessage(content=f"Database Error: Failed to save requisition. Details: {str(e)}")]
+        }
+    finally:
+        db.close()
+
+
+def auto_verifier_node(state: MaterialRequisitionState) -> dict:
+    """
+    Auto-verification logic. Deterministic, no LLM.
+    Reads the new requisition's total cost. Routes based on
+    the 2000-rupee rule.
+    """
+    print(f"[DIAG-MRR] auto_verifier_node entered. new_requisition_id={state.get('new_requisition_id')}", flush=True)
+    requisition_id = state.get("new_requisition_id")
+    if not requisition_id:
+        return {
+            "messages": [AIMessage(content="No requisition to verify.")],
+            "execution_log": state.get("execution_log", []) + ["Verifier: no requisition_id in state."]
+        }
+
+    db = SessionLocal()
+    try:
+        # Compute total cost
+        total_cost_row = db.execute(text("""
+            SELECT COALESCE(SUM(ITEMCOST), 0) AS total
+            FROM mrr_matrequisitionlines
+            WHERE MATREQUISITIONID = :rid
+        """), {"rid": requisition_id}).first()
+        total_cost = float(total_cost_row.total or 0)
+
+        now = datetime.now()
+
+        if total_cost < 2000:
+            # Auto-approve manager stage, route to ERP
+            db.execute(text("""
+                UPDATE mrr_matrequisitionheader
+                SET VERIFICATION_STATUS = 'APPROVED',
+                    VERIFICATION_DATE = :now,
+                    APPROVAL_STATUS = 'APPROVED',
+                    APPROVAL_DATE = :now,
+                    ERP_APPROVAL_STATUS = 'PENDING',
+                    COMMENTS = 'Auto-approved by verifier (total < 2000).'
+                WHERE MATREQUISITIONID = :rid
+            """), {"now": now, "rid": requisition_id})
+            db.commit()
+            confirmation = (
+                f"Your requisition (total cost: \u20b9{total_cost:.2f}) "
+                f"was auto-approved and is now awaiting ERP approval."
+            )
+        else:
+            # Route to manager queue
+            db.execute(text("""
+                UPDATE mrr_matrequisitionheader
+                SET VERIFICATION_STATUS = 'APPROVED',
+                    VERIFICATION_DATE = :now,
+                    APPROVAL_STATUS = 'PENDING'
+                WHERE MATREQUISITIONID = :rid
+            """), {"now": now, "rid": requisition_id})
+            db.commit()
+            confirmation = (
+                f"Your requisition (total cost: \u20b9{total_cost:.2f}) "
+                f"has been submitted for manager approval."
+            )
+
+        return {
+            "messages": [AIMessage(content=confirmation)],
+            "execution_log": state.get("execution_log", []) + [
+                f"Auto-verifier: total={total_cost}, "
+                f"{'auto-approved' if total_cost < 2000 else 'pending manager'}."
+            ]
+        }
+    finally:
+        db.close()
+
+
+# =============================================================================
+# ROLE-SPECIFIC WORKFLOW NODES
+# =============================================================================
+
+
+def approver_agent_node(state: MaterialRequisitionState) -> dict:
+    """Fetches pending requests for manager approval (CTO/COO).
+
+    MRR-specific node — does direct DB query, no LLM streaming.
+    Registered in graph.py under names 'mrr_approver_agent' and
+    'mrr_approver_agent_node' to avoid collision with RMS/HRMS.
+
+    Supports approval commands:
+      - "approve MRR/<id>/26-27" or "approve <id>" or "approve requisition <id>"
+      - "approve all" / "approve all pending"
+      - "reject <id>"
+    """
+    print(f"[DIAG-MRR] approver_agent_node entered. emp_no={state.get('emp_no')}", flush=True)
+    emp_no = state.get("emp_no", "")
+
+    from app.workflows.material_workflow.approvers import is_manager_approver
+    if not is_manager_approver(emp_no):
+        return {
+            "messages": [AIMessage(content="Manager approval is restricted to the COO and CTO. Please contact your administrator if you believe this is an error.")],
+            "execution_log": state.get("execution_log", []) + ["Non-approver blocked from manager approval"]
+        }
+
+    # --- Inspect user's last message for approval commands ---
+    last_user_msg = _get_last_user_message(state.get("messages", []))
+    cmd = _parse_approval_command(last_user_msg)
+
+    if cmd["action"] in ("approve_one", "reject_one"):
+        mrr_id = cmd["mrr_id"]
+        action = cmd["action"]
+        db = SessionLocal()
+        try:
+            # Verify the MRR exists and is in the correct pending state
+            verify = db.execute(text("""
+                SELECT MATREQUISITIONID, MATREQUISITIONNO, APPROVAL_STATUS
+                FROM mrr_matrequisitionheader
+                WHERE MATREQUISITIONID = :id
+                  AND APPROVAL_STATUS = 'PENDING'
+            """), {"id": mrr_id}).mappings().first()
+
+            if not verify:
+                return {
+                    "messages": [AIMessage(content=f"MRR with ID {mrr_id} not found in pending state. It may already be approved/rejected or doesn't exist.")],
+                    "execution_log": state.get("execution_log", []) + [f"Approver: MRR {mrr_id} not found in pending state."]
+                }
+
+            if action == "approve_one":
+                result = db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET APPROVAL_STATUS = 'APPROVED',
+                        APPROVAL_DATE = NOW(),
+                        ERP_APPROVAL_STATUS = 'PENDING'
+                    WHERE MATREQUISITIONID = :id
+                      AND APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify['MATREQUISITIONNO'] or f"MRR/{mrr_id}/26-27"
+                return {
+                    "messages": [AIMessage(content=f"Approved {mrr_no}. It has been forwarded to ERP for final approval.")],
+                    "execution_log": state.get("execution_log", []) + [f"Approver: approved MRR {mrr_id}."]
+                }
+            else:
+                result = db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET APPROVAL_STATUS = 'REJECTED',
+                        APPROVAL_DATE = NOW()
+                    WHERE MATREQUISITIONID = :id
+                      AND APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify['MATREQUISITIONNO'] or f"MRR/{mrr_id}/26-27"
+                return {
+                    "messages": [AIMessage(content=f"Rejected {mrr_no}.")],
+                    "execution_log": state.get("execution_log", []) + [f"Approver: rejected MRR {mrr_id}."]
+                }
+
+        except Exception as e:
+            db.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                "messages": [AIMessage(content=f"Error processing approval: {str(e)}")],
+                "execution_log": state.get("execution_log", []) + [f"Approver: exception {e}"]
+            }
+        finally:
+            db.close()
+
+    elif cmd["action"] == "approve_all":
+        db = SessionLocal()
+        try:
+            result = db.execute(text("""
+                UPDATE mrr_matrequisitionheader
+                SET APPROVAL_STATUS = 'APPROVED',
+                    APPROVAL_DATE = NOW(),
+                    ERP_APPROVAL_STATUS = 'PENDING'
+                WHERE APPROVAL_STATUS = 'PENDING'
+            """))
+            db.commit()
+            rowcount = result.rowcount
+            if rowcount == 0:
+                return {
+                    "messages": [AIMessage(content="There are no pending MRRs to approve.")],
+                    "execution_log": state.get("execution_log", []) + ["Approver: approve all — nothing pending."]
+                }
+            return {
+                "messages": [AIMessage(content=f"Approved {rowcount} pending MRRs. They have been forwarded to ERP for final approval.")],
+                "execution_log": state.get("execution_log", []) + [f"Approver: approved all ({rowcount} MRRs)."]
+            }
+
+        except Exception as e:
+            db.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                "messages": [AIMessage(content=f"Error processing approve all: {str(e)}")],
+                "execution_log": state.get("execution_log", []) + [f"Approver: exception {e}"]
+            }
+        finally:
+            db.close()
+
+    # --- No command matched (or action is "list") — show pending list ---
+    db = SessionLocal()
+    try:
+        query = text("""
+            SELECT MATREQUISITIONID, MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE,
+                   TOTAL_COST, APPROVAL_STATUS, STATUS
+            FROM mrr_matrequisitionheader
+            WHERE APPROVAL_STATUS = 'PENDING'
+            ORDER BY REQUISITIONDATE ASC
+        """)
+        results = db.execute(query).mappings().all()
+
+        if not results:
+            return {
+                "messages": [AIMessage(content="You have no pending manager approvals at this time.")],
+                "execution_log": state.get("execution_log", []) + ["Approver: no pending requests."]
+            }
+
+        response_text = "### Pending Manager Approvals\n\n"
+        response_text += "| Req ID | MRR No | Requestor | Total Cost | Status | Date |\n"
+        response_text += "|---|---|---|---|---|---|\n"
+
+        for r in results:
+            date_str = r['REQUISITIONDATE'].strftime('%Y-%m-%d') if r['REQUISITIONDATE'] else 'N/A'
+            response_text += f"| {r['MATREQUISITIONID']} | {r['MATREQUISITIONNO']} | {r['REQUESTORID']} | \u20b9{r['TOTAL_COST']} | {r['APPROVAL_STATUS']} | {date_str} |\n"
+
+        response_text += "\n*To approve a request, tell me: 'Approve requisition MRR/<id>/26-27'*"
+
+        return {
+            "messages": [AIMessage(content=response_text)],
+            "execution_log": state.get("execution_log", []) + [f"Approver: returned {len(results)} pending requests."]
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "messages": [AIMessage(content=f"Error fetching pending requests: {str(e)}")],
+            "execution_log": state.get("execution_log", []) + [f"Approver: exception {e}"]
+        }
+    finally:
+        db.close()
+
+
+def erp_approver_agent_node(state: MaterialRequisitionState) -> dict:
+    """Fetches pending requests for ERP approval (ERP HOD).
+
+    SQL column fixed: TOTALCOST → TOTAL_COST.
+    RowMapping attribute access → dict-style access.
+
+    Supports approval commands:
+      - "approve MRR/<id>/26-27" or "approve <id>" or "approve requisition <id>"
+      - "approve all" / "approve all pending"
+      - "reject <id>"
+    """
+    print(f"[DIAG-MRR] erp_approver_agent_node entered. emp_no={state.get('emp_no')}", flush=True)
+    emp_no = state.get("emp_no", "")
+
+    from app.workflows.material_workflow.approvers import is_erp_approver
+    if not is_erp_approver(emp_no):
+        return {
+            "messages": [AIMessage(content="ERP approval is restricted to the ERP HOD. Please contact your administrator if you believe this is an error.")],
+            "execution_log": state.get("execution_log", []) + ["Non-approver blocked from ERP approval"]
+        }
+
+    # --- Inspect user's last message for approval commands ---
+    last_user_msg = _get_last_user_message(state.get("messages", []))
+    cmd = _parse_approval_command(last_user_msg)
+
+    if cmd["action"] in ("approve_one", "reject_one"):
+        mrr_id = cmd["mrr_id"]
+        action = cmd["action"]
+        db = SessionLocal()
+        try:
+            # Verify the MRR exists and is in the correct pending state
+            verify = db.execute(text("""
+                SELECT MATREQUISITIONID, MATREQUISITIONNO, ERP_APPROVAL_STATUS
+                FROM mrr_matrequisitionheader
+                WHERE MATREQUISITIONID = :id
+                  AND ERP_APPROVAL_STATUS = 'PENDING'
+                  AND APPROVAL_STATUS = 'APPROVED'
+            """), {"id": mrr_id}).mappings().first()
+
+            if not verify:
+                return {
+                    "messages": [AIMessage(content=f"MRR with ID {mrr_id} not found in pending ERP approval state. It may already be approved/rejected or doesn't exist.")],
+                    "execution_log": state.get("execution_log", []) + [f"ERP Approver: MRR {mrr_id} not found in pending state."]
+                }
+
+            if action == "approve_one":
+                result = db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET ERP_APPROVAL_STATUS = 'APPROVED',
+                        ERP_APPROVAL_DATE = NOW(),
+                        STATUS = 'RELEASED'
+                    WHERE MATREQUISITIONID = :id
+                      AND ERP_APPROVAL_STATUS = 'PENDING'
+                      AND APPROVAL_STATUS = 'APPROVED'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify['MATREQUISITIONNO'] or f"MRR/{mrr_id}/26-27"
+                return {
+                    "messages": [AIMessage(content=f"ERP-approved {mrr_no}. Released to store for issuance.")],
+                    "execution_log": state.get("execution_log", []) + [f"ERP Approver: ERP-approved MRR {mrr_id}."]
+                }
+            else:
+                result = db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET ERP_APPROVAL_STATUS = 'REJECTED',
+                        ERP_APPROVAL_DATE = NOW()
+                    WHERE MATREQUISITIONID = :id
+                      AND ERP_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify['MATREQUISITIONNO'] or f"MRR/{mrr_id}/26-27"
+                return {
+                    "messages": [AIMessage(content=f"ERP-rejected {mrr_no}.")],
+                    "execution_log": state.get("execution_log", []) + [f"ERP Approver: ERP-rejected MRR {mrr_id}."]
+                }
+
+        except Exception as e:
+            db.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                "messages": [AIMessage(content=f"Error processing approval: {str(e)}")],
+                "execution_log": state.get("execution_log", []) + [f"ERP Approver: exception {e}"]
+            }
+        finally:
+            db.close()
+
+    elif cmd["action"] == "approve_all":
+        db = SessionLocal()
+        try:
+            result = db.execute(text("""
+                UPDATE mrr_matrequisitionheader
+                SET ERP_APPROVAL_STATUS = 'APPROVED',
+                    ERP_APPROVAL_DATE = NOW(),
+                    STATUS = 'RELEASED'
+                WHERE ERP_APPROVAL_STATUS = 'PENDING'
+                  AND APPROVAL_STATUS = 'APPROVED'
+            """))
+            db.commit()
+            rowcount = result.rowcount
+            if rowcount == 0:
+                return {
+                    "messages": [AIMessage(content="There are no MRRs pending ERP approval.")],
+                    "execution_log": state.get("execution_log", []) + ["ERP Approver: approve all — nothing pending."]
+                }
+            return {
+                "messages": [AIMessage(content=f"ERP-approved {rowcount} MRRs. All released to store.")],
+                "execution_log": state.get("execution_log", []) + [f"ERP Approver: ERP-approved all ({rowcount} MRRs)."]
+            }
+
+        except Exception as e:
+            db.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                "messages": [AIMessage(content=f"Error processing approve all: {str(e)}")],
+                "execution_log": state.get("execution_log", []) + [f"ERP Approver: exception {e}"]
+            }
+        finally:
+            db.close()
+
+    # --- No command matched (or action is "list") — show pending list ---
+    db = SessionLocal()
+    try:
+        query = text("""
+            SELECT MATREQUISITIONID, MATREQUISITIONNO, REQUESTORID, REQUISITIONDATE,
+                   TOTAL_COST, APPROVAL_STATUS, ERP_APPROVAL_STATUS, STATUS
+            FROM mrr_matrequisitionheader
+            WHERE APPROVAL_STATUS = 'APPROVED'
+              AND (ERP_APPROVAL_STATUS IS NULL OR ERP_APPROVAL_STATUS = 'PENDING')
+            ORDER BY REQUISITIONDATE ASC
+        """)
+        results = db.execute(query).mappings().all()
+
+        if not results:
+            return {"messages": [AIMessage(content="You have no pending ERP approvals at this time.")]}
+
+        response_text = "### Pending ERP Approvals\n\n"
+        response_text += "| Req ID | MRR No | Requestor | Total Cost | Status | Date |\n"
+        response_text += "|---|---|---|---|---|---|\n"
+
+        for r in results:
+            date_str = r['REQUISITIONDATE'].strftime('%Y-%m-%d') if r['REQUISITIONDATE'] else 'N/A'
+            response_text += f"| {r['MATREQUISITIONID']} | {r['MATREQUISITIONNO']} | {r['REQUESTORID']} | \u20b9{r['TOTAL_COST']} | {r['ERP_APPROVAL_STATUS'] or 'PENDING'} | {date_str} |\n"
+
+        response_text += "\n*To approve a request, tell me: 'ERP Approve requisition MRR/<id>/26-27'*"
+
+        return {"messages": [AIMessage(content=response_text)]}
+
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"Error fetching pending requests: {str(e)}")]}
+    finally:
+        db.close()
+
+
+def issuer_agent_node(state: MaterialRequisitionState) -> dict:
+    emp_no = state.get("emp_no", "")
+
+    from app.workflows.material_workflow.approvers import is_issuer
+    if not is_issuer(emp_no):
+        return {
+            "messages": [AIMessage(content="The store issuance feature is not yet active.")],
+            "execution_log": state.get("execution_log", []) + ["Non-issuer blocked"]
+        }
+
+    return {"messages": [AIMessage(content="[Store Issuer UI] Ready to process stock issuance.")]}
+
+
+# =============================================================================
+# MRR EXCEL UPLOAD PATH NODES (Task 4.7)
+# =============================================================================
+
+
+def creator_path_router(state: MaterialRequisitionState) -> str:
+    """
+    Routes to the correct sub-path for the creator persona.
+    """
+    print(f"[DIAG-MRR] creator_path_router entered. persona={state.get('selected_agent_role')}", flush=True)
+
+    msgs = state.get("messages") or []
+    last_msg = ""
+    for m in reversed(msgs):
+        if isinstance(m, HumanMessage):
+            content = getattr(m, "content", None)
+            if content is not None:
+                last_msg = str(content).strip().lower()
+                break
+
+    # Normalize: replace any whitespace runs and underscores so "confirm mrr",
+    # "confirm_mrr", "confirm  mrr" all collapse to "confirm mrr".
+    normalized = " ".join(last_msg.replace("_", " ").split())
+
+    pending = state.get("pending_mrr_data")
+    print(f"[DIAG-MRR] creator_path_router: last_msg={last_msg!r}, normalized={normalized!r}, has_pending={pending is not None}", flush=True)
+
+    confirm_keywords = {"confirm", "confirm mrr", "confirm submit", "yes", "submit", "ok submit"}
+    cancel_keywords = {"cancel", "cancel mrr", "no", "discard"}
+
+    # User confirmed pending submission
+    if pending and normalized in confirm_keywords:
+        print(f"[DIAG-MRR] creator_path_router -> submit_mrr", flush=True)
+        return "submit_mrr"
+
+    # User cancelled
+    if pending and normalized in cancel_keywords:
+        print(f"[DIAG-MRR] creator_path_router -> cancel_mrr", flush=True)
+        return "cancel_mrr"
+
+    # Excel uploaded
+    uploaded = state.get("uploaded_files") or []
+    if uploaded:
+        print(f"[DIAG-MRR] creator_path_router -> excel_handler", flush=True)
+        return "excel_handler"
+
+    # No files and no confirm/cancel — ask user to upload Excel
+    # (form_flow is currently broken for this case; bypass it)
+    print(f"[DIAG-MRR] creator_path_router -> creator_needs_file", flush=True)
+    return "creator_needs_file"
+
+
+def excel_handler_node(state: MaterialRequisitionState) -> dict:
+    """Handles MRR Excel upload."""
+    print(f"[DIAG-MRR] excel_handler_node entered. emp_no={state.get('emp_no')}", flush=True)
+
+    from app.services.mrr_validator import validate_and_resolve_mrr_excel
+
+    uploaded_files = state.get("uploaded_files") or []
+    
+    # Safer way to handle potential empty list in diagnostics
+    first_file = uploaded_files[0] if uploaded_files else None
+    print(f"[DIAG-MRR] excel_handler_node: first file keys={list(first_file.keys()) if first_file else 'none'}, file={first_file}", flush=True)
+
+    if not uploaded_files:
+        return {
+            "messages": [AIMessage(content=(
+                "I didn't see an Excel file in your upload. Please upload the MRR Excel file."
+            ))],
+            "execution_log": (state.get("execution_log") or []) + [
+                "Excel handler: no uploaded_files in state."
+            ]
+        }
+
+    excel_file = None
+    for f in uploaded_files:
+        if not f:
+            continue
+        if f.get("file_type") == "excel" and f.get("data"):
+            excel_file = f
+            break
+
+    print(f"[DIAG-MRR] excel_handler_node: excel_file found={excel_file is not None}", flush=True)
+
+    if not excel_file:
+        return {
+            "messages": [AIMessage(content=(
+                "The file you uploaded is not a valid Excel file. Please upload a .xlsx file with the MRR data."
+            ))],
+            "execution_log": (state.get("execution_log") or []) + [
+                "Excel handler: no excel file_type found in uploaded_files."
+            ]
+        }
+
+    from app.models.dto_schemas import CurrentUser
+    try:
+        current_user = CurrentUser(
+            emp_no=state.get("emp_no") or "",
+            name=state.get("user_info", {}).get("name", "") if state.get("user_info") else "",
+            email=state.get("user_info", {}).get("email", "") if state.get("user_info") else "",
+            hierarchy=state.get("user_info", {}).get("hierarchy", {}) if state.get("user_info") else {},
+            group_idx=state.get("group_idx") or 0,
+            role_ids=state.get("role_ids") or [],
+            role_names=state.get("role_names") or [],
+            dept=state.get("user_dept") or ""
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "messages": [AIMessage(content=f"Could not build user context: {e}")],
+            "execution_log": (state.get("execution_log") or []) + [
+                f"Excel handler: CurrentUser construction failed: {e}"
+            ]
+        }
+
+    print(f"[DIAG-MRR] excel_handler_node: calling validator with {len(excel_file['data'])} rows", flush=True)
+
+    try:
+        result = validate_and_resolve_mrr_excel(excel_file["data"], current_user)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "messages": [AIMessage(content=f"Validator error: {e}")],
+            "execution_log": (state.get("execution_log") or []) + [
+                f"Excel handler: validator threw: {e}"
+            ]
+        }
+
+    print(f"[DIAG-MRR] excel_handler_node: validator returned valid={result.get('valid')}", flush=True)
+
+    if not result.get("valid"):
+        errors = result.get("errors", [])
+        error_text = "Your MRR upload has the following issues:\n\n"
+        for i, err in enumerate(errors, 1):
+            error_text += f"{i}. {err}\n"
+        error_text += "\nPlease fix and re-upload the Excel file."
+        return {
+            "messages": [AIMessage(content=error_text)],
+            "execution_log": (state.get("execution_log") or []) + [
+                f"Excel validation failed: {len(errors)} errors."
+            ]
+        }
+
+    summary = result.get("summary_for_user", "")
+    warnings = result.get("warnings", [])
+    warning_text = ""
+    if warnings:
+        warning_text = "\n\n**Warnings:**\n"
+        for w in warnings:
+            warning_text += f"- {w}\n"
+
+    form_payload = {
+        "type": "confirmation",
+        "title": "Confirm MRR Submission",
+        "fields": [],
+        "buttons": [
+            {"label": "Confirm Submit", "value": "confirm_mrr"},
+            {"label": "Cancel", "value": "cancel_mrr"}
+        ]
+    }
+    import json
+    form_str = json.dumps(form_payload)
+    full_message = (
+        summary + warning_text +
+        f"\n\nPlease confirm or cancel below:\n\n"
+        f"<<FORM>>{form_str}<<ENDFORM>>"
+    )
+
+    return {
+        "messages": [AIMessage(content=full_message)],
+        "pending_mrr_data": result,
+        "execution_log": (state.get("execution_log") or []) + [
+            "Excel validated; awaiting user confirmation."
+        ]
+    }
+
+
+def mrr_submission_node(state: MaterialRequisitionState) -> dict:
+    """
+    Performs DB inserts for the validated MRR data stored in
+    pending_mrr_data. Then routes to auto_verifier_node.
+    """
+    print(f"[DIAG-MRR] mrr_submission_node entered. has_pending_data={state.get('pending_mrr_data') is not None}", flush=True)
+    pending = state.get("pending_mrr_data")
+    if not pending or not pending.get("valid"):
+        return {
+            "messages": [AIMessage(content=(
+                "No MRR data to submit. Please upload an Excel file first."
+            ))],
+            "execution_log": state.get("execution_log", []) + [
+                "Submission node: no pending_mrr_data in state."
+            ]
+        }
+
+    header = pending["header"]
+    lines = pending["lines"]
+
+    db = SessionLocal()
+    try:
+        from app.services.mariadb_queries import (
+            get_max_matrequisition_id, get_max_matrequisition_line_id
+        )
+        next_header_id = get_max_matrequisition_id() + 1
+        next_line_id = get_max_matrequisition_line_id() + 1
+
+        # Insert header
+        db.execute(text("""
+            INSERT INTO mrr_matrequisitionheader (
+                MATREQUISITIONID, MATREQUISITIONNO, WAREHOUSEID,
+                REQUISITIONTYPE, REQUESTORID, REQUISITIONDATE,
+                DEPARTMENT, NEEDBYDATE, STATUS, PROJECTID,
+                PROJECTPHASEID, REQTRANSACTIONTYPE, SUPPLIERID,
+                SUPPLIERSITEID, DESCRIPTION, COMMENTS, TOTAL_COST
+            ) VALUES (
+                :mid, :mno, :wh, :rtype, :req, NOW(),
+                :dept, :needby, :status, :proj,
+                :phase, :rtt, :sup, :supsite, :desc, :comm, :total
+            )
+        """), {
+            "mid": next_header_id,
+            "mno": header["mrr_no"],
+            "wh": header["warehouse_id"],
+            "rtype": header["requisition_type"],
+            "req": header["requestor_id"],
+            "dept": header["department"],
+            "needby": header["need_by_date"],
+            "status": header["status"],
+            "proj": header["project_id"],
+            "phase": header["project_phase_id"],
+            "rtt": header["req_transaction_type"],
+            "sup": header["supplier_id"],
+            "supsite": header["supplier_site_id"],
+            "desc": header.get("description", ""),
+            "comm": header.get("comments", ""),
+            "total": header["total_cost"]
+        })
+
+        # Insert lines
+        for i, line in enumerate(lines):
+            db.execute(text("""
+                INSERT INTO mrr_matrequisitionlines (
+                    MATREQUISITIONLINEID, MATREQUISITIONID, ITEMID,
+                    ITEMREVISIONID, UOMID, REQUISITIONQTY, ISSUEQTY,
+                    RETURNQUANTITY, STATUS, CLOSEREASON, ITEMCOST,
+                    RETURN_DATE
+                ) VALUES (
+                    :lid, :mid, :iid, :rev, :uom, :qty, 0, 0,
+                    'ENTERED', '', :cost, :retdate
+                )
+            """), {
+                "lid": next_line_id + i,
+                "mid": next_header_id,
+                "iid": line["item_id"],
+                "rev": line["item_revision_id"],
+                "uom": line["uom_id"],
+                "qty": line["requisition_qty"],
+                "cost": line["item_cost"],
+                "retdate": line.get("return_date")
+            })
+
+        db.commit()
+
+        # Update state for auto-verifier
+        confirmation = (
+            f"Your MRR **{header['mrr_no']}** has been submitted.\n"
+            f"Total cost: \u20b9{header['total_cost']:,.2f}\n\n"
+            f"Running verification..."
+        )
+
+        return {
+            "messages": [AIMessage(content=confirmation)],
+            "new_requisition_id": next_header_id,
+            "pending_mrr_data": None,  # clear
+            "execution_log": state.get("execution_log", []) + [
+                f"MRR {header['mrr_no']} inserted with id={next_header_id}, "
+                f"{len(lines)} line items."
+            ]
+        }
+
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        return {
+            "messages": [AIMessage(content=(
+                f"Submission failed: {str(e)}. "
+                "Please try again or contact support."
+            ))],
+            "execution_log": state.get("execution_log", []) + [
+                f"Submission node: insert failed: {e}"
+            ]
+        }
+    finally:
+        db.close()
+
+
+def mrr_cancel_node(state: MaterialRequisitionState) -> dict:
+    """Clears pending_mrr_data and emits cancellation message."""
+    print(f"[DIAG-MRR] mrr_cancel_node entered.", flush=True)
+    return {
+        "messages": [AIMessage(content=(
+            "Your MRR submission has been cancelled. "
+            "Upload a new Excel file when you're ready."
+        ))],
+        "pending_mrr_data": None,
+        "execution_log": state.get("execution_log", []) + [
+            "MRR cancelled by user."
+        ]
+    }
+
+
+def creator_needs_file_node(state: MaterialRequisitionState) -> dict:
+    """
+    Terminal node: emitted when a creator tries to create an MRR
+    without uploading an Excel file.  The form_flow path is
+    currently broken for this case, so we short-circuit with a
+    friendly message instead.
+    """
+    print(f"[DIAG-MRR] creator_needs_file_node entered.", flush=True)
+    msg = (
+        "To create a material requisition, please upload an Excel file with these columns: "
+        "Project Number, Requisition Type, Need By Date, Description, Comments, "
+        "Item Name, Requested Quantity, Return Date.\n\n"
+        "Once uploaded, type 'process this mrr' and I'll handle the rest."
+    )
+    return {
+        "messages": [AIMessage(content=msg)],
+        "execution_log": state.get("execution_log", []) + [
+            "Creator needs file: no uploaded_files; redirected to instructions."
+        ]
+    }
