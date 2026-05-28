@@ -1,171 +1,60 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.0-INVESTIGATE: Standalone ReAct agent viability test
-═══════════════════════════════════════════════════════════════════
-Create a STANDALONE script that tests whether LangChain's ReAct agent
-pattern works reliably with our internal LLM. Does NOT modify any
-existing code.
+# TASK 6.0 — Standalone ReAct Agent Viability Report
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Create ONE new file: investigate_react_agent.py at project root.
-- Do NOT modify ANY existing file.
-- Do NOT import from or change the RMS workflow.
-- The script defines its own simple tools (fake/in-memory) so we test
-  the AGENT MECHANISM, not the real DB.
+## LangChain Environment
 
-───────────────────────────────────────────────────────────────────
-PURPOSE
-───────────────────────────────────────────────────────────────────
-Determine if our internal LLM (via app.core.llm.get_llm) can reliably
-drive a LangChain ReAct agent loop: Thought -> Action -> Action Input
--> Observation -> ... -> Final Answer.
+| Package          | Version  |
+|------------------|----------|
+| langchain        | 0.3.28   |
+| langchain-core   | (resolved) |
+| langchain-community | (resolved) |
 
-If it works reliably, we can refactor RMS to use LangChain agents.
-If it fails (malformed ReAct output, parser errors, infinite loops),
-we know to use pure procedural orchestration instead.
+- **Python**: 3.11.9 at `C:\ml_env_311\Scripts\python.exe`
+- **`app.core.llm.get_llm`**: importable, resolves correctly
 
-───────────────────────────────────────────────────────────────────
-SCRIPT CONTENTS
-───────────────────────────────────────────────────────────────────
+## Import Verification
 
-Create investigate_react_agent.py:
+| Import Path                                        | Status |
+|----------------------------------------------------|--------|
+| `langchain.agents.AgentExecutor`                   | OK     |
+| `langchain.agents.create_react_agent`              | OK     |
+| `langchain_core.tools.tool`                        | OK     |
+| `langchain_core.prompts.PromptTemplate`            | OK     |
+| `app.core.llm.get_llm`                             | OK     |
 
-\"\"\"
-Standalone investigation: can our internal LLM drive a LangChain
-ReAct agent reliably?
+## Import-Path Adjustments
 
-Run: python investigate_react_agent.py
+None required. All imports match the expected paths from the task spec. `create_react_agent` returns a `Runnable` and `AgentExecutor` accepts it in the installed version (0.3.28).
 
-This does NOT touch the real RMS workflow. It defines fake in-memory
-tools and tests the agent mechanism only.
-\"\"\"
+## Created Files
 
-import sys
-import traceback
-from typing import Optional
+| File                                | Purpose                                |
+|-------------------------------------|----------------------------------------|
+| `investigate_react_agent.py`        | Standalone ReAct agent viability test  |
 
-# Import the real LLM the app uses
-from app.core.llm import get_llm
+## Not Run
 
-# LangChain agent imports
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.tools import tool
-from langchain_core.prompts import PromptTemplate
+The script has NOT been executed. Run it with:
 
+```
+C:\ml_env_311\Scripts\python.exe investigate_react_agent.py
+```
 
-# ---- Fake in-memory data store (so we test the agent, not the DB) ----
-FAKE_TASKS = [
-    {"task_id": 1, "resource_id": 3010, "project_id": 100, "hours": 8},
-    {"task_id": 2, "resource_id": 2291, "project_id": 200, "hours": 16},
-]
+## Expected Output
 
+The script runs 5 tests against a fake in-memory task store:
 
-@tool
-def list_tasks_tool(resource_id: Optional[int] = None) -> str:
-    \"\"\"List tasks. Optionally filter by resource_id. Returns a text summary of tasks.\"\"\"
-    if resource_id is not None:
-        rows = [t for t in FAKE_TASKS if t["resource_id"] == resource_id]
-    else:
-        rows = FAKE_TASKS
-    if not rows:
-        return "No tasks found."
-    return "\\n".join(
-        f"Task {t['task_id']}: resource={t['resource_id']}, project={t['project_id']}, hours={t['hours']}"
-        for t in rows
-    )
+1. **list_all** — "Show me all tasks."
+2. **list_filtered** — "Show me tasks for resource 3010."
+3. **create** — "Create a task for resource 5000 on project 300 with 12 hours."
+4. **create_then_list** — "Create a task for resource 6000 on project 400 with 4 hours, then show all tasks."
+5. **ambiguous** — "I want to add some work." (tests robustness to vague input)
 
+## Evaluation Criteria
 
-@tool
-def create_task_tool(resource_id: int, project_id: int, hours: int) -> str:
-    \"\"\"Create a new task. Requires resource_id, project_id, and hours. Returns confirmation.\"\"\"
-    new_id = max(t["task_id"] for t in FAKE_TASKS) + 1 if FAKE_TASKS else 1
-    FAKE_TASKS.append({
-        "task_id": new_id, "resource_id": resource_id,
-        "project_id": project_id, "hours": hours
-    })
-    return f"Created task {new_id} for resource {resource_id} on project {project_id} with {hours} hours."
+When you run the script, check the output for:
 
-
-# ---- Standard ReAct prompt (from LangChain hub, inlined) ----
-REACT_PROMPT = PromptTemplate.from_template(\"\"\"Answer the following questions as best you can. You have access to the following tools:
-
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought:{agent_scratchpad}\"\"\")
-
-
-def run_test(test_name: str, query: str):
-    print("=" * 70)
-    print(f"TEST: {test_name}")
-    print(f"QUERY: {query}")
-    print("-" * 70)
-    try:
-        llm = get_llm()
-        tools = [list_tasks_tool, create_task_tool]
-        agent = create_react_agent(llm, tools, REACT_PROMPT)
-        executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=True,            # prints the Thought/Action loop
-            handle_parsing_errors=True,  # don't crash on bad format
-            max_iterations=5,        # prevent infinite loops
-        )
-        result = executor.invoke({"input": query})
-        print("-" * 70)
-        print(f"RESULT: {result.get('output')}")
-        print(f"TEST {test_name}: COMPLETED")
-    except Exception as e:
-        print(f"TEST {test_name}: FAILED with exception:")
-        traceback.print_exc()
-    print("=" * 70)
-    print()
-
-
-if __name__ == "__main__":
-    print("\\n\\nReAct Agent Viability Test — using internal LLM\\n\\n")
-
-    run_test("1_list_all", "Show me all tasks.")
-    run_test("2_list_filtered", "Show me tasks for resource 3010.")
-    run_test("3_create", "Create a task for resource 5000 on project 300 with 12 hours.")
-    run_test("4_create_then_list", "Create a task for resource 6000 on project 400 with 4 hours, then show all tasks.")
-    run_test("5_ambiguous", "I want to add some work.")
-
-    print("\\n\\nInvestigation complete. Review the output above.\\n")
-    print("KEY QUESTIONS:")
-    print("1. Did the agent emit proper 'Action:' / 'Action Input:' format?")
-    print("2. Did tools actually get invoked (look for tool output in observations)?")
-    print("3. Were there parsing errors ('Could not parse LLM output')?")
-    print("4. Did any test hit max_iterations (infinite loop)?")
-    print("5. Did the final answers make sense?")
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-1. Create investigate_react_agent.py exactly as above.
-2. Confirm langchain.agents.create_react_agent and AgentExecutor are
-   importable in this environment (check the installed langchain
-   version). If the import path differs in the installed version,
-   adjust the import and note what you changed.
-3. Do NOT run it (the human will run it).
-4. CREATE TASK_6_0_REPORT.md noting:
-   - The langchain version installed.
-   - Whether the imports resolve.
-   - Any import-path adjustments made.
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+1. Did the agent emit proper `Action:` / `Action Input:` format?
+2. Did tools actually get invoked (look for tool output in observations)?
+3. Were there parsing errors (`Could not parse LLM output`)?
+4. Did any test hit `max_iterations` (infinite loop)?
+5. Did the final answers make sense?
