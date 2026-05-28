@@ -1,16 +1,248 @@
-from app.workflows.rms_workflow.intent import classify_rms_intent
-msgs = [
-    "log 8 hours today on task 1",
-    "I worked 6 hours on task 5",
-    "fill 4 hrs on task 2",
-    "enter my time for today",
-    "record 5 hours",
-    "create a task for emp 3010",
-    "create task",
-    "show my tasks",
-    "show pending approvals",
-    "approve worklog 5",
-]
-for m in msgs:
-    r = classify_rms_intent(m)
-    print(f"{m[:40]!r}: {r.persona!r} | {r.domain}")
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60138 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60139 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60140 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 2830 (Venkatesh. S)
+
+=== DEBUG: Resolved context for emp_no 2830 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 3 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60301 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 2830 (Venkatesh. S)
+
+=== DEBUG: Resolved context for emp_no 2830 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 3 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60302 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 2830 (Venkatesh. S)
+
+=== DEBUG: Resolved context for emp_no 2830 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 3 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60303 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:60887 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100, product 10. task index 1, activity 1, f
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100, product 10. task index 1, activity 1, f
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] creator_agent_node calling LLM. message_count=3
+[DIAG-RMS] creator_agent_node LLM done. full_text_len=316
+[DIAG-RMS] creator_agent_node returning. full_text_len=316
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:60999 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:61000 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:61001 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:61099 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=show my tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=show my tasks
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node calling LLM. message_count=3
+[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=88
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=88
+INFO:     10.5.1.58:61955 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=log 8 hours on task 22 for 2026-05-26 with remarks "implementation"
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=log 8 hours on task 22 for 2026-05-26 with remarks "implementation"
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node calling LLM. message_count=5
+[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=140
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=140
+INFO:     10.5.1.58:62164 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=log 8 hours on task 22 worklogidx 22 for 2026-05-26 with remarks "implementation
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=log 8 hours on task 22 worklogidx 22 for 2026-05-26 with remarks "implementation
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node calling LLM. message_count=7
+[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=141
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=141
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:62337 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 3010 (Sakthi Mano P)
+
+=== DEBUG: Resolved context for emp_no 3010 ===
+  group_idx = 32
+  role_ids = [7]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 1 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:62338 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:62385 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=log 8 hours on worklogidx 22 for 2026-05-26 with remarks "implementation"
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
+[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=log 8 hours on worklogidx 22 for 2026-05-26 with remarks "implementation"
+Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
+[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+[DIAG-RMS] reviewer_agent_node calling LLM. message_count=3
+[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=171
+[DIAG-RMS] reviewer_agent_node returning. full_text_len=171
+
+
+2830
+Hi! What can I help you with?
+create a task for emp 3010, project 100, product 10. task index 1, activity 1, from 2026-05-26, to 2026-05-28, planned 8 hours
+V
+🤖
+
+
+Task created successfully for employee 3010 from 2026-05-26 to 2026-05-28 with 8.0 planned hours.
+
+3010
+
+Hi! What can I help you with?
+show my tasks
+S
+🤖
+
+Here are your assigned tasks.
+Here are your assigned tasks.
+log 8 hours on task 22 for 2026-05-26 with remarks "implementation"
+S
+🤖
+To log hours I still need: worklog_idx.
+log 8 hours on task 22 worklogidx 22 for 2026-05-26 with remarks "implementation"
+S
+🤖
+------------------
+
+Hi! What can I help you with?
+log 8 hours on worklogidx 22 for 2026-05-26 with remarks "implementation"
+S
+🤖
+
+Here are your assigned tasks.
+Here are your assigned tasks.
+
+---------------
+** if it is tool calling problem like earlier we discussed means leave it because we already debugged a lot and we got an understanding too
