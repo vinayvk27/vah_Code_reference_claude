@@ -1,154 +1,18 @@
-# TASK 5.9 REPORT — RMS Keyword Classifier
-
-## INTENDED FOOTPRINT
-- Modify: `app/workflows/rms_workflow/intent.py` (rewrite classifier implementation)
-- Modify: `app/workflows/rms_workflow/prompts.py` — NO changes needed (constants left in place, intent.py no longer imports them)
-
-## ACTUAL FOOTPRINT
-- Modified: `app/workflows/rms_workflow/intent.py` (complete rewrite)
-- Unchanged: `app/workflows/rms_workflow/prompts.py`
-- Unchanged: `app/workflows/rms_workflow/nodes.py`
-- Unchanged: All other files
-
----
-
-## NEW classify_rms_intent + helpers + keyword lists
-
-```python
-import re
-from pydantic import BaseModel, Field
-from typing import Literal
-
-# Keyword lists — ordered by priority (most specific first)
-
-OUT_OF_DOMAIN_KEYWORDS = [
-    "weather", "joke", "salary", "payslip", "leave balance",
-    "hello", "hi there", "good morning", "good evening",
-    "who are you", "what can you do", "tell me about",
-    "news", "global", "stock price", "material requisition",
-    "approve mrr", "issue stock",
+from app.workflows.rms_workflow.intent import classify_rms_intent
+msgs = [
+    "show my tasks",
+    "show my current tasks",
+    "log 8 hours today on task 1",
+    "fill timesheet",
+    "create a task for emp 3010",
+    "create task",
+    "show pending approvals",
+    "approve worklog 5",
+    "reject worklog 3",
+    "tell me a joke",
+    "what is the weather",
+    "approve all pending",
 ]
-
-APPROVER_KEYWORDS = [
-    "approve all", "approve pending",
-    "show pending approvals", "show pending approval",
-    "pending approvals", "approval queue", "to approve",
-    "approve worklog", "reject worklog",
-    "approve timesheet", "reject timesheet",
-    "approve ", "reject ", "sign off", "signoff",
-]
-
-CREATOR_KEYWORDS = [
-    "create task", "create a task", "new task", "add task",
-    "add a task", "assign task", "assign a task",
-    "create timesheet", "set up task", "setup task",
-    "i need to create", "i want to create", "make a task",
-]
-
-REVIEWER_KEYWORDS = [
-    "show my tasks", "show my task", "my tasks", "my task",
-    "show tasks", "list my tasks", "list tasks",
-    "my assignments", "my assigned", "assigned to me",
-    "what tasks", "what are my", "show my current",
-    "log hours", "log time", "log my hours", "fill hours",
-    "fill timesheet", "fill my timesheet", "enter hours",
-    "enter time", "i worked", "log worklog", "record hours",
-    "submit hours", "show my worklogs", "my worklogs",
-    "my entries", "pending entries", "my pending",
-]
-
-
-def _normalize(message: str) -> str:
-    if not message:
-        return ""
-    text = message.lower().strip()
-    text = re.sub(r"[,.;:!?'\"()\\[\\]{}]+", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def _build_in_domain(persona: str, confidence: str, reasoning: str) -> RMSIntentClassification:
-    return RMSIntentClassification(
-        domain="IN_DOMAIN",
-        collection="rms_timesheet",
-        persona=persona,
-        confidence=confidence,
-        reasoning=reasoning,
-    )
-
-
-def _build_out_of_domain(reasoning: str) -> RMSIntentClassification:
-    return RMSIntentClassification(
-        domain="OUT_OF_DOMAIN",
-        collection="",
-        persona="",
-        confidence="HIGH",
-        reasoning=reasoning,
-    )
-
-
-def classify_rms_intent(user_message: str) -> RMSIntentClassification:
-    """
-    Keyword-based intent classifier for RMS. No LLM call — deterministic.
-    All IN_DOMAIN classifications use collection rms_timesheet
-    (rms_projectplan is not routed to; it is reserved for future use).
-    """
-    text = _normalize(user_message)
-
-    if not text:
-        return _build_out_of_domain("Empty message")
-
-    # Step 1: Out-of-domain check.
-    for kw in OUT_OF_DOMAIN_KEYWORDS:
-        if kw in text:
-            return _build_out_of_domain(f"Matched out-of-domain keyword: {kw}")
-
-    # Step 2: Approver (most specific action verbs).
-    for kw in APPROVER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain("approver", "HIGH",
-                                     f"Matched approver keyword: {kw}")
-
-    # Step 3: Creator.
-    for kw in CREATOR_KEYWORDS:
-        if kw in text:
-            return _build_in_domain("creator", "HIGH",
-                                     f"Matched creator keyword: {kw}")
-
-    # Step 4: Reviewer (viewing tasks + logging hours).
-    for kw in REVIEWER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain("reviewer", "HIGH",
-                                     f"Matched reviewer keyword: {kw}")
-
-    # Step 5: No keyword matched — out of domain.
-    return _build_out_of_domain(
-        "No RMS-related keyword matched. Treating as out-of-domain."
-    )
-```
-
----
-
-## CONFIRMATIONS
-
-### Pydantic schema unchanged
-**CONFIRMED.** `RMSIntentClassification` class preserved with identical field names and types: `domain`, `collection`, `persona`, `confidence`, `reasoning`.
-
-### Persona values are lowercase
-**CONFIRMED.** Values are `"creator"`, `"reviewer"`, `"approver"` — all lowercase, matching what `permission_check_node` compares against.
-
-### Collection is always rms_timesheet for IN_DOMAIN
-**CONFIRMED.** `_build_in_domain` hardcodes `collection="rms_timesheet"`. `OUT_OF_DOMAIN` returns `collection=""`. `rms_projectplan` is never returned.
-
-### _repair_classifier_json removed
-**CONFIRMED.** The JSON repair helper (Task 5.3) has been deleted. Not needed — there's no LLM-generated JSON to parse.
-
-### _force_timesheet_collection removed
-**CONFIRMED.** The temporary override (Task 5.4) has been deleted. Not needed — the keyword classifier hardcodes `rms_timesheet` for all IN_DOMAIN results.
-
-### No other files touched
-**CONFIRMED.** Only `intent.py` was modified. `prompts.py` was left as-is (unused imports from intent.py were simply removed — no changes to prompts.py itself). `nodes.py`, `graph.py`, `state.py` are untouched. The function name `classify_rms_intent` and its signature `(user_message: str) -> RMSIntentClassification` are preserved.
-
-
-
-** we got some issues in mrr right i hope you solved them directly . or do you need any iterations
+for m in msgs:
+    r = classify_rms_intent(m)
+    print(f"{m[:40]!r}: {r.domain} | {r.collection!r} | {r.persona!r} | {r.confidence}")
