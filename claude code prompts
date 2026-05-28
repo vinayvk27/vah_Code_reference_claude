@@ -1,249 +1,171 @@
-User context built for: 3010 (Sakthi Mano P)
+═══════════════════════════════════════════════════════════════════
+TASK 6.0-INVESTIGATE: Standalone ReAct agent viability test
+═══════════════════════════════════════════════════════════════════
+Create a STANDALONE script that tests whether LangChain's ReAct agent
+pattern works reliably with our internal LLM. Does NOT modify any
+existing code.
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60138 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-User context built for: 3010 (Sakthi Mano P)
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Create ONE new file: investigate_react_agent.py at project root.
+- Do NOT modify ANY existing file.
+- Do NOT import from or change the RMS workflow.
+- The script defines its own simple tools (fake/in-memory) so we test
+  the AGENT MECHANISM, not the real DB.
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60139 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 3010 (Sakthi Mano P)
+───────────────────────────────────────────────────────────────────
+PURPOSE
+───────────────────────────────────────────────────────────────────
+Determine if our internal LLM (via app.core.llm.get_llm) can reliably
+drive a LangChain ReAct agent loop: Thought -> Action -> Action Input
+-> Observation -> ... -> Final Answer.
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60140 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 2830 (Venkatesh. S)
+If it works reliably, we can refactor RMS to use LangChain agents.
+If it fails (malformed ReAct output, parser errors, infinite loops),
+we know to use pure procedural orchestration instead.
 
-=== DEBUG: Resolved context for emp_no 2830 ===
-  group_idx = 32
-  role_ids = [9]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 3 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60301 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-User context built for: 2830 (Venkatesh. S)
+───────────────────────────────────────────────────────────────────
+SCRIPT CONTENTS
+───────────────────────────────────────────────────────────────────
 
-=== DEBUG: Resolved context for emp_no 2830 ===
-  group_idx = 32
-  role_ids = [9]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 3 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60302 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 2830 (Venkatesh. S)
+Create investigate_react_agent.py:
 
-=== DEBUG: Resolved context for emp_no 2830 ===
-  group_idx = 32
-  role_ids = [9]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 3 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60303 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:60887 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task for emp 3010, project 100, product 10. task index 1, activity 1, f
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task for emp 3010, project 100, product 10. task index 1, activity 1, f
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] creator_agent_node calling LLM. message_count=3
-[DIAG-RMS] creator_agent_node LLM done. full_text_len=316
-[DIAG-RMS] creator_agent_node returning. full_text_len=316
-User context built for: 3010 (Sakthi Mano P)
+\"\"\"
+Standalone investigation: can our internal LLM drive a LangChain
+ReAct agent reliably?
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:60999 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-User context built for: 3010 (Sakthi Mano P)
+Run: python investigate_react_agent.py
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:61000 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 3010 (Sakthi Mano P)
+This does NOT touch the real RMS workflow. It defines fake in-memory
+tools and tests the agent mechanism only.
+\"\"\"
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:61001 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:61099 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=show my tasks
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=show my tasks
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node calling LLM. message_count=3
-[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=88
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=88
-INFO:     10.5.1.58:61955 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=log 8 hours on task 22 for 2026-05-26 with remarks "implementation"
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=log 8 hours on task 22 for 2026-05-26 with remarks "implementation"
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node calling LLM. message_count=5
-[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=140
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=140
-INFO:     10.5.1.58:62164 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=log 8 hours on task 22 worklogidx 22 for 2026-05-26 with remarks "implementation
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=log 8 hours on task 22 worklogidx 22 for 2026-05-26 with remarks "implementation
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node calling LLM. message_count=7
-[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=141
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=141
-User context built for: 3010 (Sakthi Mano P)
+import sys
+import traceback
+from typing import Optional
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:62337 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-User context built for: 3010 (Sakthi Mano P)
+# Import the real LLM the app uses
+from app.core.llm import get_llm
 
-=== DEBUG: Resolved context for emp_no 3010 ===
-  group_idx = 32
-  role_ids = [7]
-  visible_module_ids = {1, 5}
-  intersection_module_ids = {1, 5}
-  modules in access_tree = 2
-    - RMS: 1 collections
-        - rms_timesheet: 1 agents
-    - MRR: 1 collections
-        - mrr_general: 1 agents
-=== END DEBUG ===
-INFO:     10.5.1.58:62338 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
-INFO:     10.5.1.58:62385 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-RMS] parse_intent_node entered. emp_no=3010, last_msg=log 8 hours on worklogidx 22 for 2026-05-26 with remarks "implementation"
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=3010, collection='rms_timesheet', last_msg=log 8 hours on worklogidx 22 for 2026-05-26 with remarks "implementation"
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
-[DIAG-RMS] reviewer_agent_node calling LLM. message_count=3
-[DIAG-RMS] reviewer_agent_node LLM done. full_text_len=171
-[DIAG-RMS] reviewer_agent_node returning. full_text_len=171
+# LangChain agent imports
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_core.tools import tool
+from langchain_core.prompts import PromptTemplate
 
 
-2830
-Hi! What can I help you with?
-create a task for emp 3010, project 100, product 10. task index 1, activity 1, from 2026-05-26, to 2026-05-28, planned 8 hours
-V
-🤖
+# ---- Fake in-memory data store (so we test the agent, not the DB) ----
+FAKE_TASKS = [
+    {"task_id": 1, "resource_id": 3010, "project_id": 100, "hours": 8},
+    {"task_id": 2, "resource_id": 2291, "project_id": 200, "hours": 16},
+]
 
 
-Task created successfully for employee 3010 from 2026-05-26 to 2026-05-28 with 8.0 planned hours.
+@tool
+def list_tasks_tool(resource_id: Optional[int] = None) -> str:
+    \"\"\"List tasks. Optionally filter by resource_id. Returns a text summary of tasks.\"\"\"
+    if resource_id is not None:
+        rows = [t for t in FAKE_TASKS if t["resource_id"] == resource_id]
+    else:
+        rows = FAKE_TASKS
+    if not rows:
+        return "No tasks found."
+    return "\\n".join(
+        f"Task {t['task_id']}: resource={t['resource_id']}, project={t['project_id']}, hours={t['hours']}"
+        for t in rows
+    )
 
-3010
 
-Hi! What can I help you with?
-show my tasks
-S
-🤖
+@tool
+def create_task_tool(resource_id: int, project_id: int, hours: int) -> str:
+    \"\"\"Create a new task. Requires resource_id, project_id, and hours. Returns confirmation.\"\"\"
+    new_id = max(t["task_id"] for t in FAKE_TASKS) + 1 if FAKE_TASKS else 1
+    FAKE_TASKS.append({
+        "task_id": new_id, "resource_id": resource_id,
+        "project_id": project_id, "hours": hours
+    })
+    return f"Created task {new_id} for resource {resource_id} on project {project_id} with {hours} hours."
 
-Here are your assigned tasks.
-Here are your assigned tasks.
-log 8 hours on task 22 for 2026-05-26 with remarks "implementation"
-S
-🤖
-To log hours I still need: worklog_idx.
-log 8 hours on task 22 worklogidx 22 for 2026-05-26 with remarks "implementation"
-S
-🤖
-------------------
 
-Hi! What can I help you with?
-log 8 hours on worklogidx 22 for 2026-05-26 with remarks "implementation"
-S
-🤖
+# ---- Standard ReAct prompt (from LangChain hub, inlined) ----
+REACT_PROMPT = PromptTemplate.from_template(\"\"\"Answer the following questions as best you can. You have access to the following tools:
 
-Here are your assigned tasks.
-Here are your assigned tasks.
+{tools}
 
----------------
-** if it is tool calling problem like earlier we discussed means leave it because we already debugged a lot and we got an understanding too. so if that is the problem means dont debug about workflow if intent is fine means let me know . 
-we will stop here for rms and fix hrms intent since it is simple.
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought:{agent_scratchpad}\"\"\")
+
+
+def run_test(test_name: str, query: str):
+    print("=" * 70)
+    print(f"TEST: {test_name}")
+    print(f"QUERY: {query}")
+    print("-" * 70)
+    try:
+        llm = get_llm()
+        tools = [list_tasks_tool, create_task_tool]
+        agent = create_react_agent(llm, tools, REACT_PROMPT)
+        executor = AgentExecutor(
+            agent=agent,
+            tools=tools,
+            verbose=True,            # prints the Thought/Action loop
+            handle_parsing_errors=True,  # don't crash on bad format
+            max_iterations=5,        # prevent infinite loops
+        )
+        result = executor.invoke({"input": query})
+        print("-" * 70)
+        print(f"RESULT: {result.get('output')}")
+        print(f"TEST {test_name}: COMPLETED")
+    except Exception as e:
+        print(f"TEST {test_name}: FAILED with exception:")
+        traceback.print_exc()
+    print("=" * 70)
+    print()
+
+
+if __name__ == "__main__":
+    print("\\n\\nReAct Agent Viability Test — using internal LLM\\n\\n")
+
+    run_test("1_list_all", "Show me all tasks.")
+    run_test("2_list_filtered", "Show me tasks for resource 3010.")
+    run_test("3_create", "Create a task for resource 5000 on project 300 with 12 hours.")
+    run_test("4_create_then_list", "Create a task for resource 6000 on project 400 with 4 hours, then show all tasks.")
+    run_test("5_ambiguous", "I want to add some work.")
+
+    print("\\n\\nInvestigation complete. Review the output above.\\n")
+    print("KEY QUESTIONS:")
+    print("1. Did the agent emit proper 'Action:' / 'Action Input:' format?")
+    print("2. Did tools actually get invoked (look for tool output in observations)?")
+    print("3. Were there parsing errors ('Could not parse LLM output')?")
+    print("4. Did any test hit max_iterations (infinite loop)?")
+    print("5. Did the final answers make sense?")
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+1. Create investigate_react_agent.py exactly as above.
+2. Confirm langchain.agents.create_react_agent and AgentExecutor are
+   importable in this environment (check the installed langchain
+   version). If the import path differs in the installed version,
+   adjust the import and note what you changed.
+3. Do NOT run it (the human will run it).
+4. CREATE TASK_6_0_REPORT.md noting:
+   - The langchain version installed.
+   - Whether the imports resolve.
+   - Any import-path adjustments made.
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
