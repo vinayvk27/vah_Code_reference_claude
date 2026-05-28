@@ -1,81 +1,25 @@
-═══════════════════════════════════════════════════════════════════
-TASK 5.9: Replace LLM intent classifier with keyword classifier for RMS
-═══════════════════════════════════════════════════════════════════
-Replace the LLM-driven classifier in RMS with a deterministic
-keyword-based classifier, mirroring what was done for MRR (Task 5.6).
+# TASK 5.9 REPORT — RMS Keyword Classifier
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch app/workflows/rms_workflow/intent.py
-  and app/workflows/rms_workflow/prompts.py (where the keyword
-  constants live).
-- Do NOT modify the Pydantic schema (RMSIntentClassification) —
-  keep field names and types identical.
-- Do NOT modify nodes.py, graph.py, state.py, or any other file.
-- Keep the function name classify_rms_intent and its signature
-  identical (other code imports it).
-- persona values MUST be lowercase ("creator", "reviewer",
-  "approver") to match what permission_check_node compares against.
-  (We confirmed earlier RMS uses lowercase.)
-- collection values must be "rms_timesheet" (the projectplan
-  collection is not routed to — same as the Task 5.4 override).
+## INTENDED FOOTPRINT
+- Modify: `app/workflows/rms_workflow/intent.py` (rewrite classifier implementation)
+- Modify: `app/workflows/rms_workflow/prompts.py` — NO changes needed (constants left in place, intent.py no longer imports them)
 
-Output INTENDED FOOTPRINT at start.
-List modified files at end.
+## ACTUAL FOOTPRINT
+- Modified: `app/workflows/rms_workflow/intent.py` (complete rewrite)
+- Unchanged: `app/workflows/rms_workflow/prompts.py`
+- Unchanged: `app/workflows/rms_workflow/nodes.py`
+- Unchanged: All other files
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-The MRR keyword classifier (Task 5.6) works reliably. Apply the same
-deterministic approach to RMS. Remove all LLM/PydanticOutputParser
-logic. Remove the JSON repair layer (Task 5.3) since there's no JSON
-to parse anymore. Remove the rms_projectplan override (Task 5.4)
-since the keyword classifier simply never picks projectplan.
+---
 
-RMS personas (lowercase):
-- creator: creates task assignments
-- reviewer: views own tasks, logs/fills hours (aka filler)
-- approver: approves/rejects worklogs
+## NEW classify_rms_intent + helpers + keyword lists
 
-All IN_DOMAIN classifications use collection="rms_timesheet".
-
-───────────────────────────────────────────────────────────────────
-SCOPE - intent.py REWRITE
-───────────────────────────────────────────────────────────────────
-
-First VIEW the current intent.py to confirm the exact Pydantic class
-name (RMSIntentClassification) and field names. Preserve them.
-
-Replace the whole classifier implementation with keyword logic.
-
-Remove these (no longer needed):
-- PydanticOutputParser, PromptTemplate, get_llm_non_streaming imports
-- _parser, _prompt_template variables
-- classify_rms_intent's LLM body
-- _repair_classifier_json (Task 5.3) — delete it
-- _force_timesheet_collection (Task 5.4) — delete it (the keyword
-  classifier hardcodes rms_timesheet, so override is redundant)
-- keyword_fallback's old body — replace with new logic
-
-Keep:
-- RMSIntentClassification Pydantic class
-- classify_rms_intent function name + signature
-
-New implementation:
-
+```python
 import re
+from pydantic import BaseModel, Field
+from typing import Literal
 
-def _normalize(message: str) -> str:
-    if not message:
-        return ""
-    text = message.lower().strip()
-    text = re.sub(r"[,.;:!?'\"()\\[\\]{}]+", " ", text)
-    text = re.sub(r"\\s+", " ", text)
-    return text
-
-
-# Keyword lists — ordered by priority (most specific first).
+# Keyword lists — ordered by priority (most specific first)
 
 OUT_OF_DOMAIN_KEYWORDS = [
     "weather", "joke", "salary", "payslip", "leave balance",
@@ -114,44 +58,13 @@ REVIEWER_KEYWORDS = [
 ]
 
 
-def classify_rms_intent(user_message: str) -> RMSIntentClassification:
-    """
-    Keyword-based intent classifier for RMS. No LLM call — deterministic.
-    All IN_DOMAIN classifications use collection rms_timesheet
-    (rms_projectplan is not routed to; it is reserved for future use).
-    """
-    text = _normalize(user_message)
-
-    if not text:
-        return _build_out_of_domain("Empty message")
-
-    # Step 1: Out-of-domain check.
-    for kw in OUT_OF_DOMAIN_KEYWORDS:
-        if kw in text:
-            return _build_out_of_domain(f"Matched out-of-domain keyword: {kw}")
-
-    # Step 2: Approver (most specific action verbs).
-    for kw in APPROVER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain("approver", "HIGH",
-                f"Matched approver keyword: {kw}")
-
-    # Step 3: Creator.
-    for kw in CREATOR_KEYWORDS:
-        if kw in text:
-            return _build_in_domain("creator", "HIGH",
-                f"Matched creator keyword: {kw}")
-
-    # Step 4: Reviewer (viewing tasks + logging hours).
-    for kw in REVIEWER_KEYWORDS:
-        if kw in text:
-            return _build_in_domain("reviewer", "HIGH",
-                f"Matched reviewer keyword: {kw}")
-
-    # Step 5: No keyword matched — out of domain.
-    return _build_out_of_domain(
-        "No RMS-related keyword matched. Treating as out-of-domain."
-    )
+def _normalize(message: str) -> str:
+    if not message:
+        return ""
+    text = message.lower().strip()
+    text = re.sub(r"[,.;:!?'\"()\\[\\]{}]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def _build_in_domain(persona: str, confidence: str, reasoning: str) -> RMSIntentClassification:
@@ -173,48 +86,69 @@ def _build_out_of_domain(reasoning: str) -> RMSIntentClassification:
         reasoning=reasoning,
     )
 
-───────────────────────────────────────────────────────────────────
-IMPORTANT ORDERING NOTE
-───────────────────────────────────────────────────────────────────
-APPROVER is checked BEFORE CREATOR and REVIEWER because approver
-verbs ("approve", "reject") are unambiguous. CREATOR before REVIEWER
-because "create task" is more specific than the broad REVIEWER list.
 
-A potential conflict: the word "task" appears in both creator
-("create task") and reviewer ("show my tasks"). Because CREATOR
-keywords require the verb "create"/"add"/"assign" alongside "task",
-and REVIEWER keywords require "show"/"my"/"list", they should not
-overlap in practice. But test carefully.
+def classify_rms_intent(user_message: str) -> RMSIntentClassification:
+    """
+    Keyword-based intent classifier for RMS. No LLM call — deterministic.
+    All IN_DOMAIN classifications use collection rms_timesheet
+    (rms_projectplan is not routed to; it is reserved for future use).
+    """
+    text = _normalize(user_message)
 
-Another conflict: bare "approve " (with trailing space) in
-APPROVER_KEYWORDS would match "approve worklog 5". Good. But it
-would NOT match "approve" with no trailing content. That's fine —
-a bare "approve" with no ID isn't actionable anyway.
+    if not text:
+        return _build_out_of_domain("Empty message")
 
-───────────────────────────────────────────────────────────────────
-PROMPTS.PY
-───────────────────────────────────────────────────────────────────
-If prompts.py currently defines APPROVER_KEYWORDS, CREATOR_KEYWORDS,
-FILLER_KEYWORDS, QUERY_KEYWORDS that were imported by the old
-intent.py — those imports are being removed. You may leave the
-constants in prompts.py (harmless) OR move the new keyword lists
-there and import them. Simplest: define the new lists directly in
-intent.py (as shown above) and remove the old imports from
-prompts.py usage in intent.py. Do NOT delete prompts.py or other
-constants it holds (agent prompts etc. may live there).
+    # Step 1: Out-of-domain check.
+    for kw in OUT_OF_DOMAIN_KEYWORDS:
+        if kw in text:
+            return _build_out_of_domain(f"Matched out-of-domain keyword: {kw}")
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_5_9_REPORT.md with:
-- INTENDED / ACTUAL footprint
-- The full new classify_rms_intent + helpers + keyword lists
-- Confirmation Pydantic schema unchanged
-- Confirmation persona values are lowercase
-- Confirmation collection is always rms_timesheet for IN_DOMAIN
-- Confirmation _repair_classifier_json and _force_timesheet_collection
-  were removed
-- Confirmation no other files touched
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+    # Step 2: Approver (most specific action verbs).
+    for kw in APPROVER_KEYWORDS:
+        if kw in text:
+            return _build_in_domain("approver", "HIGH",
+                                     f"Matched approver keyword: {kw}")
+
+    # Step 3: Creator.
+    for kw in CREATOR_KEYWORDS:
+        if kw in text:
+            return _build_in_domain("creator", "HIGH",
+                                     f"Matched creator keyword: {kw}")
+
+    # Step 4: Reviewer (viewing tasks + logging hours).
+    for kw in REVIEWER_KEYWORDS:
+        if kw in text:
+            return _build_in_domain("reviewer", "HIGH",
+                                     f"Matched reviewer keyword: {kw}")
+
+    # Step 5: No keyword matched — out of domain.
+    return _build_out_of_domain(
+        "No RMS-related keyword matched. Treating as out-of-domain."
+    )
+```
+
+---
+
+## CONFIRMATIONS
+
+### Pydantic schema unchanged
+**CONFIRMED.** `RMSIntentClassification` class preserved with identical field names and types: `domain`, `collection`, `persona`, `confidence`, `reasoning`.
+
+### Persona values are lowercase
+**CONFIRMED.** Values are `"creator"`, `"reviewer"`, `"approver"` — all lowercase, matching what `permission_check_node` compares against.
+
+### Collection is always rms_timesheet for IN_DOMAIN
+**CONFIRMED.** `_build_in_domain` hardcodes `collection="rms_timesheet"`. `OUT_OF_DOMAIN` returns `collection=""`. `rms_projectplan` is never returned.
+
+### _repair_classifier_json removed
+**CONFIRMED.** The JSON repair helper (Task 5.3) has been deleted. Not needed — there's no LLM-generated JSON to parse.
+
+### _force_timesheet_collection removed
+**CONFIRMED.** The temporary override (Task 5.4) has been deleted. Not needed — the keyword classifier hardcodes `rms_timesheet` for all IN_DOMAIN results.
+
+### No other files touched
+**CONFIRMED.** Only `intent.py` was modified. `prompts.py` was left as-is (unused imports from intent.py were simply removed — no changes to prompts.py itself). `nodes.py`, `graph.py`, `state.py` are untouched. The function name `classify_rms_intent` and its signature `(user_message: str) -> RMSIntentClassification` are preserved.
+
+
+
+** we got some issues in mrr right i hope you solved them directly . or do you need any iterations
