@@ -1,14 +1,35 @@
-INFO:     10.5.1.58:61549 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=for emp 3010, project 100, product 10, task index 1, activity 1, from 2026-05-26
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='reviewer', collection='rms_timesheet'
-[DIAG-RMS] reviewer_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=for emp 3010, project 100, product 10, task index 1, activity 1, from 2026-05-26
-Embedding API Error: 401 Client Error: Unauthorized for url: https://llmapi.datapatterns.co.in/v1/embeddings. Falling back to mock embedding.
-[RAG] Retrieved 0 docs for query (collection: rms_timesheet, dept: EAG)
+═══════════════════════════════════════════════════════════════════
+TASK 6.1-FIX: Restore missing 'tool' import in rms nodes.py
+═══════════════════════════════════════════════════════════════════
 
-Hi! What can I help you with?
-for emp 3010, project 100, product 10, task index 1, activity 1, from 2026-05-26 to 2026-05-30, planned 8 hours
-V
-🤖
-⚠️ Connection failed. Server error: name 'tool' is not defined
+CRITICAL CONSTRAINT
+- Only touch app/workflows/rms_workflow/nodes.py
+- Only fix the import; do not change any function logic
+
+PROBLEM
+reviewer_agent_node (and possibly approver_agent_node) crash with
+"name 'tool' is not defined". The Task 6.1 cleanup removed the
+'tool' import that these nodes still use via @tool decorators.
+
+FIX
+At the top of nodes.py, ensure this import is present:
+    from langchain_core.tools import tool
+
+Verify nothing else was removed that reviewer_agent_node or
+approver_agent_node still references. Specifically check these are
+still imported (add back any that are missing):
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+    from langchain_core.tools import tool
+    from app.workflows.rms_workflow.config import get_llm  (or wherever get_llm comes from)
+    RAGController
+    extract_actions, strip_actions
+    Resource, Agent
+
+Read reviewer_agent_node and approver_agent_node, list every
+name they reference, and confirm each is imported. Restore any
+that Task 6.1 accidentally removed.
+
+DELIVERABLE
+Show the corrected import block. Confirm reviewer_agent_node and
+approver_agent_node have all their imports.
+═══════════════════════════════════════════════════════════════════
