@@ -1,16 +1,30 @@
-(ml_env_311) D:\dev\agentic_ai\dpah_backend_v1>cd /d "d:\dev\agentic_ai\dpah_backend_v1" && python -c "from app.workflows.rms_workflow.intent import classify_rms_intent; msgs = ['show my tasks', 'show my current tasks', 
-'log 8 hours today on task 1', 'fill timesheet', 'create a task for emp 3010', 'create task', 'show pending approvals', 'approve worklog 5', 'reject worklog 3', 'tell me a joke', 'what is the weather', 'approve all pending']; [print('%r: %s | %r | %r | %s' % (m[:40], classify_rms_intent(m).domain, classify_rms_intent(m).collection, classify_rms_intent(m).persona, classify_rms_intent(m).confidence)) for m in msgs]"
-C:\ml_env_311\Lib\site-packages\langgraph\cache\base\__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
-  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-'show my tasks': IN_DOMAIN | 'rms_timesheet' | 'reviewer' | HIGH
-'show my current tasks': IN_DOMAIN | 'rms_timesheet' | 'reviewer' | HIGH
-'log 8 hours today on task 1': OUT_OF_DOMAIN | '' | '' | HIGH
-'fill timesheet': IN_DOMAIN | 'rms_timesheet' | 'reviewer' | HIGH
-'create a task for emp 3010': IN_DOMAIN | 'rms_timesheet' | 'creator' | HIGH
-'create task': IN_DOMAIN | 'rms_timesheet' | 'creator' | HIGH
-'show pending approvals': IN_DOMAIN | 'rms_timesheet' | 'approver' | HIGH
-'approve worklog 5': IN_DOMAIN | 'rms_timesheet' | 'approver' | HIGH
-'reject worklog 3': IN_DOMAIN | 'rms_timesheet' | 'approver' | HIGH
-'tell me a joke': OUT_OF_DOMAIN | '' | '' | HIGH
-'what is the weather': OUT_OF_DOMAIN | '' | '' | HIGH
-'approve all pending': IN_DOMAIN | 'rms_timesheet' | 'approver' | HIGH
+═══════════════════════════════════════════════════════════════════
+TASK 5.9-FIX: Expand RMS reviewer keywords for hour-logging phrases
+═══════════════════════════════════════════════════════════════════
+
+CRITICAL CONSTRAINT
+- Only touch app/workflows/rms_workflow/intent.py
+- Only modify the REVIEWER_KEYWORDS list
+- Do NOT change any other logic
+
+CHANGE
+Add these entries to REVIEWER_KEYWORDS (keep all existing ones):
+    "log",
+    "hours",
+    "hrs",
+    "worked",
+    "time spent",
+    "spent",
+
+These catch phrasings like "log 8 hours today on task 1",
+"I spent 6 hrs", "worked 4 hours" where numbers/words sit between
+the keyword tokens.
+
+NOTE on ordering: REVIEWER is checked AFTER approver and creator, so
+adding broad terms like "hours" won't steal approver/creator messages
+(those are matched first). Verify this ordering is preserved.
+
+DELIVERABLE
+Show the updated REVIEWER_KEYWORDS list. Confirm ordering of checks
+(approver → creator → reviewer) is unchanged.
+═══════════════════════════════════════════════════════════════════
