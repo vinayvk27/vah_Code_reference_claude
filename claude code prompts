@@ -1,116 +1,51 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.2: RMS procedural reviewer (filler) — show tasks + log hours
-═══════════════════════════════════════════════════════════════════
-Convert reviewer_agent_node from LLM/<<ACTION>> to fully procedural,
-mirroring the procedural creator (Task 6.1).
+# TASK 6.2 REPORT: RMS Procedural Reviewer (Filler) — show tasks + log hours
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Modify ONLY app/workflows/rms_workflow/nodes.py (reviewer_agent_node
-  body + a new helper).
-- Do NOT modify creator_agent_node or approver_agent_node.
-- Do NOT modify intent.py, graph.py, state.py, controllers, routes.
-- No LLM, no bind_tools, no <<ACTION>>, no RAG, no streaming. Pure
-  Python + regex + DB via timesheet_store.
-- Output INTENDED FOOTPRINT at start, list modified files at end.
+## INTENDED FOOTPRINT
+- Modify **ONLY** `app/workflows/rms_workflow/nodes.py`
+- Add helper `_extract_worklog_fields` near `_extract_task_fields`
+- Replace entire body of `reviewer_agent_node` with procedural logic
+- No LLM, no bind_tools, no <<ACTION>>, no RAG, no streaming in reviewer
 
-───────────────────────────────────────────────────────────────────
-CONTEXT
-───────────────────────────────────────────────────────────────────
-Reviewer (FILLER) has two sub-actions, both scoped to the logged-in
-user's own emp_no:
-  1. VIEW tasks — list tasks assigned to the user.
-  2. LOG hours — insert a worklog against one of the user's tasks.
+## ACTUAL FOOTPRINT
+- **Modified files:**
+  - `app/workflows/rms_workflow/nodes.py` — added `_extract_worklog_fields` helper, rewrote `reviewer_agent_node`, removed unused `RAGController` import from top of reviewer path
 
-The reviewer node must decide the sub-action procedurally (no LLM):
-  - If the message contains hour-logging signals (the word "log",
-    or a number followed by hours/hrs/hr), treat as LOG HOURS.
-  - Otherwise treat as VIEW TASKS.
+- **No changes to:** creator_agent_node, approver_agent_node, intent.py, graph.py, state.py, controllers, routes, timesheet_store.py
 
-Scope is OWN ONLY: always use the logged-in emp_no as the resource.
-Ignore any other employee id in the message (reviewer cannot act for
-others). This matches current design.
+## CONFIRMATIONS
+- No LLM calls in reviewer_agent_node.
+- No bind_tools, no <<ACTION>> markers, no RAG, no streaming.
+- Pure Python + regex + DB via timesheet_store.
+- Only `nodes.py` modified.
 
-───────────────────────────────────────────────────────────────────
-SCOPE — helper: _extract_worklog_fields
-───────────────────────────────────────────────────────────────────
+## VERIFIED timesheet_store SIGNATURES
 
-Add a helper near _extract_task_fields:
+### list_tasks_for_resource(db, resource_id) -> List[Dict[str, Any]]
+```python
+def list_tasks_for_resource(db: Session, resource_id: int) -> List[Dict[str, Any]]:
+```
+Returns dicts with keys: `task_id`, `resource_id`, `project_id`, `product_id`, `task_idx`, `activity_idx`, `start_date`, `end_date`, `plan_hours`, `is_completed`, `created_by`, `created_date`, `task_name`
 
-def _extract_worklog_fields(message: str) -> dict:
-    """
-    Extract fields for logging hours from a user message via regex.
-    Returns dict with worklog_idx, hours, task_date, remarks, and errors.
-    """
-    import re
-    from datetime import datetime
+**Fields used in node:** `task_id`, `project_id`, `product_id`, `task_idx`, `activity_idx`, `start_date`, `end_date`, `plan_hours`
 
-    result = {
-        "worklog_idx": None,   # the task's WorkLogIdx to log against
-        "hours": None,
-        "task_date": None,
-        "remarks": None,
-        "errors": [],
-    }
+### add_worklog(db, worklog_idx, resource_id, task_date, hours, remarks) -> Dict[str, Any]
+```python
+def add_worklog(
+    db: Session,
+    worklog_idx: int,
+    resource_id: int,
+    task_date: str,
+    hours: float,
+    remarks: str
+) -> Dict[str, Any]:
+```
+Returns dict with keys: `worklog_id`, `task_id`, `resource_id`, `task_date`, `hours`, `is_approved`, `approved_by`, `remarks`, `date_of_entry`
 
-    # worklog_idx: "task 22", "worklogidx 22", "worklog 22"
-    m = re.search(r'(?:worklogidx|worklog|task)\s+(\d+)', message, re.IGNORECASE)
-    if m:
-        result["worklog_idx"] = int(m.group(1))
+**Field used in node:** `worklog_id` (returned as `result.get("worklog_id")`)
 
-    # hours: "8 hours", "8 hrs", "8 hr"
-    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:hours|hour|hrs|hr)\b', message, re.IGNORECASE)
-    if m:
-        result["hours"] = float(m.group(1))
+## FULL NEW reviewer_agent_node BODY
 
-    # task_date: a YYYY-MM-DD date
-    m = re.search(r'(\d{4}-\d{2}-\d{2})', message)
-    if m:
-        result["task_date"] = m.group(1)
-
-    # remarks: 'remark "X"' / 'remarks "X"' / 'remark X' / 'with remark X'
-    # Try quoted first, then unquoted to end of string.
-    rm = re.search(r'remarks?\s+["\u201c\u2018\']([^"\u201d\u2019\']+)["\u201d\u2019\']', message, re.IGNORECASE)
-    if rm:
-        result["remarks"] = rm.group(1).strip()
-    else:
-        rm2 = re.search(r'remarks?\s+(.+?)\s*$', message, re.IGNORECASE)
-        if rm2:
-            result["remarks"] = rm2.group(1).strip()
-
-    # ---- VALIDATION ----
-    if result["worklog_idx"] is None:
-        result["errors"].append("missing task id (e.g. 'task 22')")
-
-    if result["hours"] is None:
-        result["errors"].append("missing hours (e.g. '8 hours')")
-    elif result["hours"] <= 0:
-        result["errors"].append("hours must be positive")
-
-    if result["task_date"] is None:
-        result["errors"].append("missing date (e.g. '2026-05-26')")
-    else:
-        try:
-            parsed = datetime.strptime(result["task_date"], "%Y-%m-%d")
-            if parsed.month < 1 or parsed.month > 12:
-                raise ValueError
-        except ValueError:
-            result["errors"].append(
-                f"invalid date {result['task_date']} (use YYYY-MM-DD, month 01-12)"
-            )
-
-    if not result["remarks"]:
-        result["errors"].append("missing remark (e.g. 'remark \"design work\"')")
-
-    return result
-
-───────────────────────────────────────────────────────────────────
-SCOPE — rewrite reviewer_agent_node
-───────────────────────────────────────────────────────────────────
-
-Replace the entire body with procedural logic:
-
+```python
 async def reviewer_agent_node(state: RMSState) -> dict:
     """
     Node 3b: Reviewer (Filler) Agent — fully procedural (no LLM).
@@ -163,9 +98,6 @@ async def reviewer_agent_node(state: RMSState) -> dict:
         try:
             db = SessionLocal()
             try:
-                # Optional safety: verify the task belongs to this user.
-                # Fetch the task; if it exists and Resource matches, proceed.
-                # (If the store has no such check, we still log under the user's emp_no.)
                 result = timesheet_store.add_worklog(
                     db=db,
                     worklog_idx=fields["worklog_idx"],
@@ -226,30 +158,75 @@ async def reviewer_agent_node(state: RMSState) -> dict:
     execution_log.append(f"Reviewer: listed {len(tasks)} tasks for {current_emp_no}")
     print(f"[DIAG-RMS] reviewer_agent_node returning (listed tasks).", flush=True)
     return {"messages": [AIMessage(content=full_text)], "execution_log": execution_log}
+```
 
-───────────────────────────────────────────────────────────────────
-NOTES
-───────────────────────────────────────────────────────────────────
-- VERIFY these timesheet_store signatures by reading the file:
-    list_tasks_for_resource(db, resource_id) -> list[dict]
-      (each dict has task_id, project_id, product_id, task_idx,
-       activity_idx, start_date, end_date, plan_hours)
-    add_worklog(db, worklog_idx, resource_id, task_date, hours, remarks)
-      -> dict with "worklog_id"
-  Adjust field names in the response if the store uses different keys.
-- Do NOT modify timesheet_store.py.
-- Keep [DIAG-RMS] entry/return prints.
+## FULL NEW _extract_worklog_fields HELPER
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_6_2_REPORT.md with:
-- INTENDED/ACTUAL footprint.
-- Full new reviewer_agent_node + _extract_worklog_fields.
-- Confirmation: no LLM/bind_tools/<<ACTION>>/RAG in reviewer.
-- Confirmation: only nodes.py modified.
-- The verified timesheet_store signatures (list_tasks_for_resource,
-  add_worklog) and field names used.
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+```python
+def _extract_worklog_fields(message: str) -> dict:
+    """
+    Extract fields for logging hours from a user message via regex.
+    Returns dict with worklog_idx, hours, task_date, remarks, and errors.
+    """
+    import re
+    from datetime import datetime
+
+    result = {
+        "worklog_idx": None,
+        "hours": None,
+        "task_date": None,
+        "remarks": None,
+        "errors": [],
+    }
+
+    # worklog_idx: "task 22", "worklogidx 22", "worklog 22"
+    m = re.search(r'(?:worklogidx|worklog|task)\s+(\d+)', message, re.IGNORECASE)
+    if m:
+        result["worklog_idx"] = int(m.group(1))
+
+    # hours: "8 hours", "8 hrs", "8 hr"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:hours|hour|hrs|hr)\b', message, re.IGNORECASE)
+    if m:
+        result["hours"] = float(m.group(1))
+
+    # task_date: a YYYY-MM-DD date
+    m = re.search(r'(\d{4}-\d{2}-\d{2})', message)
+    if m:
+        result["task_date"] = m.group(1)
+
+    # remarks: 'remark "X"' / 'remarks "X"' / 'remark X' / 'with remark X'
+    rm = re.search(r'remarks?\s+["\u201c\u2018\']([^"\u201d\u2019\']+)["\u201d\u2019\']', message, re.IGNORECASE)
+    if rm:
+        result["remarks"] = rm.group(1).strip()
+    else:
+        rm2 = re.search(r'remarks?\s+(.+?)\s*$', message, re.IGNORECASE)
+        if rm2:
+            result["remarks"] = rm2.group(1).strip()
+
+    # ---- VALIDATION ----
+    if result["worklog_idx"] is None:
+        result["errors"].append("missing task id (e.g. 'task 22')")
+
+    if result["hours"] is None:
+        result["errors"].append("missing hours (e.g. '8 hours')")
+    elif result["hours"] <= 0:
+        result["errors"].append("hours must be positive")
+
+    if result["task_date"] is None:
+        result["errors"].append("missing date (e.g. '2026-05-26')")
+    else:
+        try:
+            parsed = datetime.strptime(result["task_date"], "%Y-%m-%d")
+            if parsed.month < 1 or parsed.month > 12:
+                raise ValueError
+        except ValueError:
+            result["errors"].append(
+                f"invalid date {result['task_date']} (use YYYY-MM-DD, month 01-12)"
+            )
+
+    if not result["remarks"]:
+        result["errors"].append("missing remark (e.g. 'remark \"design work\"')")
+
+    return result
+```
+
