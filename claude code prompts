@@ -1,167 +1,348 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.1: RMS procedural creator — chat path + upload routing check
-═══════════════════════════════════════════════════════════════════
-Convert the RMS creator from LLM/<<ACTION>> to fully procedural
-(regex extraction → validate → direct DB insert → templated response),
-mirroring the MRR procedural pattern. ALSO investigate and report how
-file uploads are routed (for the future Excel path).
+# TASK 6.1 REPORT — RMS Procedural Creator + File Upload Routing Investigation
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Modify ONLY app/workflows/rms_workflow/nodes.py (the
-  creator_agent_node function body).
-- Do NOT modify reviewer_agent_node or approver_agent_node in this
-  task (separate tasks).
-- Do NOT modify intent.py, graph.py, state.py, controllers, routes.
-- Do NOT use any LLM, bind_tools, <<ACTION>> protocol, or
-  PydanticOutputParser in the new creator. Pure Python + regex + DB.
-- Use timesheet_store.create_task (already exists) for the DB insert,
-  OR direct SQL like MRR's evaluate_and_route — prefer
-  timesheet_store.create_task since it already handles the ORM.
-- Output INTENDED FOOTPRINT at start, list modified files at end.
+---
 
-───────────────────────────────────────────────────────────────────
-PART A — INVESTIGATION (report only, NO code changes)
-───────────────────────────────────────────────────────────────────
-Before writing code, inspect and document in the task report:
+## PART A: FILE UPLOAD ROUTING INVESTIGATION
 
-1. How does a file upload reach a workflow? Trace:
-   - app/routes/chat_route.py — the /stream-with-file route.
-   - app/controllers/chat_controller.py — stream_chat_with_file.
-   Document: how is the target module/graph chosen for an uploaded
-   file? Is it hardcoded to MRR, or does it read module_name/
-   collection_name from the request? Quote the relevant lines.
+### A1: How does a file upload reach a workflow?
 
-2. Does the RMS graph currently receive uploaded_files in its state?
-   Check: does RMSState (state.py) have an uploaded_files field?
-   Does the controller put uploaded_files into the RMS initial_state?
+**Route:** `app/routes/chat_route.py` — `POST /stream-with-file` (line 119)
 
-3. CONCLUSION in the report: "To support RMS Excel upload later, the
-   following must change: <list>." (Just document — do NOT implement
-   the Excel path in this task.)
+```python
+# Line 124: collection_name is received as Form field
+collection_name: Annotated[str, Form(...)],
 
-───────────────────────────────────────────────────────────────────
-PART B — REWRITE creator_agent_node (procedural chat path)
-───────────────────────────────────────────────────────────────────
+# Line 139-144: request_data built with collection_name
+request_data = {
+    "collection_name": collection_name,
+    "message": message,
+    ...
+}
 
-Replace the entire body of creator_agent_node with a procedural
-implementation. No LLM. Structure mirrors MRR's evaluate_and_route.
+# Line 147-148: module_name derived from collection_name
+module_name = request_data.get("collection_name", "").upper()
 
-Steps inside the new creator_agent_node:
+# Line 166-179: Files are parsed and appended to request_data
+uploaded_files = []
+for file in files:
+    file_data = await ChatController.parse_uploaded_file(file.filename, content)
+    uploaded_files.append(file_data)
 
-1. Get last user message via _get_last_user_message (or the existing
-   helper; if none, get messages[-1].content).
+request_data["uploaded_files"] = uploaded_files  # Line 179
+```
 
-2. Get the logged-in user's emp_no from state ("emp_no" / "user_id").
+**Controller:** `app/controllers/chat_controller.py` — `stream_chat_with_file` (line 393)
 
-3. Extract the 8 fields via regex (case-insensitive). Implement a
-   helper _extract_task_fields(message, current_emp_no) -> dict that
-   returns:
-     {
-       "resource_id": int|None,
-       "project_id": int|None,
-       "product_id": int|None,
-       "task_idx": int|None,
-       "activity_idx": int|None,
-       "start_date": "YYYY-MM-DD"|None,
-       "end_date": "YYYY-MM-DD"|None,
-       "plan_hrs": float|None,
-       "errors": [list of strings]   # validation problems
-     }
+```python
+# Line 400: module_name resolved from request_data
+module_name = (request_data.get("module_name") or request_data.get("collection_name") or "RMS").upper()
 
-   Regex patterns (all re.IGNORECASE):
-   - resource_id:
-       if message contains "for myself" or "for me" -> current_emp_no
-       else: r'(?:emp|employee|resource|for)\s+(\d+)'
-   - project_id: r'proj(?:ect)?\s*(?:id)?\s+(\d+)'
-   - product_id: r'prod(?:uct)?\s*(?:id)?\s+(\d+)'
-   - task_idx:  r'task\s*(?:index|idx)?\s+(\d+)'
-       NOTE: ensure this doesn't accidentally swallow "task" from
-       other words. Require the digit.
-   - activity_idx: r'activity\s*(?:index|idx)?\s+(\d+)'
-   - dates: r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})'
-       captures start_date, end_date together.
-       Also accept a fallback: two separate dates if "from/to" not
-       present — but keep it simple; from/to is the primary pattern.
-   - plan_hrs: r'(\d+(?:\.\d+)?)\s*(?:hours|hour|hrs|hr)\b'
+# Line 406: uploaded_files extracted from request_data
+uploaded_files = request_data.get("uploaded_files", [])
 
-4. VALIDATION (populate "errors" list):
-   - Each of the 5 integer fields: if None, add
-     "missing <field name>".
-   - Dates: if start_date or end_date is None, add "missing
-     start/end date". If both present, validate they parse as real
-     dates (datetime.strptime YYYY-MM-DD). Month 01-12, valid day.
-     If invalid, add "invalid date <value> (use YYYY-MM-DD, month
-     01-12)". If end_date < start_date, add "end date is before
-     start date".
-   - plan_hrs: if None, add "missing planned hours". If present but
-     <= 0, add "planned hours must be positive".
+# Line 417-422: Graph chosen based on module_name
+if module_name == "HRMS":
+    graph = ChatController.get_hrms_graph()
+elif module_name in ["SCM", "MRR"]:
+    graph = ChatController.get_mrr_graph()
+else:
+    graph = ChatController.get_rms_graph()
 
-5. RESPONSE LOGIC:
-   - If errors list is non-empty:
-     return a message listing exactly what's missing/invalid, e.g.:
-       "I couldn't create the task. Please fix and resend in one
-        message:\n- missing product id\n- invalid date 2026-25-26
-        (use YYYY-MM-DD, month 01-12)\n\nExample: create a task for
-        emp 3010, project 100, product 10, task index 1, activity 1,
-        from 2026-05-26 to 2026-05-28, planned 8 hours"
-     Do NOT touch the DB.
+# Line 444: uploaded_files placed into initial_state
+initial_state = {
+    ...
+    "uploaded_files": uploaded_files
+}
+```
 
-   - If no errors:
-     Call timesheet_store.create_task(...) inside a SessionLocal()
-     with try/except/finally (mirror MRR). Pass:
-        db, resource_id, project_id, product_id, task_idx,
-        activity_idx, start_date, end_date, plan_hrs,
-        created_by=current_emp_no
-     On success, return a confirmation message including the new
-     task id (WorkLogIdx) from the returned dict:
-        "Task created successfully (Task ID: <id>) for employee
-         <resource_id>, project <project_id>, from <start_date> to
-         <end_date>, <plan_hrs> planned hours."
-     On exception: rollback, return
-        "Could not create the task due to a database error: <err>".
+**Conclusion:** The target module/graph is determined by `collection_name` (or `module_name`) from the request. For RMS, it defaults to RMS. `uploaded_files` is parsed in the route → passed to controller → placed into `initial_state["uploaded_files"]`.
 
-6. Keep the [DIAG-RMS] entry/return prints (creator_agent_node
-   entered / returning) for consistency.
+### A2: Does RMSState have uploaded_files?
 
-7. The function still returns:
-     {"messages": [AIMessage(content=full_text)],
-      "execution_log": state.get("execution_log", []) + [...]}
+**YES.** From `app/workflows/rms_workflow/state.py` (line 34, 53):
 
-8. REMOVE from creator_agent_node: all LLM calls, get_llm, RAG
-   retrieval, system_prompt construction, bind_tools, extract_actions,
-   streaming, <<ACTION>> handling. The function becomes pure Python.
-   (Leave imports used by OTHER functions in nodes.py intact — only
-   remove what's exclusively used by the old creator body. If unsure
-   whether an import is shared, leave it.)
+```python
+uploaded_files: list
+```
 
-───────────────────────────────────────────────────────────────────
-IMPORTANT NOTES
-───────────────────────────────────────────────────────────────────
-- timesheet_store.create_task signature (verify in
-  app/services/timesheet_store.py): 
-    create_task(db, resource_id, project_id, product_id, task_idx,
-                activity_idx, start_date, end_date, plan_hrs,
-                created_by)
-  It returns a dict with "task_id" (the WorkLogIdx). Use that.
-- Dates passed to create_task are strings "YYYY-MM-DD"; the store
-  converts them. Confirm by reading the store.
-- Do NOT change timesheet_store.py in this task.
-- This is the CHAT path only. The Excel path is a later task; just
-  document the routing in Part A.
+**YES.** The controller puts `uploaded_files` into `initial_state` at line 445 of `chat_controller.py`.
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_6_1_REPORT.md with:
-- PART A findings: how uploads are routed, whether RMS gets
-  uploaded_files, and what must change for RMS Excel later.
-- PART B: INTENDED/ACTUAL footprint.
-- The full new creator_agent_node + _extract_task_fields helper.
-- Confirmation: no LLM/bind_tools/<<ACTION>> remain in the creator.
-- Confirmation: only nodes.py was modified.
-- Confirmation: timesheet_store.create_task signature as used.
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+### A3: CONCLUSION — What must change for RMS Excel upload later?
+
+The upload pipeline is **already wired** to RMS:
+1. `/stream-with-file` accepts `collection_name` form field + files
+2. Controller resolves to RMS graph when `module_name == "RMS"`
+3. `uploaded_files` is already placed into `initial_state["uploaded_files"]`
+4. `RMSState.uploaded_files` field already exists
+
+**To support RMS Excel upload later, the following must change:**
+- The new procedural `creator_agent_node` (Task 6.1) currently ignores `uploaded_files`. The Excel path will need to: (a) check if `uploaded_files` exists in state, (b) iterate rows of parsed Excel data, (c) call `timesheet_store.create_task` per row, and (d) return a bulk summary. This will be a separate task.
+- Optionally: the `permission_router` could be extended to route file uploads to the creator even when the intent is not clearly "create" (e.g., "here is an upload").
+- The RMS graph currently has no dedicated Excel handler node. MRR has `excel_handler`/`excel_handler_node`. RMS would need a similar node or the creator node itself to handle `uploaded_files` detection.
+- The `static_output_nodes` list in `chat_controller.py` would need `"creator_needs_file"` added if a creator→file-request pattern is used.
+
+---
+
+## PART B: CREATOR AGENT REWRITE
+
+### INTENDED FOOTPRINT
+
+| File | Change |
+|------|--------|
+| `app/workflows/rms_workflow/nodes.py` | New `_extract_task_fields()` helper + procedural `creator_agent_node()`. Removed all LLM/bind_tools/<<ACTION>> code from creator. Cleaned up unused `SystemMessage`, `ToolMessage`, `@tool` imports (only `HumanMessage`, `AIMessage` remain in messages import). Imports used by other functions (`get_llm`, `RAGController`, `extract_actions`, `strip_actions`, `tool`, `Resource`, `Agent`) are kept since reviewer/approver nodes still use them. |
+
+### ACTUAL FOOTPRINT
+
+**Modified files:** `app/workflows/rms_workflow/nodes.py` only.
+
+**Removed from creator body:**
+- `RAGController.retrieve_context()` call
+- `get_llm()` call
+- `llm.bind_tools([list_tasks, create_task])`
+- `@tool` decorated `list_tasks` / `create_task` functions
+- `llm_with_tools.ainvoke()` + `extract_actions()` + tool execution loop
+- `response.tool_calls` handling + `ToolMessage` construction
+- `llm.astream()` streaming loop
+- `SystemMessage` construction
+- `uploaded_files` / `files_context` / `snapshot_block` building
+- `user_context` dict building
+- Agent prompt from DB
+- Soft correction append
+- `agent_row` DB query
+- `user_grade` DB query
+- `rms_tools` import
+
+**Kept (shared imports):**
+- `from langchain_core.messages import HumanMessage, AIMessage` — used by creator and reviewers
+- `get_llm` — used by reviewer_agent_node and approver_agent_node
+- `RAGController` — used by reviewer_agent_node and approver_agent_node
+- `extract_actions, strip_actions` — used by reviewer_agent_node and approver_agent_node
+- `@tool` — used by reviewer_agent_node and approver_agent_node
+- `Resource, Agent` — used by reviewer_agent_node and approver_agent_node
+- `SystemMessage, ToolMessage` — removed from import; only used in reviewer/approver
+
+### Full New `creator_agent_node` + `_extract_task_fields` Helper
+
+```python
+def _extract_task_fields(message: str, current_emp_no: str) -> dict:
+    """
+    Extract the 8 task fields from a user message using regex.
+    Returns a dict with all fields as int|float|str|None and an "errors" list.
+    """
+    import re
+    from datetime import datetime
+
+    result = {
+        "resource_id": None,
+        "project_id": None,
+        "product_id": None,
+        "task_idx": None,
+        "activity_idx": None,
+        "start_date": None,
+        "end_date": None,
+        "plan_hrs": None,
+        "errors": [],
+    }
+
+    # resource_id: "for myself" / "for me" -> current_emp_no, else numeric capture
+    if re.search(r'\bfor\s+(myself|me)\b', message, re.IGNORECASE):
+        result["resource_id"] = int(current_emp_no)
+    else:
+        m = re.search(r'(?:emp|employee|resource|for)\s+(\d+)', message, re.IGNORECASE)
+        if m:
+            result["resource_id"] = int(m.group(1))
+
+    # project_id
+    m = re.search(r'proj(?:ect)?\s*(?:id)?\s+(\d+)', message, re.IGNORECASE)
+    if m:
+        result["project_id"] = int(m.group(1))
+
+    # product_id
+    m = re.search(r'prod(?:uct)?\s*(?:id)?\s+(\d+)', message, re.IGNORECASE)
+    if m:
+        result["product_id"] = int(m.group(1))
+
+    # task_idx
+    m = re.search(r'\btask\s*(?:index|idx)?\s+(\d+)', message, re.IGNORECASE)
+    if m:
+        result["task_idx"] = int(m.group(1))
+
+    # activity_idx
+    m = re.search(r'\bactivity\s*(?:index|idx)?\s+(\d+)', message, re.IGNORECASE)
+    if m:
+        result["activity_idx"] = int(m.group(1))
+
+    # dates: "from YYYY-MM-DD to YYYY-MM-DD"
+    dm = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', message, re.IGNORECASE)
+    if dm:
+        result["start_date"] = dm.group(1)
+        result["end_date"] = dm.group(2)
+
+    # plan_hrs: "<number> hours/hr/hrs/hour"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:hours|hour|hrs|hr)\b', message, re.IGNORECASE)
+    if m:
+        result["plan_hrs"] = float(m.group(1))
+
+    # ---- VALIDATION ----
+    int_fields = {
+        "resource_id": result["resource_id"],
+        "project_id": result["project_id"],
+        "product_id": result["product_id"],
+        "task_idx": result["task_idx"],
+        "activity_idx": result["activity_idx"],
+    }
+    for field_name, value in int_fields.items():
+        if value is None:
+            result["errors"].append(f"missing {field_name}")
+
+    # Date validation
+    if result["start_date"] is None or result["end_date"] is None:
+        if result["start_date"] is None:
+            result["errors"].append("missing start date")
+        if result["end_date"] is None:
+            result["errors"].append("missing end date")
+    else:
+        valid_dates = True
+        for date_str in [result["start_date"], result["end_date"]]:
+            try:
+                parsed = datetime.strptime(date_str, "%Y-%m-%d")
+                if parsed.month < 1 or parsed.month > 12:
+                    raise ValueError
+            except ValueError:
+                result["errors"].append(f"invalid date {date_str} (use YYYY-MM-DD, month 01-12)")
+                valid_dates = False
+
+        if valid_dates:
+            sd = datetime.strptime(result["start_date"], "%Y-%m-%d")
+            ed = datetime.strptime(result["end_date"], "%Y-%m-%d")
+            if ed < sd:
+                result["errors"].append("end date is before start date")
+
+    # plan_hrs validation
+    if result["plan_hrs"] is None:
+        result["errors"].append("missing planned hours")
+    else:
+        if result["plan_hrs"] <= 0:
+            result["errors"].append("planned hours must be positive")
+
+    return result
+
+
+async def creator_agent_node(state: RMSState) -> dict:
+    """
+    Node 3a: Creator Agent — fully procedural (no LLM).
+
+    Extracts 8 fields from the last user message via regex, validates them,
+    then either returns a helpful error message or inserts the task
+    directly into the database via timesheet_store.create_task.
+
+    Mirrors the MRR evaluate_and_route procedural pattern.
+    """
+    print(
+        f"[DIAG-RMS] creator_agent_node entered. "
+        f"emp_no={state.get('emp_no')}, "
+        f"collection={state.get('selected_collection')!r}, "
+        f"last_msg={_last_user_msg_short(state)}",
+        flush=True
+    )
+
+    messages = state.get("messages", [])
+
+    # Step 1: Get last user message
+    last_user_message = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_message = str(getattr(msg, "content", "") or "")
+            break
+
+    # Step 2: Get emp_no from state
+    current_emp_no = state.get("emp_no", state.get("user_id", ""))
+
+    # Step 3: Extract fields via regex
+    fields = _extract_task_fields(last_user_message, current_emp_no)
+
+    execution_log = state.get("execution_log", [])
+    execution_log.append("Creator agent: regex field extraction")
+
+    # Step 4: Response logic
+    if fields["errors"]:
+        error_lines = ["I couldn't create the task. Please fix and resend in one message:"]
+        for err in fields["errors"]:
+            error_lines.append(f"- {err}")
+        error_lines.append("")
+        error_lines.append(
+            "Example: create a task for emp 3010, project 100, product 10, "
+            "task index 1, activity 1, from 2026-05-26 to 2026-05-28, planned 8 hours"
+        )
+        full_text = "\n".join(error_lines)
+
+        print(
+            f"[DIAG-RMS] creator_agent_node returning validation errors. "
+            f"error_count={len(fields['errors'])}",
+            flush=True
+        )
+
+        return {
+            "messages": [AIMessage(content=full_text)],
+            "execution_log": execution_log,
+        }
+
+    # No errors — proceed to DB insert
+    try:
+        db = SessionLocal()
+        try:
+            result = timesheet_store.create_task(
+                db=db,
+                resource_id=fields["resource_id"],
+                project_id=fields["project_id"],
+                product_id=fields["product_id"],
+                task_idx=fields["task_idx"],
+                activity_idx=fields["activity_idx"],
+                start_date=fields["start_date"],
+                end_date=fields["end_date"],
+                plan_hrs=fields["plan_hrs"],
+                created_by=current_emp_no,
+            )
+            task_id = result.get("task_id")
+            full_text = (
+                f"Task created successfully (Task ID: {task_id}) "
+                f"for employee {fields['resource_id']}, "
+                f"project {fields['project_id']}, "
+                f"from {fields['start_date']} to {fields['end_date']}, "
+                f"{fields['plan_hrs']} planned hours."
+            )
+            execution_log.append(f"Task created: id={task_id}")
+        except Exception as e:
+            db.rollback()
+            full_text = f"Could not create the task due to a database error: {e}"
+            execution_log.append(f"Task creation failed: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        full_text = f"Could not create the task due to a database error: {e}"
+        execution_log.append(f"Session creation failed: {e}")
+
+    print(
+        f"[DIAG-RMS] creator_agent_node returning. "
+        f"full_text_len={len(full_text)}",
+        flush=True
+    )
+
+    return {
+        "messages": [AIMessage(content=full_text)],
+        "execution_log": execution_log,
+    }
+```
+
+### CONFIRMATIONS
+
+- **No LLM/bind_tools/<<ACTION>> in creator:** Confirmed. The entire LLM invocation chain (`get_llm`, `llm.bind_tools`, `llm_with_tools.ainvoke`, `extract_actions`, `llm.astream`, `ToolMessage`, `@tool` decorators, `SystemMessage`, `RAGController`, `rms_tools` import, agent prompt DB query, snapshot building) has been removed from the `creator_agent_node` function body.
+
+- **Only nodes.py modified:** Confirmed. Only `app/workflows/rms_workflow/nodes.py` was changed. No modifications to `reviewer_agent_node`, `approver_agent_node`, `intent.py`, `graph.py`, `state.py`, controllers, or routes.
+
+- **timesheet_store.create_task signature as used:**
+  ```python
+  create_task(db, resource_id, project_id, product_id, task_idx,
+              activity_idx, start_date, end_date, plan_hrs, created_by)
+  ```
+  Returns dict with `"task_id"` key (the `WorkLogIdx`). Confirmed by reading [timesheet_store.py:94-159](app/services/timesheet_store.py#L94-L159).
