@@ -1,78 +1,120 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.0-C: Generate a consolidated management-ready report
-═══════════════════════════════════════════════════════════════════
-Enhance the multi-model diagnostic so it writes a clean, readable
-report file (Markdown) summarizing results — suitable for management,
-not raw terminal logs.
+import requests
+import configparser
+from typing import Any, List, Optional, Dict
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Only touch investigate_react_multimodel.py.
-- Do NOT modify app code.
-- The script still runs the tests, but ALSO collects structured
-  results and writes them to a Markdown file at the end.
+# THE CRITICAL FIX: Import LLM from the core package confirmed in your screenshots
+from langchain_core.language_models.llms import LLM
 
-───────────────────────────────────────────────────────────────────
-WHAT TO ADD
-───────────────────────────────────────────────────────────────────
+# Your existing imports
+from langchain_classic.agents.agent_types import AgentType 
+from langchain_classic.agents.initialize import initialize_agent 
+from langchain_core.tools import Tool
+from utils.logger_config import get_logger
 
-As the tests run, collect per-test structured data:
-- model name
-- test id + query
-- did it complete without crashing? (yes/no)
-- were tools actually invoked? (yes/no, count)
-- number of parse errors / retries observed
-- the FIRST malformed action the model emitted (captured raw), if any
-- final outcome (success / crash / completed-with-errors)
+logger = get_logger("ApproverAgent")
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-To detect parse errors and malformed actions, capture them via the
-callback handler and by inspecting the verbose log. Specifically,
-look for these signals in the raw LLM output or the executor's
-intermediate steps:
-- "is not a valid tool"
-- "produced both a final answer and a parse-able action"
-- "Invalid Format: Missing 'Action:'"
-- "Invalid Format: Missing 'Action Input:'"
-- Pydantic ValidationError during tool invocation
-- Action Input that is not valid JSON
+class EnterpriseLLM(LLM):
+    """Custom LangChain LLM wrapper for your specific API endpoint."""
+    
+    # Required for LangChain compatibility
+    @property
+    def _llm_type(self) -> str:
+        return "custom_enterprise_llm"
 
-Count how many of these occur per test.
+    def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
+        url = f"{config['API']['URL']}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {config['API']['KEY']}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": config['API']['MODEL'],
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0
+        }
 
-At the END of all tests, WRITE a file:
-    REACT_VIABILITY_REPORT.md
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            response.raise_for_status()
+            return response.json()['choices'][0]['message']['content']
+        except Exception as e:
+            logger.error(f"LLM Connection Error: {e}")
+            return "ERROR: Connection failed."
 
-The report must contain these sections:
+    @property
+    def _identifying_params(self) -> Dict[str, Any]:
+        return {"model_name": config['API']['MODEL']}
+class ApproverAgent:
+    def __init__(self):
+        self.llm = EnterpriseLLM()
 
-# ReAct Agent Viability Report
-**Generated:** <timestamp>
-**Purpose:** Determine whether available LLMs can reliably drive
-structured tool-calling (LangChain ReAct agent pattern), using
-identical code, tools, and prompts — varying ONLY the model.
+    def get_decision(self, item, amount):
+        limit = config['BUSINESS_RULES']['MAX_APPROVAL_LIMIT']
+        # Professional LangChain Prompting
+        prompt = f"""
+        You are a SCM Approval Agent. 
+        Analyze the following Purchase Requisition:
+        - ITEM: {item}
+        - AMOUNT: {amount}
+        - APPROVAL LIMIT: {limit}
+        
+        If AMOUNT <= {limit}, suggest APPROVED.
+        Otherwise, suggest REJECTED.
+        
+        Format: DECISION: [STATUS] | REASON: [EXPLANATION]
+        """
+        return self.llm.invoke(prompt)
+    
+    def get_react_agent(self, df):
+        """Creates a ReAct agent with strict output constraints."""
+        
+        def validate_and_approve_tool(input_text):
+            from agents.reviewer_agent import ReviewerAgent
+            result = ReviewerAgent.validate(df)
+            if result["status"] == "FAIL":
+                return f"STOP. Validation FAILED: {result['reason']}"
+            
+            # Perform the approval loop
+            final_summaries = []
+            for _, row in df.iterrows():
+                decision = self.get_decision(row['ITEM'], row['AMOUNT'])
+                final_summaries.append(f"PRQ {row['PRQ_NO']}: {decision}")
+            
+            return "Observation: SUCCESS. Processing complete. Decisions: " + " | ".join(final_summaries)
 
-## Executive Summary
-A short paragraph stating the overall finding: which models could
-reliably invoke tools and which could not. Plain language for
-non-technical readers.
+        tools = [
+            Tool(
+                name="PRQ_Process_Chain",
+                func=validate_and_approve_tool,
+                # WE TELL THE AGENT THE DATA IS ALREADY THERE:
+                description="Use this tool to process the PRQs currently loaded in the system. Input can be any string (e.g., 'start'), as the tool handles the internal data."
+            )
+        ]
 
-## Test Setup
-- Brief description: 4 standard tasks (list all, list filtered,
-  create, create-then-list) run against each model.
-- Same fake tools, same prompt, same framework.
-- Only the model identifier changes between runs.
+        # STRICT PROMPTING: We separate the instructions to prevent the double-output error.
+        prefix = """You are a strict SCM Assistant.
+        You MUST follow this format:
+        1. Thought: Consider the request.
+        2. Action: Use the PRQ_Process_Chain tool.
+        3. Observation: Wait for the tool output.
+        4. Final Answer: Summarize the Observation results.
+        
+        DO NOT provide a Final Answer until you have used a tool."""
 
-## Results Summary Table
+        suffix = """Begin!
+        Question: {input}
+        Thought: {agent_scratchpad}"""
 
-| Model | Tests Completed | Tools Actually Invoked | Parse Errors | Verdict |
-|-------|----------------|------------------------|--------------|---------|
-| <model> | 2/4 | 2/4 | 7 | UNRELIABLE |
-| ...   | ... | ... | ... | ... |
-
-## Per-Model Detail
-For each model, a subsection:
-### <model name>
-- Verdict: RELIABLE / PARTIALLY RELIABLE / UNRELIABLE
-- Tests completed without crash: X/4
-- Tests where the tool was actually executed: X/4
-- Total parse errors / retries: N
-- Example of malformed output (if any):
+        return initialize_agent(
+            tools=tools,
+            llm=self.llm,
+            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            verbose=True,
+            handle_parsing_errors=True,
+            agent_kwargs={
+                'prefix': prefix,
+                'suffix': suffix
+            }
+        )
