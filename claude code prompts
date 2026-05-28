@@ -1,28 +1,203 @@
 ═══════════════════════════════════════════════════════════════════
-TASK 6.2-FIX: Add RMS reviewer to static_output_nodes
+TASK 6.3: RMS procedural approver — list pending + approve/reject
 ═══════════════════════════════════════════════════════════════════
+Convert approver_agent_node from LLM/<<ACTION>> to fully procedural,
+mirroring MRR's approver_agent_node and the RMS procedural creator/
+reviewer.
 
+───────────────────────────────────────────────────────────────────
 CRITICAL CONSTRAINT
-- Only touch app/controllers/chat_controller.py
-- Only add node names to the existing static_output_nodes list(s)
-- Do NOT change other logic
+───────────────────────────────────────────────────────────────────
+- Modify ONLY app/workflows/rms_workflow/nodes.py (approver_agent_node
+  body + a small command-parse helper if needed).
+- Do NOT modify creator_agent_node or reviewer_agent_node.
+- Do NOT modify intent.py, graph.py, state.py, controllers, routes,
+  timesheet_store.py.
+- No LLM, no bind_tools, no <<ACTION>>, no RAG, no streaming.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
+───────────────────────────────────────────────────────────────────
 CONTEXT
-reviewer_agent_node is now procedural (no LLM streaming). Like the
-creator, its output won't appear in the UI unless its node name is
-in static_output_nodes.
+───────────────────────────────────────────────────────────────────
+Approver has two sub-actions:
+  1. LIST pending worklogs (worklogs with IsApproved = NULL).
+  2. APPROVE or REJECT a specific worklog by its worklog id (the Idx
+     in pp_worklogs_demo).
 
-CHANGE
-In BOTH static_output_nodes lists (stream_chat_with_orchestrator and
-stream_chat_with_file), add:
-    "reviewer_agent",
-    "reviewer_agent_node",
-near the creator entries, with comment "# RMS procedural reviewer".
+Decide sub-action procedurally:
+  - If the message matches an approve/reject command (verb + id),
+    perform the approve/reject.
+  - Otherwise, show the pending list.
 
-Verify the exact node name from rms_workflow/graph.py add_node call
-for the reviewer and use that exact string (add both variants to be
-safe).
+Scope note (current design): approver sees ALL pending worklogs
+(no reportee filtering yet — deferred, same as before).
 
+───────────────────────────────────────────────────────────────────
+SCOPE — helper: _parse_worklog_approval_command
+───────────────────────────────────────────────────────────────────
+
+Add a helper (near the other RMS helpers). Note: do NOT reuse MRR's
+_parse_approval_command — keep RMS self-contained.
+
+def _parse_worklog_approval_command(message: str) -> dict:
+    """
+    Parse an approve/reject command for a worklog.
+    Returns {'action': 'approve'|'reject'|'list', 'worklog_id': int|None}.
+    """
+    import re
+    msg = (message or "").lower().strip()
+
+    # "approve worklog 5", "approve 5", "reject worklog 3", "reject 3"
+    m = re.search(r'\b(approve|reject)\b(?:\s+worklog)?\s+(\d+)', msg)
+    if m:
+        verb = m.group(1)
+        wl_id = int(m.group(2))
+        return {"action": verb, "worklog_id": wl_id}
+
+    return {"action": "list", "worklog_id": None}
+
+Note: bare "approve" / "reject" with NO id falls through to "list"
+(we will NOT guess a worklog). If the user typed an approve/reject
+verb but no id, we should tell them to specify one — handle that
+explicitly (see node logic).
+
+───────────────────────────────────────────────────────────────────
+SCOPE — rewrite approver_agent_node
+───────────────────────────────────────────────────────────────────
+
+async def approver_agent_node(state: RMSState) -> dict:
+    """
+    Node 3c: Approver Agent — fully procedural (no LLM).
+    Lists pending worklogs, or approves/rejects a worklog by id.
+    """
+    print(
+        f"[DIAG-RMS] approver_agent_node entered. emp_no={state.get('emp_no')}, "
+        f"collection={state.get('selected_collection')!r}, "
+        f"last_msg={_last_user_msg_short(state)}",
+        flush=True
+    )
+
+    messages = state.get("messages", [])
+    last_user_message = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_message = str(getattr(msg, "content", "") or "")
+            break
+
+    current_emp_no = state.get("emp_no", state.get("user_id", ""))
+    execution_log = state.get("execution_log", [])
+
+    cmd = _parse_worklog_approval_command(last_user_message)
+
+    # Detect "approve/reject" verb with no id -> ask for id
+    import re
+    has_verb = bool(re.search(r'\b(approve|reject)\b', last_user_message, re.IGNORECASE))
+    if cmd["action"] == "list" and has_verb:
+        return {
+            "messages": [AIMessage(content=(
+                "Which worklog would you like to approve or reject? "
+                "Please specify the worklog id, e.g. 'approve worklog 5'."
+            ))],
+            "execution_log": execution_log + ["Approver: verb without id."]
+        }
+
+    # -------- APPROVE / REJECT PATH --------
+    if cmd["action"] in ("approve", "reject"):
+        wl_id = cmd["worklog_id"]
+        decision = "APPROVED" if cmd["action"] == "approve" else "REJECTED"
+        try:
+            db = SessionLocal()
+            try:
+                # Use the existing store function.
+                result = timesheet_store.approve_worklog(
+                    db=db,
+                    worklog_log_idx=wl_id,
+                    approver_id=int(current_emp_no),
+                    decision=decision,
+                    remarks="",  # approver remark optional for now
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    full_text = f"Could not {cmd['action']} worklog {wl_id}: {result['error']}"
+                    execution_log.append(f"Approver: {result['error']}")
+                else:
+                    full_text = (
+                        f"Worklog {wl_id} has been {decision.lower()}."
+                    )
+                    execution_log.append(f"Approver: worklog {wl_id} {decision}.")
+            except Exception as e:
+                db.rollback()
+                full_text = f"Could not {cmd['action']} worklog {wl_id} due to a database error: {e}"
+                execution_log.append(f"Approver: exception {e}")
+            finally:
+                db.close()
+        except Exception as e:
+            full_text = f"Database error: {e}"
+            execution_log.append(f"Approver: session error {e}")
+
+        print(f"[DIAG-RMS] approver_agent_node returning (decision).", flush=True)
+        return {"messages": [AIMessage(content=full_text)], "execution_log": execution_log}
+
+    # -------- LIST PENDING PATH --------
+    try:
+        db = SessionLocal()
+        try:
+            # is_approved=None means PENDING (IsApproved IS NULL)
+            pending = timesheet_store.list_worklogs(db, resource_id=None, is_approved="PENDING")
+        finally:
+            db.close()
+    except Exception as e:
+        return {
+            "messages": [AIMessage(content=f"Could not fetch pending worklogs due to a database error: {e}")],
+            "execution_log": execution_log + [f"Approver: list error {e}"]
+        }
+
+    if not pending:
+        full_text = "There are no worklogs pending your approval at this time."
+    else:
+        lines = ["### Worklogs Pending Approval", ""]
+        lines.append("| Worklog ID | Task ID | Employee | Date | Hours | Remark |")
+        lines.append("|---|---|---|---|---|---|")
+        for w in pending:
+            lines.append(
+                f"| {w.get('worklog_id')} | {w.get('task_id')} | {w.get('resource_id')} "
+                f"| {w.get('task_date')} | {w.get('hours')} | {w.get('remarks')} |"
+            )
+        lines.append("")
+        lines.append("To approve: approve worklog <Worklog ID>    |    To reject: reject worklog <Worklog ID>")
+        full_text = "\n".join(lines)
+
+    execution_log.append(f"Approver: listed {len(pending)} pending worklogs.")
+    print(f"[DIAG-RMS] approver_agent_node returning (list).", flush=True)
+    return {"messages": [AIMessage(content=full_text)], "execution_log": execution_log}
+
+───────────────────────────────────────────────────────────────────
+NOTES
+───────────────────────────────────────────────────────────────────
+- VERIFY timesheet_store signatures by reading the file:
+    list_worklogs(db, resource_id=None, is_approved="PENDING") -> list[dict]
+      (dicts have worklog_id, task_id, resource_id, task_date, hours,
+       remarks, is_approved, approved_by ...)
+    approve_worklog(db, worklog_log_idx, approver_id, decision, remarks)
+      -> dict (may contain "error" key on failure)
+  Adjust field names in the response to match the store's actual keys.
+- Do NOT modify timesheet_store.py.
+- Keep [DIAG-RMS] entry/return prints.
+
+───────────────────────────────────────────────────────────────────
 DELIVERABLE
-Show the reviewer node name from graph.py and the updated list(s).
+───────────────────────────────────────────────────────────────────
+CREATE TASK_6_3_REPORT.md with:
+- INTENDED/ACTUAL footprint.
+- Full new approver_agent_node + _parse_worklog_approval_command.
+- Confirmation: no LLM/bind_tools/<<ACTION>>/RAG remain anywhere in
+  nodes.py now (all three personas procedural).
+- Confirmation: only nodes.py modified.
+- Verified timesheet_store signatures (list_worklogs, approve_worklog)
+  and field names used.
+- A note on whether get_llm / RAGController / extract_actions /
+  strip_actions / tool / SystemMessage / ToolMessage imports are now
+  UNUSED in nodes.py (since all three personas are procedural). If
+  unused, list them but do NOT remove yet (separate cleanup task).
+═══════════════════════════════════════════════════════════════════
+END
 ═══════════════════════════════════════════════════════════════════
