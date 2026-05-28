@@ -1,59 +1,78 @@
 ═══════════════════════════════════════════════════════════════════
-TASK 6.0-B-FIX: Correct build_llm_for_model credential handling
+TASK 6.0-C: Generate a consolidated management-ready report
 ═══════════════════════════════════════════════════════════════════
+Enhance the multi-model diagnostic so it writes a clean, readable
+report file (Markdown) summarizing results — suitable for management,
+not raw terminal logs.
 
+───────────────────────────────────────────────────────────────────
 CRITICAL CONSTRAINT
-- Only touch investigate_react_multimodel.py
-- Do NOT modify app code
+───────────────────────────────────────────────────────────────────
+- Only touch investigate_react_multimodel.py.
+- Do NOT modify app code.
+- The script still runs the tests, but ALSO collects structured
+  results and writes them to a Markdown file at the end.
 
-CONTEXT
-build_llm_for_model is passing api_key=False, causing a ValidationError.
-The app constructs its LLM as:
-    from app.core.config import settings
-    ChatOpenAI(
-        model=settings.AI_MODEL,
-        base_url=settings.AI_API_URL,
-        api_key=settings.AI_API_KEY,
-        streaming=True,
-    )
+───────────────────────────────────────────────────────────────────
+WHAT TO ADD
+───────────────────────────────────────────────────────────────────
 
-FIX
-Rewrite build_llm_for_model and MODEL_OVERRIDES so that:
-- By default, it uses settings.AI_API_URL and settings.AI_API_KEY
-  from app.core.config (same as the app).
-- Only the MODEL NAME changes per entry in MODELS_TO_TEST.
-- MODEL_OVERRIDES is optional: if an entry provides base_url/api_key,
-  use those (for testing an external paid model); otherwise fall back
-  to settings defaults.
+As the tests run, collect per-test structured data:
+- model name
+- test id + query
+- did it complete without crashing? (yes/no)
+- were tools actually invoked? (yes/no, count)
+- number of parse errors / retries observed
+- the FIRST malformed action the model emitted (captured raw), if any
+- final outcome (success / crash / completed-with-errors)
 
-Implementation:
+To detect parse errors and malformed actions, capture them via the
+callback handler and by inspecting the verbose log. Specifically,
+look for these signals in the raw LLM output or the executor's
+intermediate steps:
+- "is not a valid tool"
+- "produced both a final answer and a parse-able action"
+- "Invalid Format: Missing 'Action:'"
+- "Invalid Format: Missing 'Action Input:'"
+- Pydantic ValidationError during tool invocation
+- Action Input that is not valid JSON
 
-from app.core.config import settings
-from langchain_openai import ChatOpenAI
+Count how many of these occur per test.
 
-MODEL_OVERRIDES = {
-    # "external-model-name": {
-    #     "base_url": "https://api.anthropic-or-other.com/v1",
-    #     "api_key": "sk-...",
-    # },
-}
+At the END of all tests, WRITE a file:
+    REACT_VIABILITY_REPORT.md
 
-def build_llm_for_model(model_name: str):
-    override = MODEL_OVERRIDES.get(model_name, {})
-    base_url = override.get("base_url", settings.AI_API_URL)
-    api_key = override.get("api_key", settings.AI_API_KEY)
-    return ChatOpenAI(
-        model=model_name,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=0,
-    )
+The report must contain these sections:
 
-Note: do NOT set streaming=True here (the agent executor doesn't need
-it and it can complicate the callback capture). temperature=0 for
-deterministic testing.
+# ReAct Agent Viability Report
+**Generated:** <timestamp>
+**Purpose:** Determine whether available LLMs can reliably drive
+structured tool-calling (LangChain ReAct agent pattern), using
+identical code, tools, and prompts — varying ONLY the model.
 
-DELIVERABLE
-Show the corrected build_llm_for_model and MODEL_OVERRIDES. Confirm
-it reads settings.AI_API_KEY by default.
-═══════════════════════════════════════════════════════════════════
+## Executive Summary
+A short paragraph stating the overall finding: which models could
+reliably invoke tools and which could not. Plain language for
+non-technical readers.
+
+## Test Setup
+- Brief description: 4 standard tasks (list all, list filtered,
+  create, create-then-list) run against each model.
+- Same fake tools, same prompt, same framework.
+- Only the model identifier changes between runs.
+
+## Results Summary Table
+
+| Model | Tests Completed | Tools Actually Invoked | Parse Errors | Verdict |
+|-------|----------------|------------------------|--------------|---------|
+| <model> | 2/4 | 2/4 | 7 | UNRELIABLE |
+| ...   | ... | ... | ... | ... |
+
+## Per-Model Detail
+For each model, a subsection:
+### <model name>
+- Verdict: RELIABLE / PARTIALLY RELIABLE / UNRELIABLE
+- Tests completed without crash: X/4
+- Tests where the tool was actually executed: X/4
+- Total parse errors / retries: N
+- Example of malformed output (if any):
