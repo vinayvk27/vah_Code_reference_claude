@@ -1,40 +1,255 @@
 ═══════════════════════════════════════════════════════════════════
-TASK 6.1-FIX2: Add RMS creator to static_output_nodes
+TASK 6.2: RMS procedural reviewer (filler) — show tasks + log hours
 ═══════════════════════════════════════════════════════════════════
+Convert reviewer_agent_node from LLM/<<ACTION>> to fully procedural,
+mirroring the procedural creator (Task 6.1).
 
+───────────────────────────────────────────────────────────────────
 CRITICAL CONSTRAINT
-- Only touch app/controllers/chat_controller.py
-- Only add node names to the existing static_output_nodes list
-- Do NOT change any other logic
+───────────────────────────────────────────────────────────────────
+- Modify ONLY app/workflows/rms_workflow/nodes.py (reviewer_agent_node
+  body + a new helper).
+- Do NOT modify creator_agent_node or approver_agent_node.
+- Do NOT modify intent.py, graph.py, state.py, controllers, routes.
+- No LLM, no bind_tools, no <<ACTION>>, no RAG, no streaming. Pure
+  Python + regex + DB via timesheet_store.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
+───────────────────────────────────────────────────────────────────
 CONTEXT
-The RMS creator_agent_node is now procedural (no LLM streaming). It
-returns its message via the node return value. But the controller
-only surfaces non-streaming node output for nodes listed in
-static_output_nodes. The RMS creator isn't listed, so its output is
-invisible in the UI even though the DB insert succeeds.
+───────────────────────────────────────────────────────────────────
+Reviewer (FILLER) has two sub-actions, both scoped to the logged-in
+user's own emp_no:
+  1. VIEW tasks — list tasks assigned to the user.
+  2. LOG hours — insert a worklog against one of the user's tasks.
 
-There are TWO static_output_nodes lists in chat_controller.py — one
-in stream_chat_with_orchestrator and one in stream_chat_with_file.
-Update BOTH (or whichever the RMS /stream path uses — to be safe,
-update both).
+The reviewer node must decide the sub-action procedurally (no LLM):
+  - If the message contains hour-logging signals (the word "log",
+    or a number followed by hours/hrs/hr), treat as LOG HOURS.
+  - Otherwise treat as VIEW TASKS.
 
-CHANGE
-Add these entries to the static_output_nodes list(s):
-    "creator_agent",
-    "creator_agent_node",
+Scope is OWN ONLY: always use the logged-in emp_no as the resource.
+Ignore any other employee id in the message (reviewer cannot act for
+others). This matches current design.
 
-Place them near the existing RMS-related or permission_blocked
-entries. Add a comment: "# RMS procedural creator (no LLM streaming)".
+───────────────────────────────────────────────────────────────────
+SCOPE — helper: _extract_worklog_fields
+───────────────────────────────────────────────────────────────────
 
-IMPORTANT: Verify the exact node NAME used when the RMS creator is
-registered in rms_workflow/graph.py. Open graph.py, find
-add_node(...) for the creator, and use that EXACT string. If it's
-registered as "creator_agent", add "creator_agent". If
-"creator_agent_node", add that. Add both to be safe.
+Add a helper near _extract_task_fields:
 
+def _extract_worklog_fields(message: str) -> dict:
+    """
+    Extract fields for logging hours from a user message via regex.
+    Returns dict with worklog_idx, hours, task_date, remarks, and errors.
+    """
+    import re
+    from datetime import datetime
+
+    result = {
+        "worklog_idx": None,   # the task's WorkLogIdx to log against
+        "hours": None,
+        "task_date": None,
+        "remarks": None,
+        "errors": [],
+    }
+
+    # worklog_idx: "task 22", "worklogidx 22", "worklog 22"
+    m = re.search(r'(?:worklogidx|worklog|task)\s+(\d+)', message, re.IGNORECASE)
+    if m:
+        result["worklog_idx"] = int(m.group(1))
+
+    # hours: "8 hours", "8 hrs", "8 hr"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:hours|hour|hrs|hr)\b', message, re.IGNORECASE)
+    if m:
+        result["hours"] = float(m.group(1))
+
+    # task_date: a YYYY-MM-DD date
+    m = re.search(r'(\d{4}-\d{2}-\d{2})', message)
+    if m:
+        result["task_date"] = m.group(1)
+
+    # remarks: 'remark "X"' / 'remarks "X"' / 'remark X' / 'with remark X'
+    # Try quoted first, then unquoted to end of string.
+    rm = re.search(r'remarks?\s+["\u201c\u2018\']([^"\u201d\u2019\']+)["\u201d\u2019\']', message, re.IGNORECASE)
+    if rm:
+        result["remarks"] = rm.group(1).strip()
+    else:
+        rm2 = re.search(r'remarks?\s+(.+?)\s*$', message, re.IGNORECASE)
+        if rm2:
+            result["remarks"] = rm2.group(1).strip()
+
+    # ---- VALIDATION ----
+    if result["worklog_idx"] is None:
+        result["errors"].append("missing task id (e.g. 'task 22')")
+
+    if result["hours"] is None:
+        result["errors"].append("missing hours (e.g. '8 hours')")
+    elif result["hours"] <= 0:
+        result["errors"].append("hours must be positive")
+
+    if result["task_date"] is None:
+        result["errors"].append("missing date (e.g. '2026-05-26')")
+    else:
+        try:
+            parsed = datetime.strptime(result["task_date"], "%Y-%m-%d")
+            if parsed.month < 1 or parsed.month > 12:
+                raise ValueError
+        except ValueError:
+            result["errors"].append(
+                f"invalid date {result['task_date']} (use YYYY-MM-DD, month 01-12)"
+            )
+
+    if not result["remarks"]:
+        result["errors"].append("missing remark (e.g. 'remark \"design work\"')")
+
+    return result
+
+───────────────────────────────────────────────────────────────────
+SCOPE — rewrite reviewer_agent_node
+───────────────────────────────────────────────────────────────────
+
+Replace the entire body with procedural logic:
+
+async def reviewer_agent_node(state: RMSState) -> dict:
+    """
+    Node 3b: Reviewer (Filler) Agent — fully procedural (no LLM).
+    Two sub-actions, both scoped to the logged-in user's emp_no:
+      - VIEW tasks (default)
+      - LOG hours (when message has hour-logging signals)
+    """
+    print(
+        f"[DIAG-RMS] reviewer_agent_node entered. emp_no={state.get('emp_no')}, "
+        f"collection={state.get('selected_collection')!r}, "
+        f"last_msg={_last_user_msg_short(state)}",
+        flush=True
+    )
+
+    messages = state.get("messages", [])
+    last_user_message = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_message = str(getattr(msg, "content", "") or "")
+            break
+
+    current_emp_no = state.get("emp_no", state.get("user_id", ""))
+    execution_log = state.get("execution_log", [])
+
+    # Decide sub-action: LOG HOURS vs VIEW TASKS
+    import re
+    is_log = bool(
+        re.search(r'\blog\b', last_user_message, re.IGNORECASE)
+        or re.search(r'\d+(?:\.\d+)?\s*(?:hours|hour|hrs|hr)\b', last_user_message, re.IGNORECASE)
+        or re.search(r'\bfill\b', last_user_message, re.IGNORECASE)
+    )
+
+    # -------- LOG HOURS PATH --------
+    if is_log:
+        fields = _extract_worklog_fields(last_user_message)
+        if fields["errors"]:
+            lines = ["I couldn't log the hours. Please fix and resend in one message:"]
+            for err in fields["errors"]:
+                lines.append(f"- {err}")
+            lines.append("")
+            lines.append(
+                'Example: log 8 hours on task 22 for 2026-05-26 with remark "design work"'
+            )
+            full_text = "\n".join(lines)
+            execution_log.append("Reviewer: log-hours validation errors")
+            print(f"[DIAG-RMS] reviewer_agent_node returning (log validation errors).", flush=True)
+            return {"messages": [AIMessage(content=full_text)], "execution_log": execution_log}
+
+        # Insert worklog via timesheet_store.add_worklog
+        try:
+            db = SessionLocal()
+            try:
+                # Optional safety: verify the task belongs to this user.
+                # Fetch the task; if it exists and Resource matches, proceed.
+                # (If the store has no such check, we still log under the user's emp_no.)
+                result = timesheet_store.add_worklog(
+                    db=db,
+                    worklog_idx=fields["worklog_idx"],
+                    resource_id=int(current_emp_no),
+                    task_date=fields["task_date"],
+                    hours=fields["hours"],
+                    remarks=fields["remarks"],
+                )
+                wl_id = result.get("worklog_id")
+                full_text = (
+                    f"Logged {fields['hours']} hours against task {fields['worklog_idx']} "
+                    f"on {fields['task_date']} (Worklog ID: {wl_id}). "
+                    f"Status: PENDING approval."
+                )
+                execution_log.append(f"Reviewer: worklog created id={wl_id}")
+            except Exception as e:
+                db.rollback()
+                full_text = f"Could not log hours due to a database error: {e}"
+                execution_log.append(f"Reviewer: worklog insert failed: {e}")
+            finally:
+                db.close()
+        except Exception as e:
+            full_text = f"Could not log hours due to a database error: {e}"
+            execution_log.append(f"Reviewer: session error: {e}")
+
+        print(f"[DIAG-RMS] reviewer_agent_node returning (logged hours).", flush=True)
+        return {"messages": [AIMessage(content=full_text)], "execution_log": execution_log}
+
+    # -------- VIEW TASKS PATH --------
+    try:
+        db = SessionLocal()
+        try:
+            tasks = timesheet_store.list_tasks_for_resource(db, int(current_emp_no))
+        finally:
+            db.close()
+    except Exception as e:
+        return {
+            "messages": [AIMessage(content=f"Could not fetch your tasks due to a database error: {e}")],
+            "execution_log": execution_log + [f"Reviewer: list error {e}"],
+        }
+
+    if not tasks:
+        full_text = "You have no tasks assigned at the moment."
+    else:
+        lines = ["### Your Assigned Tasks", ""]
+        lines.append("| Task ID | Project | Product | Task Idx | Activity | Start | End | Planned Hrs |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for t in tasks:
+            lines.append(
+                f"| {t.get('task_id')} | {t.get('project_id')} | {t.get('product_id')} "
+                f"| {t.get('task_idx')} | {t.get('activity_idx')} | {t.get('start_date')} "
+                f"| {t.get('end_date')} | {t.get('plan_hours')} |"
+            )
+        lines.append("")
+        lines.append('To log hours: log 8 hours on task <Task ID> for <YYYY-MM-DD> with remark "your note"')
+        full_text = "\n".join(lines)
+
+    execution_log.append(f"Reviewer: listed {len(tasks)} tasks for {current_emp_no}")
+    print(f"[DIAG-RMS] reviewer_agent_node returning (listed tasks).", flush=True)
+    return {"messages": [AIMessage(content=full_text)], "execution_log": execution_log}
+
+───────────────────────────────────────────────────────────────────
+NOTES
+───────────────────────────────────────────────────────────────────
+- VERIFY these timesheet_store signatures by reading the file:
+    list_tasks_for_resource(db, resource_id) -> list[dict]
+      (each dict has task_id, project_id, product_id, task_idx,
+       activity_idx, start_date, end_date, plan_hours)
+    add_worklog(db, worklog_idx, resource_id, task_date, hours, remarks)
+      -> dict with "worklog_id"
+  Adjust field names in the response if the store uses different keys.
+- Do NOT modify timesheet_store.py.
+- Keep [DIAG-RMS] entry/return prints.
+
+───────────────────────────────────────────────────────────────────
 DELIVERABLE
-Show the node name from graph.py (the add_node call for creator).
-Show the updated static_output_nodes list(s). Confirm both lists
-updated if there are two.
+───────────────────────────────────────────────────────────────────
+CREATE TASK_6_2_REPORT.md with:
+- INTENDED/ACTUAL footprint.
+- Full new reviewer_agent_node + _extract_worklog_fields.
+- Confirmation: no LLM/bind_tools/<<ACTION>>/RAG in reviewer.
+- Confirmation: only nodes.py modified.
+- The verified timesheet_store signatures (list_tasks_for_resource,
+  add_worklog) and field names used.
+═══════════════════════════════════════════════════════════════════
+END
 ═══════════════════════════════════════════════════════════════════
