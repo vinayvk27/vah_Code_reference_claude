@@ -1,35 +1,58 @@
-The mrr_submission_node Excel path also has WAREHOUSEID — need to check if that's a real column. It is (from DESCRIBE). That node already includes MATREQUISITIONID in the INSERT correctly. But it references WAREHOUSEID which IS a real column, and REQUISITIONTYPE which is also real. That node looks fine schema-wise — let me just verify REQUESTORID casting there.
+═══════════════════════════════════════════════════════════════════
+TASK 6.7-FIX7: Fix total_cost ordering in form_submit_handler
+═══════════════════════════════════════════════════════════════════
 
-The mrr_submission_node uses header["requestor_id"] from the validated Excel data which should already be a number from the validator. It's already fine. No changes needed there.
+CRITICAL CONSTRAINT
+- Only touch app/workflows/material_workflow/nodes.py
+  (form_submit_handler_node body).
+- Do NOT change other files or other functions.
 
-Done. Here's the consolidated report:
+PROBLEM
+After the consolidated rewrite (Task 6.7-FIX6), form_submit_handler
+returns: "Could not submit total_cost is not defined". The variable
+`total_cost` is referenced before being assigned. Likely cause: the
+INSERT block (which uses :total) now runs before the items loop
+finishes accumulating totals, OR the totals calculation was moved
+but a reference to total_cost remained in the wrong place.
 
-SHOW CREATE TABLE key findings:
+FIX
+Inspect form_submit_handler_node and ensure this ORDER:
 
-MATREQUISITIONID is bigint(20) NOT NULL with PRIMARY KEY — NOT AUTO_INCREMENT. Must explicitly provide it.
-Max current ID: 16, total rows: 17 (PK collision risk with manual sequence)
-New helpers — nodes.py:68-102:
+    1. Parse payload + early payload checks (form_id, etc.)
+    2. Open SessionLocal()
+    3. Validate header fields (project_id, requisition_type,
+       need_by_date, comments).
+    4. Resolve project + description + phase via lookups.
+    5. Validate items loop:
+         - For each item: lookup, validate, build validated_items
+           list with item_id, item_name, unit_price_rs, qty, total,
+           return_date.
+    6. If errors → return form_errors event, close session, exit.
+    7. AFTER items loop succeeds:
+         total_cost = sum(it["total"] for it in validated_items)
+       This line MUST exist before the INSERT statement that binds
+       :total.
+    8. INSERT header (uses total_cost).
+    9. INSERT lines (loop validated_items).
+    10. Commit.
+    11. Auto-verify update.
+    12. Build confirmation message + add_reasoning.
+    13. Close session in finally.
 
-_lookup_project(db, project_code) — queries posproject WHERE PROJECTNUMBER = :code, returns {"project_id": int, "description": str}.
+If `total_cost` is defined inside a try/except and the INSERT lives
+outside that scope, hoist it.
 
-_lookup_latest_phase(db, project_id) — queries posprojectphases WHERE PROJECTID = :pid ORDER BY PROJECTPHASEID DESC LIMIT 1, returns PROJECTPHASEID or None.
+ALSO verify:
+- `validated_items` is defined before the items loop (e.g.,
+  validated_items = []), not inside any conditional.
+- `errors` is defined as {} before any validation, so the "if errors"
+  branch always works.
 
-form_submit_handler_node INSERT — nodes.py:1300-1315:
-
-Now includes MATREQUISITIONID (=computed header_id), DESCRIPTION (auto-fetched from posproject)
-Column order matches real schema exactly
-PK computed before INSERT: seq + 1 → header_id → mrr_no
-evaluate_and_route INSERT — nodes.py:635-650:
-
-Same fixes: explicit MATREQUISITIONID, DESCRIPTION column, PROJECTPHASEID (not PHASEID), DEPARTMENT (not DEPARTMENTID)
-REQUESTORID cast: int(user_id) if str(user_id).isdigit() else 0
-DEPARTMENT sourced from user_info.dept (default "EAG")
-Fixes summary:
-
-Issue	Fix
-Project code string → bigint ID	_lookup_project() resolves via posproject
-Description not stored	Auto-fetched into DESCRIPTION column
-Phase not resolved	_lookup_latest_phase() queries posprojectphases
-MATREQUISITIONID = 0	Explicit next_id + include in INSERT (not AUTO_INCREMENT)
-REQUESTORID string → bigint	Cast: int(user_id) if str(user_id).isdigit() else 0
-DEPARTMENT missing	Sourced from state.user_info.dept
+DELIVERABLE
+Show the ordered sections of form_submit_handler_node (you can use
+comments like # --- step N --- ) and confirm:
+- total_cost is computed exactly once, after the items loop and
+  before the INSERT.
+- validated_items is initialized before the items loop.
+- errors is initialized before any validation.
+═══════════════════════════════════════════════════════════════════
