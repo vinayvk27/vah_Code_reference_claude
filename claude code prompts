@@ -1,12 +1,45 @@
-process tasks file
- rms_create_tasks.xlsx
-V
-🤖
-Your three new tasks are now ready i**Bulk Task Creation Summary**
+═══════════════════════════════════════════════════════════════════
+TASK 6.5-FIX2: Use non-streaming LLM for reasoning addon
+═══════════════════════════════════════════════════════════════════
 
-- Created: **3** tasks
-- Skipped: **0** rows
+CRITICAL CONSTRAINT
+- Only touch app/workflows/shared/reasoning_addon.py
+- Do NOT change any node bodies or controller logic
 
-Your three new tasks are now ready in your list.
+PROBLEM
+add_reasoning uses get_llm() which returns a streaming-configured
+ChatOpenAI (streaming=True). Even when we call .invoke(), LangGraph
+emits on_chat_model_stream events that the controller catches and
+streams to the chat. Result: the reasoning sentence appears via the
+stream AND via the static node return — interleaved with the
+deterministic message.
 
-n your list.
+FIX
+In app/workflows/shared/reasoning_addon.py, change:
+    from app.core.llm import get_llm
+    llm = get_llm()
+
+To:
+    from app.core.llm import get_llm_non_streaming
+    llm = get_llm_non_streaming()
+
+If get_llm_non_streaming does NOT exist in app/core/llm.py, ADD it
+there. Definition:
+
+    def get_llm_non_streaming() -> ChatOpenAI:
+        return ChatOpenAI(
+            model=settings.AI_MODEL,
+            base_url=settings.AI_API_URL,
+            api_key=settings.AI_API_KEY,
+            streaming=False,    # critical: no streaming events
+        )
+
+If it already exists, just use it.
+
+The rest of add_reasoning is unchanged: still calls .invoke(),
+still strips formatting, still returns the appended string.
+
+DELIVERABLE
+Show the updated add_reasoning function and confirm whether
+get_llm_non_streaming already existed in llm.py or was added.
+═══════════════════════════════════════════════════════════════════
