@@ -1,19 +1,35 @@
-** i have directly tested in browser my dev gave me confirmation and i have filled a form too 
+{"module_name":"MRR","message":"{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-29\",\"comments\":\"need urgently\",\"items\":[{\"item_name\":\"DP-RM-CAB-02620\",\"qty\":\"55\",\"return_date\":\"2026-06-04\"}]}}","thread_id":"89ec94ac-31a8-4e73-b3aa-32800a4e4b02"}
 
-data: {"type": "meta", "thread_id": "89ec94ac-31a8-4e73-b3aa-32800a4e4b02"}
 
-data: {"type": "chunk", "text": "Sure, I can help you create a material requisition. Use the form below, or upload an Excel file.\n\n"}
+{"module_name":"MRR","message":"new mrr","chat_history":[{"role":"user","content":"create an mrr"},{"role":"assistant","content":"Sure, I can help you create a material requisition. Use the form below, or upload an Excel file.\n\n"},{"role":"assistant","content":"I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?\n\n"},{"role":"user","content":"new mrr"}],"thread_id":"89ec94ac-31a8-4e73-b3aa-32800a4e4b02"}
 
-data: {"type": "form_widget", "form": {"form_id": "mrr_create_form", "title": "Create Material Requisition", "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.", "submit_label": "Submit", "cancel_label": "Cancel", "fields": [{"name": "project_id", "label": "Project ID", "type": "text", "required": true, "placeholder": "e.g. 100"}, {"name": "requisition_type", "label": "Requisition Type", "type": "radio", "required": true, "options": [{"value": "RETURNABLE", "label": "Returnable"}, {"value": "NON_RETURNABLE", "label": "Non-Returnable"}]}, {"name": "need_by_date", "label": "Need By Date", "type": "date", "required": true}, {"name": "comments", "label": "Comments", "type": "textarea", "required": false, "rows": 3}, {"name": "items", "label": "Items", "type": "items_table", "required": true, "min_rows": 1, "columns": [{"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true}, {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1}, {"name": "return_date", "label": "Return Date", "type": "date", "required": false, "conditional": {"field": "requisition_type", "value": "RETURNABLE"}}]}]}}
+INFO:     10.5.1.58:52596 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+User context built for: 2830 (Venkatesh. S)
 
-data: [DONE]
-
-after clicking on submit in the front end success message came and along with it one more api gets called and this is the response of that
-data: {"type": "meta", "thread_id": "89ec94ac-31a8-4e73-b3aa-32800a4e4b02"}
-
-data: {"type": "chunk", "text": "I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?\n\n"}
-
-data: [DONE]
-
-** in db also mrr not entered
-
+=== DEBUG: Resolved context for emp_no 2830 ===
+  group_idx = 32
+  role_ids = [9]
+  visible_module_ids = {1, 5}
+  intersection_module_ids = {1, 5}
+  modules in access_tree = 2
+    - RMS: 1 collections
+        - rms_timesheet: 3 agents
+    - MRR: 1 collections
+        - mrr_general: 1 agents
+=== END DEBUG ===
+INFO:     10.5.1.58:52597 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+INFO:     10.5.1.58:52639 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.      
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-MRR] parse_intent_node entered. emp_no=2830, pending_mrr_data_present=False, message_count=2
+[DIAG-MRR] permission_check_node entered. parsed_intent=IN_DOMAIN, persona=creator, collection=mrr_general
+[DIAG-MRR] creator_path_router entered. persona=creator
+[DIAG-MRR] creator_path_router: last_msg='create an mrr', normalized='create an mrr', has_pending=False
+[DIAG-MRR] creator_path_router -> creator_needs_file
+[DIAG-MRR] creator_needs_file_node entered.
+INFO:     10.5.1.58:52847 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:39: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.      
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-MRR] parse_intent_node entered. emp_no=2830, pending_mrr_data_present=False, message_count=1
+[DIAG-MRR] permission_check_node entered. parsed_intent=OUT_OF_DOMAIN, persona=, collection=[DIAG-MRR] permission_blocked_node entered. denial_message='I can only help with MRR tasks like creating material requisitions, 
+approving requests, and issuing stock. Could you rephrase your request?'
