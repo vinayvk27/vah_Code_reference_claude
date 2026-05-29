@@ -1,47 +1,411 @@
 ═══════════════════════════════════════════════════════════════════
-FRONTEND CORRECTION — form_submit payload location
+TASK 6.7: Process MRR form_submit payload (validate + insert)
 ═══════════════════════════════════════════════════════════════════
+Detect when the user message is a JSON form_submit payload, validate
+all fields procedurally, insert into the database via the same path
+Excel uses, and return either a structured form_errors event (on
+validation failure) or a normal success confirmation (on success).
 
-When user clicks Submit on the MRR form, the request body must keep
-the SAME shape as a regular chat message (module_name, message,
-thread_id). The form_submit object goes inside the "message" field
-as a JSON STRING.
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Modify ONLY:
+    app/workflows/material_workflow/nodes.py
+      (new handler + route hook)
+    app/workflows/material_workflow/graph.py
+      (route form_submit through the same creator entry, but to a
+       dedicated handler)
+    app/controllers/chat_controller.py
+      (emit form_errors as a distinct SSE event when present)
+- Do NOT touch routes, state.py outside of adding a field if needed,
+  timesheet_store, RMS, intent.py.
+- The handler must NOT use the LLM for ANY structural decision. Pure
+  Python validation. (Reasoning addon may be applied ONLY to the
+  final success message.)
+- Excel path and chat path: unchanged.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
-Currently being posted (WRONG):
-{
-  "module_name": "MRR",
-  "action": "form_submit",       <-- these should NOT be at top level
-  "form_id": "mrr_create_form",
-  "data": { ... },
-  "thread_id": "..."
-}
+───────────────────────────────────────────────────────────────────
+STEP 1 — Detect form_submit at the MRR creator entry
+───────────────────────────────────────────────────────────────────
 
-Should be posted (CORRECT):
-{
-  "module_name": "MRR",
-  "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{...}}",
-  "thread_id": "..."
-}
+The message arrives as a JSON STRING inside the user's message
+content:
+    {"action":"form_submit","form_id":"mrr_create_form","data":{...}}
 
-Where the value of "message" is JSON.stringify(formSubmitObject).
+In nodes.py, add a helper:
 
-In JavaScript:
-    const formSubmit = {
-        action: "form_submit",
-        form_id: "mrr_create_form",
-        data: { project_id, requisition_type, need_by_date, comments, items }
-    };
-    const body = {
-        module_name: "MRR",
-        message: JSON.stringify(formSubmit),
-        thread_id: currentThreadId
-    };
+def _parse_form_submit_message(message: str) -> dict | None:
+    """
+    If the message is a JSON object with action='form_submit', return
+    the parsed dict {action, form_id, data}. Otherwise return None.
+    Robust to whitespace/leading-trailing junk: must START with '{'
+    and be valid JSON; otherwise return None silently.
+    """
+    import json as _json
+    s = (message or "").strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        obj = _json.loads(s)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("action") != "form_submit":
+        return None
+    return obj
 
-Backend will detect the JSON-string message starts with the
-form_submit action and route it accordingly (similar to how Excel
-upload routes by uploaded_files presence).
+───────────────────────────────────────────────────────────────────
+STEP 2 — Route form_submit through a new handler
+───────────────────────────────────────────────────────────────────
 
-Cancel button: post as before with module_name + message: "cancel"
-+ thread_id. (Just a plain text message.)
+In nodes.py, locate creator_path_router (referenced in TASK_6_6 as
+the routing function that chose creator_needs_file vs excel_handler).
+Add a new branch:
 
+    last_msg = _get_last_user_message(state.get("messages", []))
+    if _parse_form_submit_message(last_msg) is not None:
+        return "form_submit_handler"
+
+…placed BEFORE the existing uploaded_files / creator_needs_file
+branches.
+
+In graph.py:
+    graph_builder.add_node("form_submit_handler", form_submit_handler_node)
+…and ensure creator_path_router's "form_submit_handler" target wires
+up to this node. The node terminates the path (no further routing
+needed); add an edge from form_submit_handler to END (or whatever
+the existing terminal pattern is for excel_handler).
+
+Add "form_submit_handler" / "form_submit_handler_node" to BOTH
+static_output_nodes lists in chat_controller.py.
+
+───────────────────────────────────────────────────────────────────
+STEP 3 — Implement form_submit_handler_node (the main work)
+───────────────────────────────────────────────────────────────────
+
+def form_submit_handler_node(state: MaterialRequisitionState) -> dict:
+    """
+    Procedural handler for MRR form_submit. Validates fields, looks
+    up items, inserts via the existing DB path used by Excel.
+    Mirrors evaluate_and_route's DB code.
+    """
+    print(f"[DIAG-MRR] form_submit_handler_node entered.", flush=True)
+    import json as _json
+    from datetime import datetime
+    from sqlalchemy import text
+
+    last_msg = _get_last_user_message(state.get("messages", []))
+    payload = _parse_form_submit_message(last_msg)
+    if payload is None:
+        # Defensive: shouldn't happen because router checked.
+        return {
+            "messages": [AIMessage(content="Form submission could not be processed.")],
+            "execution_log": state.get("execution_log", []) + ["form_submit: payload missing"],
+        }
+
+    form_id = payload.get("form_id", "")
+    data = payload.get("data") or {}
+    user_id = state.get("emp_no") or state.get("user_id") or "system"
+    execution_log = state.get("execution_log", [])
+
+    if form_id != "mrr_create_form":
+        return {
+            "messages": [AIMessage(content=f"Unknown form_id: {form_id}.")],
+            "execution_log": execution_log + [f"form_submit: unknown form_id {form_id}"],
+        }
+
+    # ---- VALIDATION ----
+    errors: dict[str, str] = {}
+
+    project_id_raw = (data.get("project_id") or "").strip() if isinstance(data.get("project_id"), str) else data.get("project_id")
+    if not project_id_raw:
+        errors["project_id"] = "Project ID is required"
+
+    requisition_type = (data.get("requisition_type") or "").strip().upper() if isinstance(data.get("requisition_type"), str) else None
+    if requisition_type not in ("RETURNABLE", "NON_RETURNABLE"):
+        errors["requisition_type"] = "Requisition Type is required (Returnable or Non-Returnable)"
+
+    need_by_date = (data.get("need_by_date") or "").strip() if isinstance(data.get("need_by_date"), str) else None
+    if not need_by_date:
+        errors["need_by_date"] = "Need By Date is required"
+    else:
+        try:
+            datetime.strptime(need_by_date, "%Y-%m-%d")
+        except Exception:
+            errors["need_by_date"] = "Invalid date (use YYYY-MM-DD)"
+
+    comments = data.get("comments") or ""
+    if not isinstance(comments, str):
+        comments = str(comments)
+
+    # Items validation
+    items_in = data.get("items")
+    if not isinstance(items_in, list) or len(items_in) == 0:
+        errors["items"] = "At least one item is required"
+        items_in = []
+
+    validated_items = []
+    for idx, row in enumerate(items_in):
+        if not isinstance(row, dict):
+            errors[f"items.{idx}"] = "Invalid item row"
+            continue
+
+        item_name = (row.get("item_name") or "").strip() if isinstance(row.get("item_name"), str) else None
+        qty_raw = row.get("qty")
+        return_date = (row.get("return_date") or "").strip() if isinstance(row.get("return_date"), str) else None
+
+        if not item_name:
+            errors[f"items.{idx}.item_name"] = "Item name/code is required"
+            continue
+
+        try:
+            qty = float(qty_raw)
+            if qty <= 0:
+                errors[f"items.{idx}.qty"] = "Quantity must be > 0"
+                continue
+        except Exception:
+            errors[f"items.{idx}.qty"] = f"Invalid quantity ({qty_raw!r})"
+            continue
+
+        # Lookup item details (same as Excel path)
+        try:
+            item_data = get_item_details_from_db(item_name)
+        except Exception as e:
+            errors[f"items.{idx}.item_name"] = f"Item lookup failed: {e}"
+            continue
+        if not item_data:
+            errors[f"items.{idx}.item_name"] = f"Item code '{item_name}' not found in catalog"
+            continue
+
+        if requisition_type == "RETURNABLE":
+            if not return_date:
+                errors[f"items.{idx}.return_date"] = "Return Date is required for returnable items"
+                continue
+            try:
+                datetime.strptime(return_date, "%Y-%m-%d")
+            except Exception:
+                errors[f"items.{idx}.return_date"] = "Invalid return date (use YYYY-MM-DD)"
+                continue
+        else:
+            return_date = None  # ignored for non-returnable
+
+        validated_items.append({
+            "item_id": item_data["item_id"],
+            "item_name": item_data["item_name"],
+            "unit_price_rs": item_data["unit_price_rs"],
+            "qty": qty,
+            "total": qty * float(item_data["unit_price_rs"] or 0),
+            "return_date": return_date,
+        })
+
+    if errors:
+        # Emit structured errors via the same controller marker pattern
+        # we used for FORM_WIDGET. Define a parallel marker
+        # [[FORM_ERRORS:<json>]] that the controller splits out.
+        marker_payload = _json.dumps({"form_id": form_id, "errors": errors})
+        text_msg = (
+            "I couldn't submit the form. Please fix the highlighted "
+            "fields and try again."
+        )
+        full = text_msg + "\n\n[[FORM_ERRORS:" + marker_payload + "]]"
+        execution_log.append(f"form_submit validation: {len(errors)} errors")
+        return {
+            "messages": [AIMessage(content=full)],
+            "execution_log": execution_log,
+        }
+
+    # ---- DB INSERT (mirror evaluate_and_route) ----
+    total_cost = sum(it["total"] for it in validated_items)
+
+    db = SessionLocal()
+    try:
+        seq_row = db.execute(text(
+            "SELECT IFNULL(MAX(MATREQUISITIONID), 0) + 1 AS next_id "
+            "FROM mrr_matrequisitionheader"
+        )).first()
+        next_id = seq_row.next_id if seq_row else 1
+        mrr_no = f"MRR/{next_id}/25-26"
+
+        db.execute(text("""
+            INSERT INTO mrr_matrequisitionheader (
+                MATREQUISITIONNO, STATUS, VERIFICATION_STATUS, VERIFICATION_DATE,
+                APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE,
+                SUPPLIERID, SUPPLIERSITEID, REQTRANSACTIONTYPE, COMMENTS,
+                DEPARTMENTID, REQUESTORID, REQUISITIONDATE, TOTAL_COST,
+                PROJECTID, PHASEID
+            ) VALUES (
+                :mrrno, 'ENTERED', NULL, NULL,
+                NULL, NULL,
+                NULL, NULL,
+                0, 0, :reqtype, :comments,
+                1, :user, NOW(), :total,
+                :proj, NULL
+            )
+        """), {
+            "mrrno": mrr_no,
+            "reqtype": "RETURNABLE" if requisition_type == "RETURNABLE" else "NON-RETURNABLE",
+            "comments": comments,
+            "total": total_cost,
+            "proj": project_id_raw,
+            "user": user_id,
+        })
+
+        # Fetch header_id
+        hdr_row = db.execute(text(
+            "SELECT MATREQUISITIONID FROM mrr_matrequisitionheader WHERE MATREQUISITIONNO = :no"
+        ), {"no": mrr_no}).first()
+        header_id = hdr_row.MATREQUISITIONID if hdr_row else None
+
+        line_query = text("""
+            INSERT INTO mrr_matrequisitionlines (
+                MATREQUISITIONID, ITEMID, ITEMNAME, REQUANTITY, ITEMCOST,
+                UOMID, ITEMREVISIONID, ISSUEQTY, RETURNQUANTITY, CLOSEREASON
+            ) VALUES (
+                :hid, :iid, :iname, :qty, :itemcost,
+                0, 0, 0, 0, ''
+            )
+        """)
+        for it in validated_items:
+            db.execute(line_query, {
+                "hid": header_id,
+                "iid": it["item_id"],
+                "iname": it["item_name"],
+                "qty": it["qty"],
+                "itemcost": it["total"],
+            })
+
+        db.commit()
+
+        # Auto-verify (same 2000-rupee rule as evaluate_and_route)
+        now = datetime.now()
+        if total_cost < 2000:
+            db.execute(text("""
+                UPDATE mrr_matrequisitionheader
+                SET VERIFICATION_STATUS='APPROVED', VERIFICATION_DATE=:now,
+                    APPROVAL_STATUS='APPROVED', APPROVAL_DATE=:now,
+                    ERP_APPROVAL_STATUS='PENDING',
+                    COMMENTS=COALESCE(COMMENTS,'')
+                WHERE MATREQUISITIONID = :rid
+            """), {"now": now, "rid": header_id})
+            db.commit()
+            confirmation = (
+                f"Requisition {mrr_no} (total \u20b9{total_cost:.2f}) submitted "
+                f"and auto-approved at manager stage. Awaiting ERP approval."
+            )
+        else:
+            db.execute(text("""
+                UPDATE mrr_matrequisitionheader
+                SET VERIFICATION_STATUS='APPROVED', VERIFICATION_DATE=:now,
+                    APPROVAL_STATUS='PENDING'
+                WHERE MATREQUISITIONID = :rid
+            """), {"now": now, "rid": header_id})
+            db.commit()
+            confirmation = (
+                f"Requisition {mrr_no} (total \u20b9{total_cost:.2f}) submitted "
+                f"and is pending manager approval."
+            )
+
+    except Exception as e:
+        db.rollback()
+        return {
+            "messages": [AIMessage(content=f"Could not submit the requisition due to a database error: {e}")],
+            "execution_log": execution_log + [f"form_submit DB error: {e}"],
+        }
+    finally:
+        db.close()
+
+    # Reasoning addon (success only)
+    from app.workflows.shared.reasoning_addon import add_reasoning
+    confirmation = add_reasoning(
+        confirmation,
+        context=(
+            f"MRR {mrr_no} created via form by {user_id}; total \u20b9{total_cost:.2f}; "
+            f"{requisition_type.lower().replace('_','-')}; "
+            f"{len(validated_items)} item(s)."
+        )
+    )
+
+    return {
+        "messages": [AIMessage(content=confirmation)],
+        "execution_log": execution_log + [
+            f"form_submit: created {mrr_no} total={total_cost} items={len(validated_items)}"
+        ],
+    }
+
+───────────────────────────────────────────────────────────────────
+STEP 4 — Controller: emit form_errors as a distinct SSE event
+───────────────────────────────────────────────────────────────────
+
+Just like FORM_WIDGET, the controller intercepts [[FORM_ERRORS:<json>]]
+and emits a separate event.
+
+In chat_controller.py, define a second marker + helper:
+
+    FORM_ERRORS_RE = re.compile(r"\[\[FORM_ERRORS:(.*?)\]\]", re.DOTALL)
+
+    def _emit_with_form_errors(full_text: str):
+        match = FORM_ERRORS_RE.search(full_text)
+        if not match:
+            yield {"type": "chunk", "text": full_text}
+            return
+        pre = full_text[:match.start()]
+        post = full_text[match.end():]
+        raw = match.group(1)
+        try:
+            payload = json.loads(raw)
+        except Exception as e:
+            print(f"[FORM-ERRORS] JSON parse error: {e}", flush=True)
+            yield {"type": "chunk", "text": full_text}
+            return
+        if pre.strip():
+            yield {"type": "chunk", "text": pre}
+        yield {"type": "form_errors", "form_id": payload.get("form_id"), "errors": payload.get("errors", {})}
+        if post.strip():
+            yield {"type": "chunk", "text": post}
+
+In BOTH static-node-output handlers (stream_chat_with_orchestrator
+and stream_chat_with_file), update the marker detection block so it
+checks BOTH markers. Suggested order:
+    if "[[FORM_WIDGET:" in content:
+        for event in _emit_with_form_widget(content):
+            yield json.dumps(event)
+    elif "[[FORM_ERRORS:" in content:
+        for event in _emit_with_form_errors(content):
+            yield json.dumps(event)
+    elif "<<FORM>>" in content and "<<ENDFORM>>" in content:
+        # existing handler ...
+    else:
+        yield json.dumps({"type": "chunk", "text": content + "\n\n"})
+
+───────────────────────────────────────────────────────────────────
+NOTES
+───────────────────────────────────────────────────────────────────
+- DEPARTMENTID is hard-coded to 1 (matches evaluate_and_route).
+- PHASEID is NULL (form does not collect it).
+- Auto-verifier logic is INLINED here (rather than routing to
+  auto_verifier_node) for simplicity — same 2000 threshold, same
+  status updates. We can refactor to share later.
+- Cancel button: frontend sends "cancel" as plain text. That will
+  classify as OUT_OF_DOMAIN and route to permission_blocked, which
+  is fine for now. No special handling required.
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_6_7_REPORT.md with:
+- INTENDED/ACTUAL footprint.
+- The _parse_form_submit_message helper.
+- The form_submit_handler_node body (the full function).
+- The graph.py changes (add_node + edge + creator_path_router branch).
+- The controller form_errors handler + ordering in marker detection.
+- static_output_nodes updated (both lists).
+- Confirmation: Excel path untouched, chat path untouched, no LLM
+  used for any structural decision.
+- A simulated event stream for two cases:
+    (i) Successful submit (single chunk with confirmation).
+    (ii) Validation failure (text chunk + form_errors event).
+═══════════════════════════════════════════════════════════════════
+END
 ═══════════════════════════════════════════════════════════════════
