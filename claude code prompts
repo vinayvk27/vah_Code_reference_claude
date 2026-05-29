@@ -1,38 +1,30 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.6: Emit MRR form_widget event when creator has no Excel
-═══════════════════════════════════════════════════════════════════
-When a user invokes MRR creator without uploading a file and without
-inline structured data, return BOTH a friendly text message AND a
-form_widget event (structured JSON the frontend renders as a form).
-Excel upload path remains untouched.
+# TASK 6.6 Report — MRR form_widget Event for Creator Without Excel
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Modify ONLY:
-    app/workflows/material_workflow/nodes.py
-      (specifically the creator_needs_file_node body — or wherever
-       the "no file uploaded" path lives in MRR creator routing)
-    app/controllers/chat_controller.py
-      (to detect [[FORM_WIDGET:<json>]] in node output and emit a
-       separate SSE event)
-- Do NOT modify intent.py, graph.py, state.py, routes, or any other
-  workflow logic.
-- Excel upload path: UNCHANGED. If uploaded_files is present, the
-  existing Excel handling runs and form_widget is NOT emitted.
-- Inline structured chat (e.g., "create mrr with project 100 item
-  04617 qty 5"): handled by existing form_flow / handle_header. NOT
-  in scope here. The form widget appears only when the user gives a
-  bare creator request with no data.
-- Output INTENDED FOOTPRINT at start, list modified files at end.
+## INTENDED FOOTPRINT
 
-───────────────────────────────────────────────────────────────────
-STEP 1 — Define the FROZEN MRR form JSON
-───────────────────────────────────────────────────────────────────
+| File | Change |
+|---|---|
+| `app/workflows/material_workflow/prompts.py` | Added `get_mrr_form_widget_json()` helper returning frozen form spec dict |
+| `app/workflows/material_workflow/nodes.py` | Modified `creator_needs_file_node` to emit `[[FORM_WIDGET:<json>]]` marker alongside text |
+| `app/controllers/chat_controller.py` | Added `_emit_with_form_widget()` generator + integrated `[[FORM_WIDGET:...]]` detection in both `stream_chat_with_orchestrator` and `stream_chat_with_file` static-output handlers |
 
-Add a helper function in app/workflows/material_workflow/prompts.py
-(or near the top of nodes.py if prompts.py isn't a fit):
+## ACTUAL FOOTPRINT (Modified Files)
 
+1. `app/workflows/material_workflow/prompts.py` — added function
+2. `app/workflows/material_workflow/nodes.py` — modified node, updated import
+3. `app/controllers/chat_controller.py` — added helper + integrated in both methods
+
+## Exact Node Name (from graph.py inspection)
+
+**`creator_needs_file`** — registered in `graph.py` line 138:
+```python
+graph_builder.add_node("creator_needs_file", creator_needs_file_node)
+```
+The function `creator_needs_file_node` is imported from `nodes.py` and routed to from `creator_path_router` (line 1094) when no Excel file is uploaded and no confirm/cancel command exists.
+
+## New `get_mrr_form_widget_json()` Function (prompts.py)
+
+```python
 def get_mrr_form_widget_json() -> dict:
     """Returns the FROZEN JSON spec for the MRR create form widget."""
     return {
@@ -109,140 +101,110 @@ def get_mrr_form_widget_json() -> dict:
             }
         ]
     }
+```
 
-───────────────────────────────────────────────────────────────────
-STEP 2 — Modify the "no file" creator path
-───────────────────────────────────────────────────────────────────
+## Modified Node Return (nodes.py:1360-1379)
 
-LOCATE the existing node/branch that today returns the "please
-upload an Excel file" message. Based on prior tasks this is likely
-creator_needs_file_node (or whichever node graph.py routes to when
-uploaded_files is empty and the message is a bare creator request).
-
-INSPECT first — confirm by reading graph.py + the node — and use the
-exact existing node name.
-
-REPLACE the returned message so it includes BOTH:
-  (a) A short friendly text greeting.
-  (b) An inline marker the controller will split out:
-      [[FORM_WIDGET:<json_string>]]
-
-Example new return:
-
-    import json as _json
+```python
+def creator_needs_file_node(state: MaterialRequisitionState) -> dict:
+    """
+    Terminal node: emitted when a creator tries to create an MRR
+    without uploading an Excel file or providing inline structured
+    data. Returns a friendly text message AND a form_widget marker
+    (parsed by chat_controller into a separate SSE event).
+    """
+    print(f"[DIAG-MRR] creator_needs_file_node entered.", flush=True)
     form_json = get_mrr_form_widget_json()
-    form_marker = "[[FORM_WIDGET:" + _json.dumps(form_json) + "]]"
-    message = (
+    form_marker = "[[FORM_WIDGET:" + json.dumps(form_json) + "]]"
+    msg = (
         "Sure, I can help you create a material requisition. "
         "Use the form below, or upload an Excel file.\n\n"
         + form_marker
     )
     return {
-        "messages": [AIMessage(content=message)],
+        "messages": [AIMessage(content=msg)],
         "execution_log": state.get("execution_log", []) + [
             "Emitted MRR form widget."
-        ],
+        ]
     }
+```
 
-Notes:
-- json.dumps must NOT contain raw newlines that would break the
-  marker. Use the default compact form (no indent).
-- Do NOT emit the marker if uploaded_files is present (preserve
-  Excel path). If the existing node is only reached when no file is
-  uploaded, this is already guaranteed; just verify by reading
-  graph.py routing.
-- Do NOT apply add_reasoning to this output (it's a UI prompt, not
-  a success action).
+## Controller Marker-Detection Code (chat_controller.py)
 
-───────────────────────────────────────────────────────────────────
-STEP 3 — Controller: detect marker, emit separate SSE event
-───────────────────────────────────────────────────────────────────
+### Helper function (module-level):
 
-In app/controllers/chat_controller.py, locate the static-output-node
-handling code (where node return-value messages are yielded as chunk
-events for the static_output_nodes list).
+```python
+FORM_MARKER_RE = re.compile(r"\[\[FORM_WIDGET:(.*?)\]\]", re.DOTALL)
 
-ADD detection logic: when the static message contains a
-[[FORM_WIDGET:<json>]] marker, split the message into two parts:
-  - The text BEFORE the marker → emit as a normal chunk event.
-  - The marker payload → parse the JSON inside, emit as:
-        data: {"type": "form_widget", "form": <parsed_json>}
-  - Anything AFTER the marker → emit as another chunk event (if
-    non-empty).
 
-Implementation sketch (adapt to actual streaming code):
+def _emit_with_form_widget(full_text: str):
+    """Yields SSE event dicts: chunk before, form_widget, chunk after."""
+    match = FORM_MARKER_RE.search(full_text)
+    if not match:
+        yield {"type": "chunk", "text": full_text}
+        return
+    pre = full_text[:match.start()]
+    post = full_text[match.end():]
+    raw_json = match.group(1)
+    try:
+        form_obj = json.loads(raw_json)
+    except Exception as e:
+        print(f"[FORM-WIDGET] JSON parse error: {e}", flush=True)
+        yield {"type": "chunk", "text": full_text}
+        return
+    if pre.strip():
+        yield {"type": "chunk", "text": pre}
+    yield {"type": "form_widget", "form": form_obj}
+    if post.strip():
+        yield {"type": "chunk", "text": post}
+```
 
-    import re, json
-    FORM_MARKER_RE = re.compile(r"\[\[FORM_WIDGET:(.*?)\]\]", re.DOTALL)
+### Integration in `stream_chat_with_orchestrator` (lines 293-318):
 
-    def _emit_with_form_widget(full_text: str):
-        """Yields SSE event dicts: chunk before, form_widget, chunk after."""
-        match = FORM_MARKER_RE.search(full_text)
-        if not match:
-            yield {"type": "chunk", "text": full_text}
-            return
-        pre = full_text[:match.start()]
-        post = full_text[match.end():]
-        raw_json = match.group(1)
-        try:
-            form_obj = json.loads(raw_json)
-        except Exception as e:
-            # Malformed form JSON: fall back to plain chunk so user
-            # still sees the text; log the error.
-            print(f"[FORM-WIDGET] JSON parse error: {e}", flush=True)
-            yield {"type": "chunk", "text": full_text}
-            return
-        if pre.strip():
-            yield {"type": "chunk", "text": pre}
-        yield {"type": "form_widget", "form": form_obj}
-        if post.strip():
-            yield {"type": "chunk", "text": post}
+```python
+if node_name in static_output_nodes and isinstance(output, dict) and "messages" in output:
+    for msg in output["messages"]:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            content = msg.content
 
-When yielding events for a static node's output (inside the SSE
-streaming loop), if the message text contains the form marker, run
-it through _emit_with_form_widget and yield each piece. Otherwise
-yield as normal.
+            # Check for [[FORM_WIDGET:<json>]] marker (Task 6.6)
+            if "[[FORM_WIDGET:" in content:
+                for event in _emit_with_form_widget(content):
+                    yield json.dumps(event)
+            elif "<<FORM>>" in content and "<<ENDFORM>>" in content:
+                # ... existing <<FORM>> handling unchanged ...
+            else:
+                yield json.dumps({"type": "chunk", "text": content + "\n\n"})
+```
 
-This must be applied in BOTH stream_chat_with_orchestrator and
-stream_chat_with_file (same as static_output_nodes is duplicated).
+### Integration in `stream_chat_with_file` (lines 606-632):
 
-───────────────────────────────────────────────────────────────────
-STEP 4 — Add creator_needs_file (or actual node name) to
-            static_output_nodes if not already there
-───────────────────────────────────────────────────────────────────
+Same pattern as above, applied identically in the second `static_output_nodes` block.
 
-Verify the node name from graph.py and ensure it's in BOTH
-static_output_nodes lists. (Per session history, creator_needs_file
-was already added previously, but confirm it's still present.) If
-the node name is different in current code, add the correct name.
+## Confirmation Checklist
 
-───────────────────────────────────────────────────────────────────
-NOTES
-───────────────────────────────────────────────────────────────────
-- Frontend will receive a stream like:
-      data: {"type": "meta", "thread_id": "..."}
-      data: {"type": "chunk", "text": "Sure, I can help you create..."}
-      data: {"type": "form_widget", "form": {<spec>}}
-      data: [DONE]
-- The form_widget event is the contract we already documented to
-  frontend; they will render it as an inline form.
-- This task does NOT process form_submit — that's Task 6.7.
+- [x] **Excel path untouched** — `creator_path_router` (nodes.py:1086-1089) still routes to `excel_handler` when `uploaded_files` is present. `creator_needs_file_node` is only reached when there are no files.
+- [x] **`static_output_nodes` contains creator-no-file node** — `"creator_needs_file", "creator_needs_file_node"` present in both methods (chat_controller.py lines 278, 592).
+- [x] **No LLM/streaming changes** — This is pure structured output. No LLM calls, no streaming model changes. The marker is embedded in a static node return value.
+- [x] **`add_reasoning` NOT applied** — `creator_needs_file_node` returns a plain text + marker, no reasoning wrapper.
+- [x] **Inline structured chat untouched** — `form_flow` path (`parse_user_input` → `handle_header` → `handle_items`) is not touched.
+- [x] **`intent.py`, `graph.py`, `state.py` NOT modified** — Only `prompts.py`, `nodes.py`, `chat_controller.py` changed.
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_6_6_REPORT.md with:
-- INTENDED/ACTUAL footprint.
-- The exact node name modified (from graph.py inspection).
-- The new get_mrr_form_widget_json() function.
-- The modified node return showing the marker.
-- The controller marker-detection code (both stream methods).
-- Confirmation that:
-    * Excel path is untouched (uploaded_files branch unchanged).
-    * static_output_nodes contains the creator-no-file node.
-    * No LLM/streaming changes; this is pure structured output.
-- A simulated event stream the frontend should see (paste literal
-  data: lines) for a "create mrr" request with no file.
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+## Simulated Event Stream
+
+For a "create mrr" request with no file uploaded, the frontend should receive:
+
+```
+data: {"type": "meta", "thread_id": "a1b2c3d4-e5f6-..."}
+data: {"type": "chunk", "text": "Sure, I can help you create a material requisition. Use the form below, or upload an Excel file."}
+data: {"type": "form_widget", "form": {"form_id": "mrr_create_form", "title": "Create Material Requisition", "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.", "submit_label": "Submit", "cancel_label": "Cancel", "fields": [{"name": "project_id", "label": "Project ID", "type": "text", "required": true, "placeholder": "e.g. 100"}, {"name": "requisition_type", "label": "Requisition Type", "type": "radio", "required": true, "options": [{"value": "RETURNABLE", "label": "Returnable"}, {"value": "NON_RETURNABLE", "label": "Non-Returnable"}]}, {"name": "need_by_date", "label": "Need By Date", "type": "date", "required": true}, {"name": "comments", "label": "Comments", "type": "textarea", "required": false, "rows": 3}, {"name": "items", "label": "Items", "type": "items_table", "required": true, "min_rows": 1, "columns": [{"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true}, {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1}, {"name": "return_date", "label": "Return Date", "type": "date", "required": false, "conditional": {"field": "requisition_type", "value": "RETURNABLE"}}]}]}}
+data: [DONE]
+```
+
+## Files Modified
+
+| File | Changes |
+|---|---|
+| `app/workflows/material_workflow/prompts.py` | Added `get_mrr_form_widget_json()` function |
+| `app/workflows/material_workflow/nodes.py` | Updated import; rewrote `creator_needs_file_node` to emit `[[FORM_WIDGET:...]]` marker |
+| `app/controllers/chat_controller.py` | Added `_emit_with_form_widget()` helper + `[[FORM_WIDGET:...]]` detection in both stream methods |
