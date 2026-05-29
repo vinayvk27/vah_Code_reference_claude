@@ -1,7 +1,10 @@
-data: {"type": "meta", "thread_id": "1b4a22b9-98ec-4842-a735-6eb700be7fa2"}
+{"detail":[{"type":"missing","loc":["body","message"],"msg":"Field required","input":{"module_name":"MRR","action":"form_submit","form_id":"mrr_create_form","data":{"project_id":"YEA2719","requisition_type":"RETURNABLE","need_by_date":"2026-05-28","comments":"needed urgently","items":[{"item_name":"DP-RM-CAB-03100","qty":"25","return_date":"2026-06-03"}]},"thread_id":"b5460f48-09cf-46c5-ba52-6a770655fb45"}}]}
 
-data: {"type": "chunk", "text": "Sure, I can help you create a material requisition. Use the form below, or upload an Excel file.\n\n"}
+Form Submit Failed: Error: API Error 422
+    submitForm useChatStream.js:269
+    onSubmit ChatOverlay.jsx:29
+    handleSubmit FormRenderer.jsx:79
+    React 13
+    <anonymous> main.jsx:8
 
-data: {"type": "form_widget", "form": {"form_id": "mrr_create_form", "title": "Create Material Requisition", "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.", "submit_label": "Submit", "cancel_label": "Cancel", "fields": [{"name": "project_id", "label": "Project ID", "type": "text", "required": true, "placeholder": "e.g. 100"}, {"name": "requisition_type", "label": "Requisition Type", "type": "radio", "required": true, "options": [{"value": "RETURNABLE", "label": "Returnable"}, {"value": "NON_RETURNABLE", "label": "Non-Returnable"}]}, {"name": "need_by_date", "label": "Need By Date", "type": "date", "required": true}, {"name": "comments", "label": "Comments", "type": "textarea", "required": false, "rows": 3}, {"name": "items", "label": "Items", "type": "items_table", "required": true, "min_rows": 1, "columns": [{"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true}, {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1}, {"name": "return_date", "label": "Return Date", "type": "date", "required": false, "conditional": {"field": "requisition_type", "value": "RETURNABLE"}}]}]}}
-
-data: [DONE]
+** react dev confirmed form is done so  i tested this error came
