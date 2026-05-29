@@ -1,21 +1,18 @@
-import pandas as pd
+INFO:     10.5.1.58:62228 - "GET /api/v1/auth/me/access HTTP/1.1" 200 OK
+[DIAG-UPLOAD] Parsed file: filename=rms_create_tasks.xlsx, file_type=excel, row_count=3, first_row={'Employee ID': 2291, 'Project ID': 100, 'Product ID': 10, 'Task Index': 10, 'Activity Index': 1, 'Start Date': '2026-06-01', 'End Date': '2026-06-03', 'Planned Hours': 8}
+[DIAG-ROUTE] After parse: type=<class 'dict'>, value={'filename': 'rms_create_tasks.xlsx', 'file_type': 'excel', 'row_count': 3, 'data': [{'Employee ID': 2291, 'Project ID': 100, 'Product ID': 10, 'Task Index': 10, 'Activity Index': 1, 'Start Date': '2026-06-01', 'End Date': '2026-06-03', 'Planned Hours': 8}, {'Employee ID': 2633, 'Project ID': 100, 'Product ID': 10, 'Task Index': 11, 'Activity Index': 1, 'Start Date': '2026-06-01', 'End Date': '2026-06-03', 'Planned Hours': 6}, {'Employee ID': 1572, 'Project ID': 100, 'Product ID': 10, 'Task Index': 12, 'Activity Index': 1, 'Start Date': '2026-01-25', 'End Date': '2026-06-03', 'Planned Hours': 4}], 'preview': [{'Employee ID': 2291, 'Project ID': 100, 'Product ID': 10, 'Task Index': 10, 'Activity Index': 1, 'Start Date': '2026-06-01', 'End Date': '2026-06-03', 'Planned Hours': 8}, {'Employee ID': 2633, 'Project ID': 100, 'Product ID': 10, 'Task Index': 11, 'Activity Index': 1, 'Start Date': '2026-06-01', 'End Date': '2026-06-03', 'Planned Hours': 6}, {'Employee ID': 1572, 'Project ID': 100, 'Product ID': 10, 'Task Index': 12, 'Activity Index': 1, 'Start Date': '2026-01-25', 'End Date': '2026-06-03', 'Planned Hours': 4}]}
+INFO:     10.5.1.58:62583 - "POST /api/v1/chat/stream-with-file HTTP/1.1" 200 OK
+[DIAG-CONTROLLER] stream_chat_with_file: request_data keys=['collection_name', 'message', 'chat_history', 'thread_id', 'uploaded_files'], module_name resolved to 'RMS'
+[DIAG-CONTROLLER] thread_id received: None
+d:\dev\agentic_ai\dpah_backend_v1\app\routes\chat_route.py:106: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_file(
+[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=upload tasks
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=upload tasks
 
-# Creator Excel — 3 rows (2 valid, 1 bad date to test skip)
-pd.DataFrame([
-    {"Employee ID": 3010, "Project ID": 100, "Product ID": 10, "Task Index": 10, "Activity Index": 1, "Start Date": "2026-06-01", "End Date": "2026-06-03", "Planned Hours": 8},
-    {"Employee ID": 2633, "Project ID": 100, "Product ID": 10, "Task Index": 11, "Activity Index": 1, "Start Date": "2026-06-01", "End Date": "2026-06-03", "Planned Hours": 6},
-    {"Employee ID": 3010, "Project ID": 100, "Product ID": 10, "Task Index": 12, "Activity Index": 1, "Start Date": "2026-25-01", "End Date": "2026-06-03", "Planned Hours": 4},
-]).to_excel("rms_create_tasks.xlsx", index=False)
-
-# Reviewer Excel — use a real Task ID from your DB
-# Replace 22 with an actual WorkLogIdx from pp_project_task_assigment_demo for 3010
-pd.DataFrame([
-    {"Task ID": 22, "Date": "2026-05-26", "Hours": 8, "Remark": "bulk implementation"},
-    {"Task ID": 22, "Date": "2026-05-27", "Hours": 4, "Remark": "testing"},
-]).to_excel("rms_log_hours.xlsx", index=False)
-
-# Approver Excel — use real PENDING Worklog Idx values
-pd.DataFrame([
-    {"Worklog ID": 5},
-    {"Worklog ID": 6},
-]).to_excel("rms_approve.xlsx", index=False)
+Hi! What can I help you with?
+upload tasks
+ rms_create_tasks.xlsx
+V
+🤖
+⚠️ Connection failed. Server error: cannot access local variable 'execution_log' where it is not associated with a value
