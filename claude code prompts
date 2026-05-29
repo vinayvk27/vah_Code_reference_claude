@@ -1,40 +1,19 @@
-curl -X POST http://localhost:5970/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"emp_no": "2830", "password": "<your-password>"}'
+** i have directly tested in browser my dev gave me confirmation and i have filled a form too 
 
-curl -N -X POST http://localhost:5970/api/v1/chat/stream \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "module_name": "MRR",
-    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"needed urgently\",\"items\":[{\"item_name\":\"DP-RM-CAB-03100\",\"qty\":25,\"return_date\":\"2026-06-03\"}]}}",
-    "thread_id": null
-  }'
+data: {"type": "meta", "thread_id": "89ec94ac-31a8-4e73-b3aa-32800a4e4b02"}
 
+data: {"type": "chunk", "text": "Sure, I can help you create a material requisition. Use the form below, or upload an Excel file.\n\n"}
 
-curl -N -X POST http://localhost:5970/api/v1/chat/stream \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "module_name": "MRR",
-    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"\",\"items\":[{\"item_name\":\"DP-RM-CAB-03100\",\"qty\":25,\"return_date\":\"2026-06-03\"}]}}",
-    "thread_id": null
-  }'
+data: {"type": "form_widget", "form": {"form_id": "mrr_create_form", "title": "Create Material Requisition", "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.", "submit_label": "Submit", "cancel_label": "Cancel", "fields": [{"name": "project_id", "label": "Project ID", "type": "text", "required": true, "placeholder": "e.g. 100"}, {"name": "requisition_type", "label": "Requisition Type", "type": "radio", "required": true, "options": [{"value": "RETURNABLE", "label": "Returnable"}, {"value": "NON_RETURNABLE", "label": "Non-Returnable"}]}, {"name": "need_by_date", "label": "Need By Date", "type": "date", "required": true}, {"name": "comments", "label": "Comments", "type": "textarea", "required": false, "rows": 3}, {"name": "items", "label": "Items", "type": "items_table", "required": true, "min_rows": 1, "columns": [{"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true}, {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1}, {"name": "return_date", "label": "Return Date", "type": "date", "required": false, "conditional": {"field": "requisition_type", "value": "RETURNABLE"}}]}]}}
 
-curl -N -X POST http://localhost:5970/api/v1/chat/stream \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "module_name": "MRR",
-    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"\",\"items\":[{\"item_name\":\"FAKE-XYZ-99\",\"qty\":5,\"return_date\":\"2026-06-03\"}]}}",
-    "thread_id": null
-  }'
+data: [DONE]
 
-curl -N -X POST http://localhost:5970/api/v1/chat/stream \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "module_name": "MRR",
-    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"NON_RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"office supplies\",\"items\":[{\"item_name\":\"DP-RM-CAB-03100\",\"qty\":3}]}}",
-    "thread_id": null
-  }'
+after clicking on submit in the front end success message came and along with it one more api gets called and this is the response of that
+data: {"type": "meta", "thread_id": "89ec94ac-31a8-4e73-b3aa-32800a4e4b02"}
+
+data: {"type": "chunk", "text": "I can only help with MRR tasks like creating material requisitions, approving requests, and issuing stock. Could you rephrase your request?\n\n"}
+
+data: [DONE]
+
+** in db also mrr not entered
+
