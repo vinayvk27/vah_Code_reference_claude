@@ -1,5 +1,54 @@
-data: {"type": "meta", "thread_id": "db312bd6-cb0c-4a04-8c7e-1c0606a67147"}
+═══════════════════════════════════════════════════════════════════
+TASK 6.7-FIX4: Use correct com_search column names
+═══════════════════════════════════════════════════════════════════
 
-data: {"type": "chunk", "text": "Could not submit the requisition due to a database error: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'ITEM_NAME' in 'field list'\n[SQL: \n            SELECT DP_PART_NO              AS item_id,\n                   ITEM_NAME               AS item_name,\n                   LPP_VALUE_UNITPRICE_INR AS unit_price_rs\n            FROM com_search\n            WHERE DP_PART_NO = %(kw)s\n              AND WAREHOUSE = '1'\n            LIMIT 1\n        ]\n[parameters: {'kw': 'DP-RM-CAB-02620'}]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n\n"}
+CRITICAL CONSTRAINT
+- First INSPECT the actual com_search columns.
+- Then patch the inline _lookup_item SQL in
+  app/workflows/material_workflow/nodes.py with the real column
+  names.
+- Do NOT modify other files.
 
-data: [DONE]
+INVESTIGATION
+Run:
+    DESCRIBE com_search;
+or:
+    SHOW COLUMNS FROM com_search;
+on the MariaDB database used by the app. List every column name in
+the report.
+
+We need to identify the actual columns for:
+  - DP_PART_NO  (likely correct — used by ImportError-fix SQL already)
+  - The item display name (was guessed as ITEM_NAME — wrong)
+  - The unit price (was guessed as LPP_VALUE_UNITPRICE_INR — needs verification)
+  - The warehouse filter (was guessed as WAREHOUSE — needs verification)
+
+Also inspect existing working code to find the right names: search
+the codebase for any working query against com_search. For example:
+    grep -rn "com_search" app/
+
+That should show how existing code reads the table.
+
+FIX
+Update the _lookup_item helper's SELECT statement so the column
+names match the real com_search schema. Aliases stay as item_id /
+item_name / unit_price_rs (the calling code reads those names).
+
+If the warehouse column has a different name or values, fix that
+filter too. If com_search has no warehouse column at all, drop the
+filter.
+
+If unit price isn't a single column (e.g., it's computed from
+multiple columns or lives in a different table), use the simplest
+correct expression. If genuinely unavailable from com_search, fall
+back to selecting just item_id + item_name from com_search, and set
+unit_price_rs = 0 in Python (the MRR insert tolerates a zero price
+for now — the form will still submit and the row will land in DB).
+
+DELIVERABLE
+- Paste the DESCRIBE com_search output (every column).
+- Show how existing code reads com_search (grep result).
+- Show the corrected _lookup_item SQL using real column names.
+- Confirm the test item DP-RM-CAB-02620 returns a non-empty row
+  when the corrected query is run manually.
+═══════════════════════════════════════════════════════════════════
