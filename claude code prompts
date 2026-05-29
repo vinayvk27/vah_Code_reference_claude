@@ -1,10 +1,47 @@
-{"detail":[{"type":"missing","loc":["body","message"],"msg":"Field required","input":{"module_name":"MRR","action":"form_submit","form_id":"mrr_create_form","data":{"project_id":"YEA2719","requisition_type":"RETURNABLE","need_by_date":"2026-05-28","comments":"needed urgently","items":[{"item_name":"DP-RM-CAB-03100","qty":"25","return_date":"2026-06-03"}]},"thread_id":"b5460f48-09cf-46c5-ba52-6a770655fb45"}}]}
+═══════════════════════════════════════════════════════════════════
+FRONTEND CORRECTION — form_submit payload location
+═══════════════════════════════════════════════════════════════════
 
-Form Submit Failed: Error: API Error 422
-    submitForm useChatStream.js:269
-    onSubmit ChatOverlay.jsx:29
-    handleSubmit FormRenderer.jsx:79
-    React 13
-    <anonymous> main.jsx:8
+When user clicks Submit on the MRR form, the request body must keep
+the SAME shape as a regular chat message (module_name, message,
+thread_id). The form_submit object goes inside the "message" field
+as a JSON STRING.
 
-** react dev confirmed form is done so  i tested this error came
+Currently being posted (WRONG):
+{
+  "module_name": "MRR",
+  "action": "form_submit",       <-- these should NOT be at top level
+  "form_id": "mrr_create_form",
+  "data": { ... },
+  "thread_id": "..."
+}
+
+Should be posted (CORRECT):
+{
+  "module_name": "MRR",
+  "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{...}}",
+  "thread_id": "..."
+}
+
+Where the value of "message" is JSON.stringify(formSubmitObject).
+
+In JavaScript:
+    const formSubmit = {
+        action: "form_submit",
+        form_id: "mrr_create_form",
+        data: { project_id, requisition_type, need_by_date, comments, items }
+    };
+    const body = {
+        module_name: "MRR",
+        message: JSON.stringify(formSubmit),
+        thread_id: currentThreadId
+    };
+
+Backend will detect the JSON-string message starts with the
+form_submit action and route it accordingly (similar to how Excel
+upload routes by uploaded_files presence).
+
+Cancel button: post as before with module_name + message: "cancel"
++ thread_id. (Just a plain text message.)
+
+═══════════════════════════════════════════════════════════════════
