@@ -1,7 +1,74 @@
-data: {"type": "meta", "thread_id": "831d4fa2-6c0e-46f5-8ec6-dc806bf1fc35"}
+═══════════════════════════════════════════════════════════════════
+TASK 6.7-FIX2: Repair get_item_availability import in mariadb_queries
+═══════════════════════════════════════════════════════════════════
 
-data: {"type": "chunk", "text": "I couldn't submit the form. Please fix the highlighted fields and try again.\n\n"}
+CRITICAL CONSTRAINT
+- Identify the actual function name (or where it should live).
+- Restore the import so get_item_details_from_db works again.
+- Minimal-touch fix. Do NOT change unrelated logic.
 
-data: {"type": "form_errors", "form_id": "mrr_create_form", "errors": {"items.0.item_name": "Item lookup failed: cannot import name 'get_item_availability' from 'app.services.mariadb_queries' (d:\\dev\\agentic_ai\\dpah_backend_v1\\app\\services\\mariadb_queries.py)"}}
+PROBLEM
+Calling get_item_details_from_db (used by both MRR Excel handler
+and the new form_submit_handler) raises:
+    ImportError: cannot import name 'get_item_availability' from
+    'app.services.mariadb_queries'
 
-data: [DONE]
+INVESTIGATION STEPS
+1. Open app/services/mariadb_queries.py and list ALL functions
+   defined in it (grep for "^def "). Look for anything similar to
+   get_item_availability (typo, renamed, etc.).
+2. Open app/workflows/material_workflow/tools.py — find the line
+   that imports get_item_availability. Quote the import line.
+3. Open the same tools.py and find get_item_details_from_db. Find
+   where it calls get_item_availability. Quote that block.
+
+LIKELY ROOT CAUSES (check in order)
+(a) Function was renamed in mariadb_queries.py (e.g., to
+    get_effective_item_availability or fetch_item_availability) but
+    the import in tools.py wasn't updated.
+(b) Function was deleted/never added; tools.py expects it but it
+    doesn't exist.
+(c) Circular import — mariadb_queries.py imports from somewhere
+    that imports from it.
+
+FIX (apply the one that matches reality)
+- If (a): change the import in tools.py to the actual name.
+- If (b): either restore the function in mariadb_queries.py OR
+  replace the call in tools.py with a direct inline SQL query that
+  fetches item details (item_id, item_name, unit_price_rs) from
+  com_search by DP_PART_NO. Inline query if simpler:
+
+      from sqlalchemy import text
+      from app.dao.database import SessionLocal
+
+      def get_item_details_from_db(keyword: str) -> dict | None:
+          db = SessionLocal()
+          try:
+              row = db.execute(text(\"""
+                  SELECT DP_PART_NO AS item_id,
+                         ITEM_NAME  AS item_name,
+                         LPP_VALUE_UNITPRICE_INR AS unit_price_rs
+                  FROM com_search
+                  WHERE DP_PART_NO = :kw
+                    AND WAREHOUSE = '1'
+                  LIMIT 1
+              \"""), {"kw": keyword}).mappings().first()
+              return dict(row) if row else None
+          finally:
+              db.close()
+
+  Note: only adopt this fallback if the original function genuinely
+  isn't recoverable. Prefer fixing the import if possible.
+- If (c): break the circular import by moving the dependency or
+  inline-importing inside the function.
+
+DELIVERABLE
+Report:
+- List of functions in mariadb_queries.py.
+- The exact broken import line in tools.py.
+- Which root cause (a/b/c) applied.
+- The fix applied (renamed import, restored function, or inlined
+  SQL).
+- Confirm get_item_details_from_db now resolves for a known good
+  item code (DP-RM-CAB-02620).
+═══════════════════════════════════════════════════════════════════
