@@ -1,88 +1,21 @@
-# TASK 6.4 REPORT: RMS Bulk Excel for Creator + Reviewer + Approver
+import pandas as pd
 
-## INTENDED FOOTPRINT
+# Creator Excel — 3 rows (2 valid, 1 bad date to test skip)
+pd.DataFrame([
+    {"Employee ID": 3010, "Project ID": 100, "Product ID": 10, "Task Index": 10, "Activity Index": 1, "Start Date": "2026-06-01", "End Date": "2026-06-03", "Planned Hours": 8},
+    {"Employee ID": 2633, "Project ID": 100, "Product ID": 10, "Task Index": 11, "Activity Index": 1, "Start Date": "2026-06-01", "End Date": "2026-06-03", "Planned Hours": 6},
+    {"Employee ID": 3010, "Project ID": 100, "Product ID": 10, "Task Index": 12, "Activity Index": 1, "Start Date": "2026-25-01", "End Date": "2026-06-03", "Planned Hours": 4},
+]).to_excel("rms_create_tasks.xlsx", index=False)
 
-- **Create**: 3 new helpers (`_get_cell`, `_validate_creator_row`, `_validate_reviewer_row`, `_validate_approver_row`), 3 new handlers (`_handle_creator_excel`, `_handle_reviewer_excel`, `_handle_approver_excel`)
-- **Modify**: 3 node functions (creator_agent_node, reviewer_agent_node, approver_agent_node) with early-exit Excel path at top
-- **Modify**: 3 keyword lists in prompts.py, 3 keyword lists in intent.py
-- **No changes to**: intent.py routing logic, graph.py, state.py, timesheet_store, controllers, routes
+# Reviewer Excel — use a real Task ID from your DB
+# Replace 22 with an actual WorkLogIdx from pp_project_task_assigment_demo for 3010
+pd.DataFrame([
+    {"Task ID": 22, "Date": "2026-05-26", "Hours": 8, "Remark": "bulk implementation"},
+    {"Task ID": 22, "Date": "2026-05-27", "Hours": 4, "Remark": "testing"},
+]).to_excel("rms_log_hours.xlsx", index=False)
 
-## ACTUAL FOOTPRINT
-
-Same as intended. Only these files were touched:
-
-| File | Changes |
-|------|---------|
-| `app/workflows/rms_workflow/prompts.py` | Bulk keywords appended to CREATOR, FILLER, APPROVER lists |
-| `app/workflows/rms_workflow/intent.py` | Bulk keywords appended to CREATOR, REVIEWER, APPROVER lists |
-| `app/workflows/rms_workflow/nodes.py` | 4 helpers + 3 handlers + 3 early-exit checks in node functions |
-
-## UPDATED KEYWORD LISTS (additions only)
-
-### CREATOR_KEYWORDS (both prompts.py and intent.py)
-```
-"upload tasks", "upload task", "bulk create",
-"bulk tasks", "process task file", "process tasks file",
-"tasks from file", "tasks from excel", "import tasks"
-```
-
-### REVIEWER_KEYWORDS / FILLER_KEYWORDS (prompts.py: FILLER, intent.py: REVIEWER)
-```
-"upload timesheet", "upload hours", "bulk log",
-"bulk hours", "process timesheet", "process my timesheet",
-"log from file", "hours from file", "hours from excel",
-"import timesheet", "import hours"
-```
-
-### APPROVER_KEYWORDS (both prompts.py and intent.py)
-```
-"bulk approve", "approve from file", "approve all from file",
-"process approvals", "process approval file",
-"approvals from file", "approvals from excel",
-"import approvals"
-```
-
-## NEW HELPERS & HANDLERS IN nodes.py
-
-### `_get_cell(row, *candidates)`
-Case-insensitive cell lookup. Maps all row keys to lowercase, then looks up each candidate.
-
-### `_validate_creator_row(row)`
-Validates 8 columns: Employee ID, Project ID, Product ID, Task Index, Activity Index, Start Date, End Date, Planned Hours. Returns (fields_dict, error_string).
-
-### `_validate_reviewer_row(row)`
-Validates 4 columns: Task ID, Date, Hours, Remark. Returns (fields_dict, error_string).
-
-### `_validate_approver_row(row)`
-Validates 1 column: Worklog ID. Returns (fields_dict, error_string).
-
-### `_handle_creator_excel(state, uploaded_files, current_emp_no, execution_log)`
-Processes creator Excel rows via `timesheet_store.create_task()`. Sets `created_by=current_emp_no` from server-side, never from Excel.
-
-### `_handle_reviewer_excel(state, uploaded_files, current_emp_no, execution_log)`
-Processes reviewer Excel rows via `timesheet_store.add_worklog()`. Sets `resource_id=int(current_emp_no)` from server-side.
-
-### `_handle_approver_excel(state, uploaded_files, current_emp_no, execution_log)`
-Processes approver Excel rows via `timesheet_store.approve_worklog()` with decision="APPROVED".
-
-## CHAT PATH CONFIRMATION
-
-Each persona node checks for `uploaded_files` at the top, BEFORE any existing logic:
-- If `uploaded_files` is non-empty -> returns Excel handler result immediately
-- If `uploaded_files` is empty/missing -> falls through to existing chat-path code unchanged
-
-Confirmed: the existing regex extraction, worklog logging, and approval logic runs identically when no files are uploaded.
-
-## SERVER-SIDE VALUES CONFIRMATION
-
-- **Creator**: `created_by=current_emp_no` is set from `state.get("emp_no", ...)`, never from Excel
-- **Reviewer**: `resource_id=int(current_emp_no)` is set from state, never from Excel
-- **Approver**: `approver_id=int(current_emp_no)` is set from state, never from Excel
-
-## FILES MODIFIED
-
-1. `app/workflows/rms_workflow/prompts.py` - keyword additions
-2. `app/workflows/rms_workflow/intent.py` - keyword additions
-3. `app/workflows/rms_workflow/nodes.py` - helpers, handlers, node modifications
-
-No other files were modified.
+# Approver Excel — use real PENDING Worklog Idx values
+pd.DataFrame([
+    {"Worklog ID": 5},
+    {"Worklog ID": 6},
+]).to_excel("rms_approve.xlsx", index=False)
