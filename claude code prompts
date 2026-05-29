@@ -1,17 +1,5 @@
-Done. Here's the report:
+data: {"type": "meta", "thread_id": "7eda53ae-749b-4ae1-bbae-6c0792b19bb9"}
 
-Existing working code in mariadb_queries.py:203-206:
+data: {"type": "chunk", "text": "Could not submit the requisition due to a database error: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'DEPARTMENTID' in 'field list'\n[SQL: \n            INSERT INTO mrr_matrequisitionheader (\n                MATREQUISITIONNO, STATUS, VERIFICATION_STATUS, VERIFICATION_DATE,\n                APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE,\n                SUPPLIERID, SUPPLIERSITEID, REQTRANSACTIONTYPE, COMMENTS,\n                DEPARTMENTID, REQUESTORID, REQUISITIONDATE, TOTAL_COST,\n                PROJECTID, PHASEID\n            ) VALUES (\n                %(mrrno)s, 'ENTERED', NULL, NULL,\n                NULL, NULL,\n                NULL, NULL,\n                0, 0, %(reqtype)s, %(comments)s,\n                1, %(user)s, NOW(), %(total)s,\n                %(proj)s, NULL\n            )\n        ]\n[parameters: {'mrrno': 'MRR/17/25-26', 'reqtype': 'RETURNABLE', 'comments': 'latest test', 'user': '2830', 'total': 5891.339999999999, 'proj': 'YEA2719'}]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n\n"}
 
-
-SELECT ITEMID, ITEMREVISIONID, UOM, QOH, PRICE, DESCRIPTION
-FROM com_search
-WHERE DP_PART_NO = :pn AND WAREHOUSE = '1'
-This shows com_search has: ITEMID, ITEMREVISIONID, UOM, QOH, PRICE, DESCRIPTION, DP_PART_NO, WAREHOUSE — but no ITEM_NAME or LPP_VALUE_UNITPRICE_INR. Those are on SCMITEMS (LPP lives there).
-
-Fixes applied:
-
-nodes.py:1108-1122 — _lookup_item now selects DP_PART_NO, DESCRIPTION (alias → item_name), PRICE (alias → unit_price_rs).
-
-mariadb_queries.py:326-328 — get_item_availability also fixed: ITEM_NAME → DESCRIPTION (same table schema issue).
-
-The existing resolve_item_from_partno (line 203) already used correct columns, confirming the fix pattern.
+data: [DONE]
