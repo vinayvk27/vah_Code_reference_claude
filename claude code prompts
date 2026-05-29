@@ -1,50 +1,7 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.6-FIX: Expand MRR CREATOR_KEYWORDS for natural phrasings
-═══════════════════════════════════════════════════════════════════
+data: {"type": "meta", "thread_id": "1b4a22b9-98ec-4842-a735-6eb700be7fa2"}
 
-CRITICAL CONSTRAINT
-- Only touch app/workflows/material_workflow/intent.py and
-  app/workflows/material_workflow/prompts.py (the lists in both
-  must stay in sync — same pattern as Task 6.4).
-- Only ADD keywords; do not remove existing ones.
+data: {"type": "chunk", "text": "Sure, I can help you create a material requisition. Use the form below, or upload an Excel file.\n\n"}
 
-PROBLEM
-"create an mrr" was classified OUT_OF_DOMAIN. CREATOR_KEYWORDS lacks
-the common shorthand "mrr" and natural phrasings users actually type.
+data: {"type": "form_widget", "form": {"form_id": "mrr_create_form", "title": "Create Material Requisition", "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.", "submit_label": "Submit", "cancel_label": "Cancel", "fields": [{"name": "project_id", "label": "Project ID", "type": "text", "required": true, "placeholder": "e.g. 100"}, {"name": "requisition_type", "label": "Requisition Type", "type": "radio", "required": true, "options": [{"value": "RETURNABLE", "label": "Returnable"}, {"value": "NON_RETURNABLE", "label": "Non-Returnable"}]}, {"name": "need_by_date", "label": "Need By Date", "type": "date", "required": true}, {"name": "comments", "label": "Comments", "type": "textarea", "required": false, "rows": 3}, {"name": "items", "label": "Items", "type": "items_table", "required": true, "min_rows": 1, "columns": [{"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true}, {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1}, {"name": "return_date", "label": "Return Date", "type": "date", "required": false, "conditional": {"field": "requisition_type", "value": "RETURNABLE"}}]}]}}
 
-FIX
-Append these creator phrasings to CREATOR_KEYWORDS in BOTH files:
-
-    "create an mrr",
-    "create a mrr",
-    "create mrr",
-    "new mrr",
-    "raise mrr",
-    "raise an mrr",
-    "start an mrr",
-    "start mrr",
-    "make an mrr",
-    "make a mrr",
-    "i want to raise an mrr",
-    "i want to create an mrr",
-    "want to create mrr",
-    "i need to raise an mrr",
-    "need to create mrr"
-
-Verify by reading the existing CREATOR_KEYWORDS list. Do NOT
-duplicate any entry already present.
-
-Also verify ordering in the classifier: OUT_OF_DOMAIN must not
-match these phrases before CREATOR does. If the classifier checks
-OUT_OF_DOMAIN keywords first and any of them contain a substring
-that matches the new phrases, those need to come AFTER CREATOR
-matching (the keyword classifier order matters — earlier match
-wins per Task 5.6).
-
-DELIVERABLE
-Show:
-- The added entries appended to CREATOR_KEYWORDS in both files.
-- Confirmation that the matching order in classify_mrr_intent
-  still gives CREATOR priority for these phrases (no OUT_OF_DOMAIN
-  collision).
-═══════════════════════════════════════════════════════════════════
+data: [DONE]
