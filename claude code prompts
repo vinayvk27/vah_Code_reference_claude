@@ -1,185 +1,40 @@
-# TASK 6.7 — MRR Form Submit (Validate + Insert) Report
+curl -X POST http://localhost:5970/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"emp_no": "2830", "password": "<your-password>"}'
 
-## INTENDED Footprint
+curl -N -X POST http://localhost:5970/api/v1/chat/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "module_name": "MRR",
+    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"needed urgently\",\"items\":[{\"item_name\":\"DP-RM-CAB-03100\",\"qty\":25,\"return_date\":\"2026-06-03\"}]}}",
+    "thread_id": null
+  }'
 
-| File | Change |
-|------|--------|
-| `app/workflows/material_workflow/nodes.py` | New `_parse_form_submit_message()` helper + `form_submit_handler_node()` + `creator_path_router` branch |
-| `app/workflows/material_workflow/graph.py` | Import `form_submit_handler_node`, add_node (2 aliases), add edge to END, wire `form_submit_handler` in router dict |
-| `app/controllers/chat_controller.py` | New `FORM_ERRORS_RE` regex + `_emit_with_form_errors()` function; updated marker detection order in both stream methods; added `form_submit_handler_node` to both `static_output_nodes` lists |
 
-## ACTUAL Footprint — Same as intended. No files touched outside the three listed above.
+curl -N -X POST http://localhost:5970/api/v1/chat/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "module_name": "MRR",
+    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"\",\"items\":[{\"item_name\":\"DP-RM-CAB-03100\",\"qty\":25,\"return_date\":\"2026-06-03\"}]}}",
+    "thread_id": null
+  }'
 
----
+curl -N -X POST http://localhost:5970/api/v1/chat/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "module_name": "MRR",
+    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"\",\"items\":[{\"item_name\":\"FAKE-XYZ-99\",\"qty\":5,\"return_date\":\"2026-06-03\"}]}}",
+    "thread_id": null
+  }'
 
-## 1. `_parse_form_submit_message` helper
-
-**File:** [nodes.py:47-61](app/workflows/material_workflow/nodes.py#L47-L61)
-
-```python
-def _parse_form_submit_message(message: str) -> Optional[dict]:
-    """
-    If the message is a JSON object with action='form_submit', return
-    the parsed dict {action, form_id, data}. Otherwise return None.
-    Robust to whitespace/leading-trailing junk: must START with '{'
-    and be valid JSON; otherwise return None silently.
-    """
-    s = (message or "").strip()
-    if not s.startswith("{"):
-        return None
-    try:
-        obj = json.loads(s)
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    if obj.get("action") != "form_submit":
-        return None
-    return obj
-```
-
----
-
-## 2. `form_submit_handler_node` body
-
-**File:** [nodes.py:1055-1172](app/workflows/material_workflow/nodes.py#L1055-L1172)
-
-Full function (abbreviated for report):
-
-- **Validation:** Checks `form_id == "mrr_create_form"`, required header fields (`project_id`, `requisition_type`, `need_by_date`), and `items` array. Each item validates `item_name`, `qty`, `return_date` (for RETURNABLE), and looks up `get_item_details_from_db()`.
-- **Errors:** Emits via `[[FORM_ERRORS:<json>]]` marker for controller to split.
-- **DB Insert:** Mirrors `evaluate_and_route` — INSERT header → fetch header_id → INSERT lines → commit. Auto-verifies: < 2000 = auto-approved manager + ERP pending; >= 2000 = manager pending.
-- **Success:** Returns confirmation with `add_reasoning()` addon.
-- **Zero LLM calls.** Pure Python + SQLAlchemy.
-
----
-
-## 3. Graph.py Changes
-
-### Import addition
-```python
-form_submit_handler_node,
-```
-
-### add_node (2 aliases for LangGraph)
-```python
-graph_builder.add_node("form_submit_handler", form_submit_handler_node)
-graph_builder.add_node("form_submit_handler_node", form_submit_handler_node)
-```
-
-### Router dict update
-```python
-graph_builder.add_conditional_edges(
-    "creator_router_entry",
-    creator_path_router,
-    {
-        "excel_handler": "excel_handler",
-        "form_submit_handler": "form_submit_handler",  # NEW
-        "submit_mrr": "submit_mrr",
-        "cancel_mrr": "cancel_mrr",
-        "form_flow": "parse_user_input",
-        "creator_needs_file": "creator_needs_file",
-    }
-)
-```
-
-### Terminal edges
-```python
-graph_builder.add_edge("form_submit_handler", END)
-graph_builder.add_edge("form_submit_handler_node", END)
-```
-
-### creator_path_router branch (in nodes.py)
-
-Added at the **top** of the router (before excel/creator_needs_file):
-
-```python
-# form_submit: detect JSON payload with action='form_submit'
-if _parse_form_submit_message(_get_last_user_message(msgs)) is not None:
-    return "form_submit_handler"
-```
-
----
-
-## 4. Controller Form Errors Handler
-
-### New regex + function
-
-```python
-FORM_ERRORS_RE = re.compile(r"\[\[FORM_ERRORS:(.*?)\]\]", re.DOTALL)
-
-def _emit_with_form_errors(full_text: str):
-    match = FORM_ERRORS_RE.search(full_text)
-    if not match:
-        yield {"type": "chunk", "text": full_text}
-        return
-    ...
-    yield {"type": "form_errors", "form_id": payload.get("form_id"), "errors": payload.get("errors", {})}
-    ...
-```
-
-### Marker detection ordering (both `stream_chat_with_orchestrator` and `stream_chat_with_file`)
-
-```python
-if "[[FORM_WIDGET:" in content:
-    for event in _emit_with_form_widget(content): ...
-elif "[[FORM_ERRORS:" in content:      # NEW
-    for event in _emit_with_form_errors(content): ...
-elif "<<FORM>>" in content and "<<ENDFORM>>" in content:
-    # existing handler
-else:
-    yield {"type": "chunk", "text": content + "\n\n"}
-```
-
----
-
-## 5. `static_output_nodes` Updated (Both Lists)
-
-**`stream_chat_with_orchestrator`** (line ~280):
-```python
-"form_submit_handler_node",   # NEW
-```
-
-**`stream_chat_with_file`** (line ~600):
-```python
-"form_submit_handler_node",   # NEW
-```
-
----
-
-## 6. Confirmation Checklist
-
-- Excel path: **untouched** — `excel_handler_node` + `mrr_submission_node` unchanged
-- Chat path (form/natural language): **untouched** — `parse_user_input`, `handle_header`, `handle_items`, `evaluate_and_route` unchanged
-- No LLM used for **any** structural decision: **confirmed** — all validation is pure Python, DB insert uses raw SQLAlchemy `text()`
-- `form_submit_handler_node` terminates immediately after processing (edge to `END`)
-
----
-
-## 7. Simulated Event Streams
-
-### Case (i): Successful Submit
-
-```
-{"type": "meta", "thread_id": "abc-123"}
-{"type": "chunk", "text": "Requisition MRR/142/25-26 (total ₹1,250.00) submitted and auto-approved at manager stage. Awaiting ERP approval.\n\n"}
-```
-
-### Case (ii): Validation Failure
-
-```
-{"type": "meta", "thread_id": "abc-123"}
-{"type": "chunk", "text": "I couldn't submit the form. Please fix the highlighted fields and try again.\n\n"}
-{"type": "form_errors", "form_id": "mrr_create_form", "errors": {
-  "project_id": "Project ID is required",
-  "items.0.qty": "Quantity must be > 0"
-}}
-```
-
----
-
-## Modified Files Summary
-
-1. `app/workflows/material_workflow/nodes.py` — +280 lines (helper + handler + router branch)
-2. `app/workflows/material_workflow/graph.py` — +8 lines (import + nodes + edges)
-3. `app/controllers/chat_controller.py` — +25 lines (FORM_ERRORS_RE + _emit_with_form_errors + marker detection + static_output_nodes)
+curl -N -X POST http://localhost:5970/api/v1/chat/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "module_name": "MRR",
+    "message": "{\"action\":\"form_submit\",\"form_id\":\"mrr_create_form\",\"data\":{\"project_id\":\"YEA2719\",\"requisition_type\":\"NON_RETURNABLE\",\"need_by_date\":\"2026-05-28\",\"comments\":\"office supplies\",\"items\":[{\"item_name\":\"DP-RM-CAB-03100\",\"qty\":3}]}}",
+    "thread_id": null
+  }'
