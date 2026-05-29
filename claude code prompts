@@ -1,22 +1,85 @@
-Done. Here's the report:
+═══════════════════════════════════════════════════════════════════
+TASK 6.7-FIX3: Inline item lookup in form_submit_handler
+═══════════════════════════════════════════════════════════════════
 
-Functions in mariadb_queries.py:
-get_project_by_number, get_project_phase, get_max_matrequisition_id, get_max_matrequisition_line_id, get_max_mrr_sequence_for_fy, get_existing_mrr_numbers_count, resolve_item_from_partno, get_item_lpp, get_item_uomid, get_item_id_by_name
+CRITICAL CONSTRAINT
+- Only touch app/workflows/material_workflow/nodes.py
+  (form_submit_handler_node body — replace one call site).
+- Do NOT modify tools.py, mariadb_queries.py, or any other path.
+  Other consumers of get_item_details_from_db are out of scope.
 
-Broken import in tools.py:99:
+PROBLEM
+form_submit_handler_node calls get_item_details_from_db, which
+chains into a fragile legacy path (get_effective_item_availability
+-> get_item_availability + custom pending-qty SQL referencing
+columns that don't exist: 'l.REQUANTITY'). The form submission
+doesn't need pending-qty or availability — only item_id, item_name,
+and unit_price_rs.
 
+FIX
+Replace the get_item_details_from_db(item_name) call inside
+form_submit_handler_node with a direct, minimal inline SQL lookup
+against com_search:
 
-from app.services.mariadb_queries import get_item_availability, get_item_lpp
-Root cause: The function get_item_availability was never defined in mariadb_queries.py — it existed in oracle_queries.py but was never migrated/added to the MariaDB module. This caused ImportError when get_effective_item_availability (called by get_item_details_from_db) tried to import it.
+    from sqlalchemy import text
+    # ... already in the function scope ...
 
-Fix: Added get_item_availability(item_id: int) to mariadb_queries.py:316-342 — queries com_search for ITEM_NAME and QOH by ITEMID. This mirrors the Oracle version's contract (returns {"name", "onhand_quantity"} or None), which is what tools.py:111-114 expects. No changes to tools.py were needed.
+    # Inline item lookup (avoids the legacy availability chain).
+    # We only need: item_id, item_name, unit_price_rs.
+    def _lookup_item(db_session, keyword: str) -> dict | None:
+        row = db_session.execute(text(\"""
+            SELECT DP_PART_NO              AS item_id,
+                   ITEM_NAME               AS item_name,
+                   LPP_VALUE_UNITPRICE_INR AS unit_price_rs
+            FROM com_search
+            WHERE DP_PART_NO = :kw
+              AND WAREHOUSE = '1'
+            LIMIT 1
+        \"""), {"kw": keyword}).mappings().first()
+        return dict(row) if row else None
 
-data: {"type": "meta", "thread_id": "fb778952-fcfd-4455-97b9-a7b516a1e536"}
+Define _lookup_item OUTSIDE the per-row loop (or as a top-of-module
+helper near _parse_form_submit_message — your call, just keep it
+private to nodes.py). Then inside the items-validation loop, where
+the code currently has:
+    item_data = get_item_details_from_db(item_name)
+replace with:
+    item_data = _lookup_item(db, item_name)
 
-data: {"type": "chunk", "text": "I couldn't submit the form. Please fix the highlighted fields and try again.\n\n"}
+NOTE: This requires opening the SessionLocal() EARLIER (before the
+items validation loop) so the inline lookup uses the same session.
+Restructure the function so:
 
-data: {"type": "form_errors", "form_id": "mrr_create_form", "errors": {"items.0.item_name": "Item lookup failed: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'l.REQUANTITY' in 'field list'\n[SQL: \n            SELECT COALESCE(SUM(l.REQUANTITY), 0) as pending_qty\n            FROM mrr_matrequisitionlines l\n            JOIN mrr_matrequisitionheader h ON l.MATREQUISITIONID = h.MATREQUISITIONID\n            WHERE l.ITEMID = %(item_id)s AND h.VERIFICATION_STATUS = 'APPROVED' AND h.APPROVAL_STATUS = 'PENDING'\n        ]\n[parameters: {'item_id': '7636'}]\n(Background on this error at: https://sqlalche.me/e/20/f405)"}}
+    db = SessionLocal()
+    try:
+        # validation including _lookup_item(db, ...)
+        if errors:
+            return ... form_errors ...
 
-data: [DONE]
+        # insert header
+        # insert lines
+        # commit
+        # auto-verify
+        return ... confirmation ...
+    except Exception as e:
+        db.rollback()
+        return ... db error ...
+    finally:
+        db.close()
 
-** cant we fix the errors at once because i dont know why these errors coming now only because excel upload is also uisng same functions then why now only 
+The session lifecycle becomes: open once, used for both lookups and
+inserts, closed in finally. This matches how MRR's evaluate_and_route
+already does it.
+
+Make sure `unit_price_rs` is coerced to float on use (com_search may
+return it as Decimal). Use:
+    float(item_data["unit_price_rs"] or 0)
+
+DELIVERABLE
+Show the updated form_submit_handler_node with:
+- The new _lookup_item helper (location indicated).
+- The single SessionLocal() opened once, closed in finally.
+- The items loop using _lookup_item(db, item_name).
+- Confirmation that no call to get_item_details_from_db or
+  get_effective_item_availability remains in form_submit_handler.
+═══════════════════════════════════════════════════════════════════
