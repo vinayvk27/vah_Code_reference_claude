@@ -1,66 +1,17 @@
 ═══════════════════════════════════════════════════════════════════
-FRONTEND TASK: Form widgets, table rendering, thread ID capture
+FRONTEND TASK UPDATE — MRR form field list LOCKED
 ═══════════════════════════════════════════════════════════════════
 
-This task has THREE independent sub-tasks. They can be worked on in
-parallel by different developers if available. Backend changes are
-happening in parallel — no backend dependency for sub-tasks 1 and 3;
-sub-task 2 has a JSON contract defined below that backend will follow.
+Field list is now FROZEN. Build the renderer against this exact
+specification.
 
-───────────────────────────────────────────────────────────────────
-SUB-TASK 1: Render markdown tables in chat bubbles
-───────────────────────────────────────────────────────────────────
-
-Backend already returns markdown tables for several outputs:
-- "show my tasks" (RMS reviewer)
-- "show pending approvals" (RMS approver, MRR approver)
-- Bulk Excel summaries
-
-Example markdown sent by backend:
-
-    ### Your Assigned Tasks
-
-    | Task ID | Project | Product | Task Idx | Start | End | Planned Hrs |
-    |---|---|---|---|---|---|---|
-    | 22 | 100 | 10 | 1 | 2026-05-26 | 2026-05-28 | 8 |
-    | 23 | 100 | 10 | 2 | 2026-05-29 | 2026-06-02 | 6 |
-
-    To log hours: log 8 hours on task <Task ID> for <YYYY-MM-DD> with remark "your note"
-
-REQUIREMENT
-Render markdown content in assistant chat bubbles using a markdown
-renderer (e.g., react-markdown with remark-gfm for table support).
-
-- Tables should render as actual HTML tables with proper borders,
-  alternating row colors, and good readability.
-- Headers (### H3) should render as styled headings.
-- Bold (**text**) and inline code (`code`) should style correctly.
-- Lists (- bullet) render as bullets.
-
-Suggested library: react-markdown + remark-gfm
-    npm install react-markdown remark-gfm
-
-Make sure tables don't overflow on mobile — horizontal scroll or
-responsive collapse is acceptable.
-
-User chat bubbles (the ones the USER sends) stay as plain text.
-Only ASSISTANT chat bubbles get markdown rendering.
-
-───────────────────────────────────────────────────────────────────
-SUB-TASK 2: Render form widgets emitted by backend
-───────────────────────────────────────────────────────────────────
-
-Backend will emit a special chunk for form widgets. Format:
-
-    data: {"type": "form_widget", "form": <FORM_JSON>}
-
-where FORM_JSON conforms to this contract:
+MRR form JSON shape (backend will emit exactly this):
 
 {
     "form_id": "mrr_create_form",
     "title": "Create Material Requisition",
-    "description": "Fill in the details below and click Submit.",
-    "submit_label": "Submit MRR",
+    "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.",
+    "submit_label": "Submit",
     "cancel_label": "Cancel",
     "fields": [
         {
@@ -71,14 +22,13 @@ where FORM_JSON conforms to this contract:
             "placeholder": "e.g. 100"
         },
         {
-            "name": "phase_id",
-            "label": "Phase",
-            "type": "select",
+            "name": "requisition_type",
+            "label": "Requisition Type",
+            "type": "radio",
             "required": true,
             "options": [
-                {"value": "DESIGN", "label": "Design"},
-                {"value": "BUILD", "label": "Build"},
-                {"value": "TEST", "label": "Test"}
+                {"value": "RETURNABLE", "label": "Returnable"},
+                {"value": "NON_RETURNABLE", "label": "Non-Returnable"}
             ]
         },
         {
@@ -88,8 +38,8 @@ where FORM_JSON conforms to this contract:
             "required": true
         },
         {
-            "name": "remarks",
-            "label": "Remarks",
+            "name": "comments",
+            "label": "Comments",
             "type": "textarea",
             "required": false,
             "rows": 3
@@ -101,109 +51,117 @@ where FORM_JSON conforms to this contract:
             "required": true,
             "min_rows": 1,
             "columns": [
-                {"name": "item_code", "label": "Item Code", "type": "text"},
-                {"name": "qty", "label": "Quantity", "type": "number"}
+                {"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true},
+                {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1},
+                {
+                    "name": "return_date",
+                    "label": "Return Date",
+                    "type": "date",
+                    "required": false,
+                    "conditional": {"field": "requisition_type", "value": "RETURNABLE"}
+                }
             ]
         }
     ]
 }
 
-SUPPORTED FIELD TYPES
-- text: single-line input
-- number: numeric input (with min/max if specified)
-- date: date picker (YYYY-MM-DD format)
-- textarea: multi-line input
-- select: dropdown with options array
-- checkbox: boolean toggle
-- items_table: a repeating row table (user can add/remove rows); each
-  row has the fields defined in "columns". Always show a "+ Add row"
-  button below the table.
+ADDITIONS TO THE ORIGINAL TASK
+─────────────────────────────
 
-REQUIREMENT
-- Render the form INLINE in the chat (or in a modal — your call,
-  inline preferred for chat flow).
-- On Submit click:
-    - Collect all field values into a JSON object.
-    - For items_table fields, collect rows as an array of objects.
-    - Post to the SAME chat endpoint as a regular message, but the
-      message body should be:
-          {"action": "form_submit", "form_id": "<form_id>",
-           "data": <collected_field_values>}
-    - Send this as the user's "message" in the next request.
-- On Cancel click:
-    - Send "cancel" as a plain text message.
-- Show validation errors inline (required fields, number ranges).
+1. ADD a new field type: "radio"
+   - Renders a radio button group from "options" array.
+   - Each option has "value" (machine value) and "label" (display).
+   - Single selection.
+   - Submit collects the chosen value (e.g., "RETURNABLE").
 
-EXAMPLE submit payload posted to backend:
+2. CONDITIONAL FIELDS in items_table:
+   - The "return_date" column in items has a "conditional" key.
+   - Render this column ONLY when the form field named in
+     conditional.field equals conditional.value.
+   - Example: when requisition_type === "RETURNABLE", show
+     return_date column. When "NON_RETURNABLE", hide it.
+   - This is a pure CSS/JSX show/hide based on form state — no
+     backend round-trip.
+   - When the column is hidden, do NOT include return_date in the
+     submitted payload (or send it as null — backend ignores).
+
+3. ITEM NAME / CODE field:
+   - User types the item code directly (e.g., "04617").
+   - No autocomplete or DB lookup from frontend — backend resolves
+     the code to item details (name, price, etc.) on submit.
+   - If backend can't resolve a code, it returns a field-level error
+     for that row (see error handling below).
+
+SUBMIT PAYLOAD
+─────────────
+
+When user clicks Submit, post to the same chat endpoint with the
+USER's message body as:
 
     {
         "action": "form_submit",
         "form_id": "mrr_create_form",
         "data": {
             "project_id": "100",
-            "phase_id": "DESIGN",
+            "requisition_type": "RETURNABLE",
             "need_by_date": "2026-06-15",
-            "remarks": "urgent",
+            "comments": "urgent",
             "items": [
-                {"item_code": "04617", "qty": 5},
-                {"item_code": "04618", "qty": 2}
+                {"item_name": "04617", "qty": 5, "return_date": "2026-07-01"},
+                {"item_name": "04618", "qty": 2, "return_date": "2026-07-01"}
             ]
         }
     }
 
-Backend will receive this as the user message, parse the JSON,
-validate, and process. Same single-submit pattern as Excel upload.
+For NON_RETURNABLE, omit return_date OR send null:
 
-NOTE: This is single-screen / single-submit. NOT a wizard.
+    {
+        "action": "form_submit",
+        "form_id": "mrr_create_form",
+        "data": {
+            "project_id": "100",
+            "requisition_type": "NON_RETURNABLE",
+            "need_by_date": "2026-06-15",
+            "comments": "",
+            "items": [
+                {"item_name": "04617", "qty": 5}
+            ]
+        }
+    }
 
-You can stub the backend behaviour during development by sending a
-hardcoded form_widget event from a mock — the contract above is
-what the real backend will send.
+ERROR HANDLING
+─────────────
 
-───────────────────────────────────────────────────────────────────
-SUB-TASK 3: Capture and resend thread_id
-───────────────────────────────────────────────────────────────────
+Backend may respond with a structured error event:
 
-Backend already sends a `meta` event at the start of every streaming
-response:
+    data: {"type": "form_errors", "form_id": "mrr_create_form", "errors": {<field_or_row_path>: <message>, ...}}
 
-    data: {"type": "meta", "thread_id": "9534eafd-f55f-4915-8510-..."}
+Examples:
+    "errors": {
+        "project_id": "Project ID is required",
+        "items.0.item_name": "Item code '99999' not found in catalog",
+        "items.1.qty": "Quantity must be greater than 0"
+    }
 
-CURRENT BEHAVIOR
-Frontend likely sends thread_id=None on every request, so each turn
-starts fresh. Verified in backend logs:
-    [DIAG-CONTROLLER] thread_id received: None
+For items errors, the key uses dot-path: "items.<row_index>.<column>".
 
-REQUIREMENT
-- Capture the thread_id from the meta event of the FIRST response in
-  a conversation.
-- Store it (in component state, conversation object — whatever fits
-  the app's structure).
-- Send it back as `thread_id` in every subsequent request body for
-  that same conversation.
-- On "new chat" / starting a fresh conversation, clear the stored
-  thread_id so backend starts a new thread.
+DISPLAY THESE ERRORS INLINE on the relevant field / row. Do NOT
+close the form; let user fix and resubmit.
 
-This unlocks multi-turn workflows (confirm/cancel, wizard forms)
-later, and is harmless now (backend accepts and ignores until
-checkpointer is wired). Costs nothing to add now, costs a lot to
-retrofit later.
+On SUCCESS, backend sends normal chunk events with the confirmation
+message. Close the form once a success chunk arrives.
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLES
-───────────────────────────────────────────────────────────────────
+MOCK DATA FOR TESTING
+─────────────────────
 
-For each sub-task:
-1. Show a screenshot or short video of the working feature.
-2. Confirm the npm packages added (if any).
-3. List the components/files modified.
-
-QUESTIONS WELCOME
-For form widget rendering specifics (styling, modal vs inline, items
-table behaviour), use your best judgement — the contract above is
-the data shape; UI presentation is your call as long as it's usable
-and matches the existing chat aesthetic.
+Until backend ships, mock the form_widget event by injecting the
+above JSON. Test:
+- Radio toggle hides/shows return_date column.
+- "+ Add row" / "remove row" works for items.
+- Submit collects values correctly into the payload above.
+- Cancel sends "cancel" as a plain text message.
+- form_errors event displays inline errors without closing the form.
 
 ═══════════════════════════════════════════════════════════════════
-END FRONTEND TASK
+END UPDATE
 ═══════════════════════════════════════════════════════════════════
