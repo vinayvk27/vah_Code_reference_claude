@@ -1,167 +1,248 @@
 ═══════════════════════════════════════════════════════════════════
-FRONTEND TASK UPDATE — MRR form field list LOCKED
+TASK 6.6: Emit MRR form_widget event when creator has no Excel
 ═══════════════════════════════════════════════════════════════════
+When a user invokes MRR creator without uploading a file and without
+inline structured data, return BOTH a friendly text message AND a
+form_widget event (structured JSON the frontend renders as a form).
+Excel upload path remains untouched.
 
-Field list is now FROZEN. Build the renderer against this exact
-specification.
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Modify ONLY:
+    app/workflows/material_workflow/nodes.py
+      (specifically the creator_needs_file_node body — or wherever
+       the "no file uploaded" path lives in MRR creator routing)
+    app/controllers/chat_controller.py
+      (to detect [[FORM_WIDGET:<json>]] in node output and emit a
+       separate SSE event)
+- Do NOT modify intent.py, graph.py, state.py, routes, or any other
+  workflow logic.
+- Excel upload path: UNCHANGED. If uploaded_files is present, the
+  existing Excel handling runs and form_widget is NOT emitted.
+- Inline structured chat (e.g., "create mrr with project 100 item
+  04617 qty 5"): handled by existing form_flow / handle_header. NOT
+  in scope here. The form widget appears only when the user gives a
+  bare creator request with no data.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
-MRR form JSON shape (backend will emit exactly this):
+───────────────────────────────────────────────────────────────────
+STEP 1 — Define the FROZEN MRR form JSON
+───────────────────────────────────────────────────────────────────
 
-{
-    "form_id": "mrr_create_form",
-    "title": "Create Material Requisition",
-    "description": "Fill in the details below and click Submit. You can also upload an Excel file instead.",
-    "submit_label": "Submit",
-    "cancel_label": "Cancel",
-    "fields": [
-        {
-            "name": "project_id",
-            "label": "Project ID",
-            "type": "text",
-            "required": true,
-            "placeholder": "e.g. 100"
-        },
-        {
-            "name": "requisition_type",
-            "label": "Requisition Type",
-            "type": "radio",
-            "required": true,
-            "options": [
-                {"value": "RETURNABLE", "label": "Returnable"},
-                {"value": "NON_RETURNABLE", "label": "Non-Returnable"}
-            ]
-        },
-        {
-            "name": "need_by_date",
-            "label": "Need By Date",
-            "type": "date",
-            "required": true
-        },
-        {
-            "name": "comments",
-            "label": "Comments",
-            "type": "textarea",
-            "required": false,
-            "rows": 3
-        },
-        {
-            "name": "items",
-            "label": "Items",
-            "type": "items_table",
-            "required": true,
-            "min_rows": 1,
-            "columns": [
-                {"name": "item_name", "label": "Item Name / Code", "type": "text", "required": true},
-                {"name": "qty", "label": "Requested Quantity", "type": "number", "required": true, "min": 1},
-                {
-                    "name": "return_date",
-                    "label": "Return Date",
-                    "type": "date",
-                    "required": false,
-                    "conditional": {"field": "requisition_type", "value": "RETURNABLE"}
-                }
-            ]
-        }
-    ]
-}
+Add a helper function in app/workflows/material_workflow/prompts.py
+(or near the top of nodes.py if prompts.py isn't a fit):
 
-ADDITIONS TO THE ORIGINAL TASK
-─────────────────────────────
-
-1. ADD a new field type: "radio"
-   - Renders a radio button group from "options" array.
-   - Each option has "value" (machine value) and "label" (display).
-   - Single selection.
-   - Submit collects the chosen value (e.g., "RETURNABLE").
-
-2. CONDITIONAL FIELDS in items_table:
-   - The "return_date" column in items has a "conditional" key.
-   - Render this column ONLY when the form field named in
-     conditional.field equals conditional.value.
-   - Example: when requisition_type === "RETURNABLE", show
-     return_date column. When "NON_RETURNABLE", hide it.
-   - This is a pure CSS/JSX show/hide based on form state — no
-     backend round-trip.
-   - When the column is hidden, do NOT include return_date in the
-     submitted payload (or send it as null — backend ignores).
-
-3. ITEM NAME / CODE field:
-   - User types the item code directly (e.g., "04617").
-   - No autocomplete or DB lookup from frontend — backend resolves
-     the code to item details (name, price, etc.) on submit.
-   - If backend can't resolve a code, it returns a field-level error
-     for that row (see error handling below).
-
-SUBMIT PAYLOAD
-─────────────
-
-When user clicks Submit, post to the same chat endpoint with the
-USER's message body as:
-
-    {
-        "action": "form_submit",
+def get_mrr_form_widget_json() -> dict:
+    """Returns the FROZEN JSON spec for the MRR create form widget."""
+    return {
         "form_id": "mrr_create_form",
-        "data": {
-            "project_id": "100",
-            "requisition_type": "RETURNABLE",
-            "need_by_date": "2026-06-15",
-            "comments": "urgent",
-            "items": [
-                {"item_name": "04617", "qty": 5, "return_date": "2026-07-01"},
-                {"item_name": "04618", "qty": 2, "return_date": "2026-07-01"}
-            ]
-        }
+        "title": "Create Material Requisition",
+        "description": (
+            "Fill in the details below and click Submit. "
+            "You can also upload an Excel file instead."
+        ),
+        "submit_label": "Submit",
+        "cancel_label": "Cancel",
+        "fields": [
+            {
+                "name": "project_id",
+                "label": "Project ID",
+                "type": "text",
+                "required": True,
+                "placeholder": "e.g. 100"
+            },
+            {
+                "name": "requisition_type",
+                "label": "Requisition Type",
+                "type": "radio",
+                "required": True,
+                "options": [
+                    {"value": "RETURNABLE", "label": "Returnable"},
+                    {"value": "NON_RETURNABLE", "label": "Non-Returnable"}
+                ]
+            },
+            {
+                "name": "need_by_date",
+                "label": "Need By Date",
+                "type": "date",
+                "required": True
+            },
+            {
+                "name": "comments",
+                "label": "Comments",
+                "type": "textarea",
+                "required": False,
+                "rows": 3
+            },
+            {
+                "name": "items",
+                "label": "Items",
+                "type": "items_table",
+                "required": True,
+                "min_rows": 1,
+                "columns": [
+                    {
+                        "name": "item_name",
+                        "label": "Item Name / Code",
+                        "type": "text",
+                        "required": True
+                    },
+                    {
+                        "name": "qty",
+                        "label": "Requested Quantity",
+                        "type": "number",
+                        "required": True,
+                        "min": 1
+                    },
+                    {
+                        "name": "return_date",
+                        "label": "Return Date",
+                        "type": "date",
+                        "required": False,
+                        "conditional": {
+                            "field": "requisition_type",
+                            "value": "RETURNABLE"
+                        }
+                    }
+                ]
+            }
+        ]
     }
 
-For NON_RETURNABLE, omit return_date OR send null:
+───────────────────────────────────────────────────────────────────
+STEP 2 — Modify the "no file" creator path
+───────────────────────────────────────────────────────────────────
 
-    {
-        "action": "form_submit",
-        "form_id": "mrr_create_form",
-        "data": {
-            "project_id": "100",
-            "requisition_type": "NON_RETURNABLE",
-            "need_by_date": "2026-06-15",
-            "comments": "",
-            "items": [
-                {"item_name": "04617", "qty": 5}
-            ]
-        }
+LOCATE the existing node/branch that today returns the "please
+upload an Excel file" message. Based on prior tasks this is likely
+creator_needs_file_node (or whichever node graph.py routes to when
+uploaded_files is empty and the message is a bare creator request).
+
+INSPECT first — confirm by reading graph.py + the node — and use the
+exact existing node name.
+
+REPLACE the returned message so it includes BOTH:
+  (a) A short friendly text greeting.
+  (b) An inline marker the controller will split out:
+      [[FORM_WIDGET:<json_string>]]
+
+Example new return:
+
+    import json as _json
+    form_json = get_mrr_form_widget_json()
+    form_marker = "[[FORM_WIDGET:" + _json.dumps(form_json) + "]]"
+    message = (
+        "Sure, I can help you create a material requisition. "
+        "Use the form below, or upload an Excel file.\n\n"
+        + form_marker
+    )
+    return {
+        "messages": [AIMessage(content=message)],
+        "execution_log": state.get("execution_log", []) + [
+            "Emitted MRR form widget."
+        ],
     }
 
-ERROR HANDLING
-─────────────
+Notes:
+- json.dumps must NOT contain raw newlines that would break the
+  marker. Use the default compact form (no indent).
+- Do NOT emit the marker if uploaded_files is present (preserve
+  Excel path). If the existing node is only reached when no file is
+  uploaded, this is already guaranteed; just verify by reading
+  graph.py routing.
+- Do NOT apply add_reasoning to this output (it's a UI prompt, not
+  a success action).
 
-Backend may respond with a structured error event:
+───────────────────────────────────────────────────────────────────
+STEP 3 — Controller: detect marker, emit separate SSE event
+───────────────────────────────────────────────────────────────────
 
-    data: {"type": "form_errors", "form_id": "mrr_create_form", "errors": {<field_or_row_path>: <message>, ...}}
+In app/controllers/chat_controller.py, locate the static-output-node
+handling code (where node return-value messages are yielded as chunk
+events for the static_output_nodes list).
 
-Examples:
-    "errors": {
-        "project_id": "Project ID is required",
-        "items.0.item_name": "Item code '99999' not found in catalog",
-        "items.1.qty": "Quantity must be greater than 0"
-    }
+ADD detection logic: when the static message contains a
+[[FORM_WIDGET:<json>]] marker, split the message into two parts:
+  - The text BEFORE the marker → emit as a normal chunk event.
+  - The marker payload → parse the JSON inside, emit as:
+        data: {"type": "form_widget", "form": <parsed_json>}
+  - Anything AFTER the marker → emit as another chunk event (if
+    non-empty).
 
-For items errors, the key uses dot-path: "items.<row_index>.<column>".
+Implementation sketch (adapt to actual streaming code):
 
-DISPLAY THESE ERRORS INLINE on the relevant field / row. Do NOT
-close the form; let user fix and resubmit.
+    import re, json
+    FORM_MARKER_RE = re.compile(r"\[\[FORM_WIDGET:(.*?)\]\]", re.DOTALL)
 
-On SUCCESS, backend sends normal chunk events with the confirmation
-message. Close the form once a success chunk arrives.
+    def _emit_with_form_widget(full_text: str):
+        """Yields SSE event dicts: chunk before, form_widget, chunk after."""
+        match = FORM_MARKER_RE.search(full_text)
+        if not match:
+            yield {"type": "chunk", "text": full_text}
+            return
+        pre = full_text[:match.start()]
+        post = full_text[match.end():]
+        raw_json = match.group(1)
+        try:
+            form_obj = json.loads(raw_json)
+        except Exception as e:
+            # Malformed form JSON: fall back to plain chunk so user
+            # still sees the text; log the error.
+            print(f"[FORM-WIDGET] JSON parse error: {e}", flush=True)
+            yield {"type": "chunk", "text": full_text}
+            return
+        if pre.strip():
+            yield {"type": "chunk", "text": pre}
+        yield {"type": "form_widget", "form": form_obj}
+        if post.strip():
+            yield {"type": "chunk", "text": post}
 
-MOCK DATA FOR TESTING
-─────────────────────
+When yielding events for a static node's output (inside the SSE
+streaming loop), if the message text contains the form marker, run
+it through _emit_with_form_widget and yield each piece. Otherwise
+yield as normal.
 
-Until backend ships, mock the form_widget event by injecting the
-above JSON. Test:
-- Radio toggle hides/shows return_date column.
-- "+ Add row" / "remove row" works for items.
-- Submit collects values correctly into the payload above.
-- Cancel sends "cancel" as a plain text message.
-- form_errors event displays inline errors without closing the form.
+This must be applied in BOTH stream_chat_with_orchestrator and
+stream_chat_with_file (same as static_output_nodes is duplicated).
 
+───────────────────────────────────────────────────────────────────
+STEP 4 — Add creator_needs_file (or actual node name) to
+            static_output_nodes if not already there
+───────────────────────────────────────────────────────────────────
+
+Verify the node name from graph.py and ensure it's in BOTH
+static_output_nodes lists. (Per session history, creator_needs_file
+was already added previously, but confirm it's still present.) If
+the node name is different in current code, add the correct name.
+
+───────────────────────────────────────────────────────────────────
+NOTES
+───────────────────────────────────────────────────────────────────
+- Frontend will receive a stream like:
+      data: {"type": "meta", "thread_id": "..."}
+      data: {"type": "chunk", "text": "Sure, I can help you create..."}
+      data: {"type": "form_widget", "form": {<spec>}}
+      data: [DONE]
+- The form_widget event is the contract we already documented to
+  frontend; they will render it as an inline form.
+- This task does NOT process form_submit — that's Task 6.7.
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_6_6_REPORT.md with:
+- INTENDED/ACTUAL footprint.
+- The exact node name modified (from graph.py inspection).
+- The new get_mrr_form_widget_json() function.
+- The modified node return showing the marker.
+- The controller marker-detection code (both stream methods).
+- Confirmation that:
+    * Excel path is untouched (uploaded_files branch unchanged).
+    * static_output_nodes contains the creator-no-file node.
+    * No LLM/streaming changes; this is pure structured output.
+- A simulated event stream the frontend should see (paste literal
+  data: lines) for a "create mrr" request with no file.
 ═══════════════════════════════════════════════════════════════════
-END UPDATE
+END
 ═══════════════════════════════════════════════════════════════════
