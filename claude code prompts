@@ -1,38 +1,490 @@
 ═══════════════════════════════════════════════════════════════════
-TASK 6.3-FIX: Add RMS approver to static_output_nodes
+TASK 6.4: RMS bulk Excel for creator + reviewer + approver
 ═══════════════════════════════════════════════════════════════════
+Add Excel-bulk handling to all three RMS persona nodes. Procedural,
+mirroring MRR. Each persona checks for uploaded_files; if present,
+process the Excel rows; if not, follow the existing chat path.
 
+───────────────────────────────────────────────────────────────────
 CRITICAL CONSTRAINT
-- Only touch app/controllers/chat_controller.py
-- Only add node names to the existing static_output_nodes list(s)
-- Do NOT change any other logic
+───────────────────────────────────────────────────────────────────
+- Modify ONLY app/workflows/rms_workflow/nodes.py (creator, reviewer,
+  approver node bodies) and
+  app/workflows/rms_workflow/prompts.py (keyword list expansions).
+- Do NOT modify intent.py logic, graph.py, state.py, timesheet_store,
+  controllers, or routes.
+- No LLM. Pure Python + per-row regex/validation + timesheet_store.
+- Each persona's existing chat behavior must continue to work
+  unchanged when no files are uploaded.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
+───────────────────────────────────────────────────────────────────
 CONTEXT
-approver_agent_node is now procedural (no LLM streaming), like the
-RMS creator and reviewer. Its returned message will not appear in the
-UI unless its node name is in static_output_nodes.
+───────────────────────────────────────────────────────────────────
+RMS receives uploaded_files in state already (confirmed Task 6.1
+Part A). Now each persona must:
+  - Detect state.get("uploaded_files") (non-empty list).
+  - Parse the first file's rows.
+  - For each row: validate columns + values; if valid, perform the
+    persona action via timesheet_store; if invalid, collect the
+    error with row index.
+  - Return a summary: created/logged/approved N, skipped M with
+    reasons.
 
-CHANGE
-There are TWO static_output_nodes lists in chat_controller.py — one
-in stream_chat_with_orchestrator and one in stream_chat_with_file.
-Update BOTH.
+`created_by` and `created_date` are ALWAYS set in code, never read
+from Excel. Even if those columns exist in the Excel, ignore them.
 
-Add these entries (near the existing RMS creator/reviewer entries):
-    "approver_agent",
-    "approver_agent_node",
-with comment "# RMS procedural approver (no LLM streaming)".
+───────────────────────────────────────────────────────────────────
+KEYWORD ADDITIONS (prompts.py)
+───────────────────────────────────────────────────────────────────
 
-VERIFY the exact node name from rms_workflow/graph.py — open graph.py,
-find the add_node(...) call for the approver, and use that EXACT
-string. Add both variants ("approver_agent" and "approver_agent_node")
-to be safe.
+Append these strings to the existing lists in
+app/workflows/rms_workflow/prompts.py (do NOT remove anything):
 
-IMPORTANT: Do NOT confuse this with MRR's approver nodes
-("mrr_approver_agent" / "mrr_approver_agent_node") which are already
-in the list. Add the RMS approver names specifically.
+CREATOR_KEYWORDS additions:
+    "upload tasks", "upload task", "bulk create",
+    "bulk tasks", "process task file", "process tasks file",
+    "tasks from file", "tasks from excel", "import tasks"
 
+REVIEWER_KEYWORDS additions:
+    "upload timesheet", "upload hours", "bulk log",
+    "bulk hours", "process timesheet", "process my timesheet",
+    "log from file", "hours from file", "hours from excel",
+    "import timesheet", "import hours"
+
+APPROVER_KEYWORDS additions:
+    "bulk approve", "approve from file", "approve all from file",
+    "process approvals", "process approval file",
+    "approvals from file", "approvals from excel",
+    "import approvals"
+
+Then mirror these additions into the same-named lists in
+app/workflows/rms_workflow/intent.py (the intent.py file has its own
+copies of CREATOR_KEYWORDS / REVIEWER_KEYWORDS / APPROVER_KEYWORDS
+per Task 5.9). Update both files identically.
+
+───────────────────────────────────────────────────────────────────
+EXCEL COLUMN SPECS
+───────────────────────────────────────────────────────────────────
+
+Creator Excel (8 columns; case-INSENSITIVE header match):
+    Employee ID -> resource_id (int)
+    Project ID -> project_id (int)
+    Product ID -> product_id (int)
+    Task Index -> task_idx (int)
+    Activity Index -> activity_idx (int)
+    Start Date -> start_date (YYYY-MM-DD string)
+    End Date -> end_date (YYYY-MM-DD string)
+    Planned Hours -> plan_hrs (float)
+
+Reviewer Excel (4 columns):
+    Task ID -> worklog_idx (int)  # the task's WorkLogIdx
+    Date -> task_date (YYYY-MM-DD)
+    Hours -> hours (float)
+    Remark -> remarks (string)
+    NOTE: Resource is always the logged-in user. Ignore any
+    "Employee ID" column in the file.
+
+Approver Excel (1 column):
+    Worklog ID -> worklog_log_idx (int)  # the Idx in pp_worklogs_demo
+    Action is always APPROVE. Rejection not supported via Excel.
+
+For all three, the upload pipeline already places parsed file content
+in state["uploaded_files"] as a list of dicts with shape:
+    {"filename": "...", "file_type": "excel", "row_count": N,
+     "data": [ {col: val, col: val, ...}, ... ], "preview": [...]}
+We use the "data" list. Each item is one row as a dict keyed by
+column header.
+
+───────────────────────────────────────────────────────────────────
+HELPER: column-name resolver (case-insensitive header lookup)
+───────────────────────────────────────────────────────────────────
+
+Add helper near the existing extraction helpers:
+
+def _get_cell(row: dict, *candidates) -> any:
+    """Case-insensitive cell lookup. Returns the first non-None
+    value among candidate header names; otherwise None."""
+    if not row:
+        return None
+    lower_map = {str(k).strip().lower(): v for k, v in row.items()}
+    for cand in candidates:
+        val = lower_map.get(cand.strip().lower())
+        if val is not None and str(val).strip() != "":
+            return val
+    return None
+
+This handles "Employee ID" / "employee id" / "Employee Id" all the
+same way, and treats blank cells as missing.
+
+───────────────────────────────────────────────────────────────────
+HELPER: per-row validators
+───────────────────────────────────────────────────────────────────
+
+Add these helpers (each returns (parsed_dict_or_None, error_str_or_None)):
+
+def _validate_creator_row(row: dict) -> tuple:
+    """Validate one creator-Excel row. Return (fields_dict, error)."""
+    import re
+    from datetime import datetime
+    errors = []
+    out = {}
+
+    int_specs = [
+        ("resource_id", ["Employee ID", "EmployeeID", "Emp ID", "EmpID", "Resource ID"]),
+        ("project_id",  ["Project ID", "ProjectID", "Project"]),
+        ("product_id",  ["Product ID", "ProductID", "Product"]),
+        ("task_idx",    ["Task Index", "TaskIndex", "Task Idx", "TaskIdx"]),
+        ("activity_idx",["Activity Index", "ActivityIndex", "Activity Idx", "Activity"]),
+    ]
+    for field, headers in int_specs:
+        val = _get_cell(row, *headers)
+        if val is None:
+            errors.append(f"missing {field}")
+        else:
+            try:
+                out[field] = int(float(val))   # tolerate "100.0"
+            except Exception:
+                errors.append(f"invalid {field} ('{val}')")
+
+    sd = _get_cell(row, "Start Date", "StartDate", "From")
+    ed = _get_cell(row, "End Date", "EndDate", "To")
+
+    # Excel may parse dates as datetime; normalize to YYYY-MM-DD
+    def _to_iso_date(v):
+        if v is None: return None
+        if hasattr(v, "strftime"): return v.strftime("%Y-%m-%d")
+        return str(v).strip()
+
+    sd, ed = _to_iso_date(sd), _to_iso_date(ed)
+    out["start_date"], out["end_date"] = sd, ed
+
+    if not sd:
+        errors.append("missing start_date")
+    if not ed:
+        errors.append("missing end_date")
+    if sd and ed:
+        try:
+            sdp = datetime.strptime(sd, "%Y-%m-%d")
+            edp = datetime.strptime(ed, "%Y-%m-%d")
+            if edp < sdp:
+                errors.append("end date is before start date")
+        except Exception:
+            errors.append(f"invalid date (use YYYY-MM-DD)")
+
+    hours_val = _get_cell(row, "Planned Hours", "PlannedHours", "Plan Hours", "Hours")
+    if hours_val is None:
+        errors.append("missing plan_hrs")
+    else:
+        try:
+            h = float(hours_val)
+            if h <= 0:
+                errors.append("plan_hrs must be positive")
+            else:
+                out["plan_hrs"] = h
+        except Exception:
+            errors.append(f"invalid plan_hrs ('{hours_val}')")
+
+    if errors:
+        return None, "; ".join(errors)
+    return out, None
+
+
+def _validate_reviewer_row(row: dict) -> tuple:
+    """Validate one reviewer-Excel row (logging hours)."""
+    from datetime import datetime
+    errors = []
+    out = {}
+
+    tval = _get_cell(row, "Task ID", "TaskID", "Task Id", "WorkLogIdx")
+    if tval is None:
+        errors.append("missing task_id")
+    else:
+        try:
+            out["worklog_idx"] = int(float(tval))
+        except Exception:
+            errors.append(f"invalid task_id ('{tval}')")
+
+    dval = _get_cell(row, "Date", "Task Date", "TaskDate")
+    if dval is None:
+        errors.append("missing date")
+    else:
+        d = dval.strftime("%Y-%m-%d") if hasattr(dval, "strftime") else str(dval).strip()
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+            out["task_date"] = d
+        except Exception:
+            errors.append(f"invalid date ('{d}')")
+
+    hval = _get_cell(row, "Hours", "TimeSpent", "Time Spent")
+    if hval is None:
+        errors.append("missing hours")
+    else:
+        try:
+            h = float(hval)
+            if h <= 0:
+                errors.append("hours must be positive")
+            else:
+                out["hours"] = h
+        except Exception:
+            errors.append(f"invalid hours ('{hval}')")
+
+    rval = _get_cell(row, "Remark", "Remarks", "UserRemarks", "Note")
+    if rval is None or str(rval).strip() == "":
+        errors.append("missing remark")
+    else:
+        out["remarks"] = str(rval).strip()
+
+    if errors:
+        return None, "; ".join(errors)
+    return out, None
+
+
+def _validate_approver_row(row: dict) -> tuple:
+    """Validate one approver-Excel row (bulk approve)."""
+    errors = []
+    out = {}
+
+    wval = _get_cell(row, "Worklog ID", "WorklogID", "Worklog Id", "Idx")
+    if wval is None:
+        errors.append("missing worklog_id")
+    else:
+        try:
+            out["worklog_log_idx"] = int(float(wval))
+        except Exception:
+            errors.append(f"invalid worklog_id ('{wval}')")
+
+    if errors:
+        return None, "; ".join(errors)
+    return out, None
+
+───────────────────────────────────────────────────────────────────
+CHANGES TO creator_agent_node
+───────────────────────────────────────────────────────────────────
+
+At the TOP of creator_agent_node (after extracting current_emp_no
+and getting last_user_message, before the regex chat-field
+extraction):
+
+uploaded_files = state.get("uploaded_files") or []
+if uploaded_files:
+    return _handle_creator_excel(state, uploaded_files, current_emp_no, execution_log)
+
+Then the existing chat-path body runs only when no files.
+
+Add the handler near creator_agent_node:
+
+def _handle_creator_excel(state, uploaded_files, current_emp_no, execution_log):
+    rows = uploaded_files[0].get("data") or []
+    if not rows:
+        return {
+            "messages": [AIMessage(content="The uploaded file has no rows to process.")],
+            "execution_log": execution_log + ["Creator Excel: empty file."],
+        }
+    created = 0
+    errors_report = []
+    try:
+        db = SessionLocal()
+        try:
+            for i, row in enumerate(rows, start=2):  # row 1 is header
+                fields, err = _validate_creator_row(row)
+                if err:
+                    errors_report.append(f"Row {i}: {err}")
+                    continue
+                try:
+                    timesheet_store.create_task(
+                        db=db,
+                        resource_id=fields["resource_id"],
+                        project_id=fields["project_id"],
+                        product_id=fields["product_id"],
+                        task_idx=fields["task_idx"],
+                        activity_idx=fields["activity_idx"],
+                        start_date=fields["start_date"],
+                        end_date=fields["end_date"],
+                        plan_hrs=fields["plan_hrs"],
+                        created_by=current_emp_no,
+                    )
+                    created += 1
+                except Exception as e:
+                    db.rollback()
+                    errors_report.append(f"Row {i}: DB error: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        return {
+            "messages": [AIMessage(content=f"Could not process the file due to a database error: {e}")],
+            "execution_log": execution_log + [f"Creator Excel session error: {e}"],
+        }
+
+    msg_lines = [f"**Bulk Task Creation Summary**", ""]
+    msg_lines.append(f"- Created: **{created}** tasks")
+    msg_lines.append(f"- Skipped: **{len(errors_report)}** rows")
+    if errors_report:
+        msg_lines.append("")
+        msg_lines.append("**Errors:**")
+        for e in errors_report[:20]:   # cap output
+            msg_lines.append(f"- {e}")
+        if len(errors_report) > 20:
+            msg_lines.append(f"- ...and {len(errors_report)-20} more.")
+    return {
+        "messages": [AIMessage(content="\n".join(msg_lines))],
+        "execution_log": execution_log + [f"Creator Excel: created={created} skipped={len(errors_report)}"],
+    }
+
+───────────────────────────────────────────────────────────────────
+CHANGES TO reviewer_agent_node
+───────────────────────────────────────────────────────────────────
+
+At the TOP of reviewer_agent_node (after getting last_user_message
+and current_emp_no, before the is_log decision):
+
+uploaded_files = state.get("uploaded_files") or []
+if uploaded_files:
+    return _handle_reviewer_excel(state, uploaded_files, current_emp_no, execution_log)
+
+Add handler:
+
+def _handle_reviewer_excel(state, uploaded_files, current_emp_no, execution_log):
+    rows = uploaded_files[0].get("data") or []
+    if not rows:
+        return {
+            "messages": [AIMessage(content="The uploaded file has no rows to process.")],
+            "execution_log": execution_log + ["Reviewer Excel: empty file."],
+        }
+    logged = 0
+    errors_report = []
+    try:
+        db = SessionLocal()
+        try:
+            for i, row in enumerate(rows, start=2):
+                fields, err = _validate_reviewer_row(row)
+                if err:
+                    errors_report.append(f"Row {i}: {err}")
+                    continue
+                try:
+                    timesheet_store.add_worklog(
+                        db=db,
+                        worklog_idx=fields["worklog_idx"],
+                        resource_id=int(current_emp_no),
+                        task_date=fields["task_date"],
+                        hours=fields["hours"],
+                        remarks=fields["remarks"],
+                    )
+                    logged += 1
+                except Exception as e:
+                    db.rollback()
+                    errors_report.append(f"Row {i}: DB error: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        return {
+            "messages": [AIMessage(content=f"Could not process the file due to a database error: {e}")],
+            "execution_log": execution_log + [f"Reviewer Excel session error: {e}"],
+        }
+
+    msg_lines = ["**Bulk Hour Logging Summary**", ""]
+    msg_lines.append(f"- Logged: **{logged}** worklogs (PENDING approval)")
+    msg_lines.append(f"- Skipped: **{len(errors_report)}** rows")
+    if errors_report:
+        msg_lines.append("")
+        msg_lines.append("**Errors:**")
+        for e in errors_report[:20]:
+            msg_lines.append(f"- {e}")
+        if len(errors_report) > 20:
+            msg_lines.append(f"- ...and {len(errors_report)-20} more.")
+    return {
+        "messages": [AIMessage(content="\n".join(msg_lines))],
+        "execution_log": execution_log + [f"Reviewer Excel: logged={logged} skipped={len(errors_report)}"],
+    }
+
+───────────────────────────────────────────────────────────────────
+CHANGES TO approver_agent_node
+───────────────────────────────────────────────────────────────────
+
+At the TOP of approver_agent_node (after getting current_emp_no and
+last_user_message, before _parse_worklog_approval_command):
+
+uploaded_files = state.get("uploaded_files") or []
+if uploaded_files:
+    return _handle_approver_excel(state, uploaded_files, current_emp_no, execution_log)
+
+Add handler:
+
+def _handle_approver_excel(state, uploaded_files, current_emp_no, execution_log):
+    rows = uploaded_files[0].get("data") or []
+    if not rows:
+        return {
+            "messages": [AIMessage(content="The uploaded file has no rows to process.")],
+            "execution_log": execution_log + ["Approver Excel: empty file."],
+        }
+    approved = 0
+    errors_report = []
+    try:
+        db = SessionLocal()
+        try:
+            for i, row in enumerate(rows, start=2):
+                fields, err = _validate_approver_row(row)
+                if err:
+                    errors_report.append(f"Row {i}: {err}")
+                    continue
+                try:
+                    result = timesheet_store.approve_worklog(
+                        db=db,
+                        worklog_log_idx=fields["worklog_log_idx"],
+                        approver_id=int(current_emp_no),
+                        decision="APPROVED",
+                        remarks="",
+                    )
+                    if isinstance(result, dict) and result.get("error"):
+                        errors_report.append(f"Row {i}: {result['error']}")
+                    else:
+                        approved += 1
+                except Exception as e:
+                    db.rollback()
+                    errors_report.append(f"Row {i}: DB error: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        return {
+            "messages": [AIMessage(content=f"Could not process the file due to a database error: {e}")],
+            "execution_log": execution_log + [f"Approver Excel session error: {e}"],
+        }
+
+    msg_lines = ["**Bulk Approval Summary**", ""]
+    msg_lines.append(f"- Approved: **{approved}** worklogs")
+    msg_lines.append(f"- Skipped: **{len(errors_report)}** rows")
+    if errors_report:
+        msg_lines.append("")
+        msg_lines.append("**Errors:**")
+        for e in errors_report[:20]:
+            msg_lines.append(f"- {e}")
+        if len(errors_report) > 20:
+            msg_lines.append(f"- ...and {len(errors_report)-20} more.")
+    return {
+        "messages": [AIMessage(content="\n".join(msg_lines))],
+        "execution_log": execution_log + [f"Approver Excel: approved={approved} skipped={len(errors_report)}"],
+    }
+
+───────────────────────────────────────────────────────────────────
+NOTES
+───────────────────────────────────────────────────────────────────
+- Keep [DIAG-RMS] entry/return prints.
+- Excel cells may come through as datetime objects, ints, floats, or
+  strings depending on the parser. The helpers handle that.
+- Row numbering starts at 2 in error messages (header is row 1).
+
+───────────────────────────────────────────────────────────────────
 DELIVERABLE
-Show the approver node name from rms_workflow/graph.py and the
-updated static_output_nodes list(s). Confirm both lists were updated
-and that RMS creator + reviewer + approver are all now present.
+───────────────────────────────────────────────────────────────────
+CREATE TASK_6_4_REPORT.md with:
+- INTENDED/ACTUAL footprint
+- Updated keyword lists (additions only, full lists not needed)
+- The three new handlers + three new validators + _get_cell helper
+- Confirmation that each persona's chat path is unchanged when no
+  files are uploaded
+- Confirmation: only nodes.py and prompts.py and intent.py touched
+- Confirmation: created_by/created_date set from server-side values,
+  never from Excel
+═══════════════════════════════════════════════════════════════════
+END
 ═══════════════════════════════════════════════════════════════════
