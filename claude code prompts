@@ -1,264 +1,153 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.5: LLM reasoning addon for procedural success outputs
-═══════════════════════════════════════════════════════════════════
-Add an optional LLM-generated reasoning sentence to the SUCCESS
-outputs of all procedural action paths in RMS and MRR. Append-only
-(never replaces the deterministic message). Silent fallback on
-LLM failure. Controlled by a single feature flag.
+# TASK 6.5 — LLM Reasoning Addon for Procedural Success Outputs
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Add a single helper function and a config flag.
-- Modify ONLY:
-    app/workflows/rms_workflow/nodes.py
-    app/workflows/material_workflow/nodes.py
-    app/core/config.py        (add the feature flag)
-- Do NOT modify intent.py, graph.py, state.py, controllers, routes,
-  or timesheet_store.
-- The reasoning addon is invoked ONLY on success paths:
-    RMS creator:    after task created
-    RMS reviewer:   after worklog logged (NOT on list-tasks output)
-    RMS approver:   after worklog approved/rejected (NOT on list)
-    MRR mrr_submission_node / auto_verifier_node: after submission
-    MRR approver_agent_node: after approve/reject action (NOT list)
-    MRR erp_approver_agent_node: after approve/reject (NOT list)
-    RMS bulk Excel handlers (creator/reviewer/approver): after the
-      summary line, ONLY if at least 1 row succeeded.
-- Do NOT add reasoning to:
-    Validation errors / missing-field messages
-    Permission denials
-    Empty-list responses ("no pending approvals", etc.)
-    The lists themselves (pending approvals table, my tasks table)
-    The "which worklog?" / "which mrr?" clarification messages
-- On any LLM failure (exception, timeout, empty response), silently
-  return the original message unchanged.
+## INTENDED Footprint
 
-Output INTENDED FOOTPRINT at start, list modified files at end.
+Add an optional LLM-generated reasoning sentence to the SUCCESS outputs of all
+procedural action paths in RMS and MRR workflows. The addon is append-only
+(never replaces the deterministic message). Silent fallback on LLM failure.
+Controlled by a single `ENABLE_REASONING_ADDON` feature flag.
 
-───────────────────────────────────────────────────────────────────
-STEP 1 — Feature flag in config
-───────────────────────────────────────────────────────────────────
+## ACTUAL Footprint
 
-In app/core/config.py, locate the Settings class (or however config
-is defined). Add a new field with default True:
+### Files Modified
 
-    ENABLE_REASONING_ADDON: bool = True
+| File | Change |
+|------|--------|
+| `app/core/config.py` | Added `ENABLE_REASONING_ADDON: bool = True` |
+| `app/workflows/shared/reasoning_addon.py` | **NEW** — shared helper `add_reasoning()` |
+| `app/workflows/shared/__init__.py` | **NEW** — empty init for the package |
+| `app/workflows/rms_workflow/nodes.py` | Added `add_reasoning` import + wrapped success paths |
+| `app/workflows/material_workflow/nodes.py` | Added `add_reasoning` import + wrapped success paths |
 
-This lets us toggle it off without code changes.
+**NOT modified** (as required): `intent.py`, `graph.py`, `state.py`, controllers,
+routes, timesheet_store, or any approvers.py / config.py for workflows.
 
-If app/core/config.py uses pydantic Settings, add the field at the
-appropriate place. If it uses a different pattern (a plain class,
-.env loader, etc.), follow that file's existing convention. The flag
-must be importable from elsewhere as e.g.
-    from app.core.config import settings
-    if settings.ENABLE_REASONING_ADDON: ...
+---
 
-───────────────────────────────────────────────────────────────────
-STEP 2 — The reasoning helper
-───────────────────────────────────────────────────────────────────
+## Feature Flag
 
-Create a NEW shared helper file:
-    app/workflows/shared/reasoning_addon.py
+**File:** `app/core/config.py` (Pydantic `BaseSettings`)
 
-Contents:
+```python
+ENABLE_REASONING_ADDON: bool = True
+```
 
-"""
-Optional LLM reasoning addon for procedural workflow outputs.
-
-Takes the deterministic confirmation text and appends a short
-explanatory sentence. On any failure, returns the original text
-unchanged.
-"""
-
+The flag is importable via:
+```python
 from app.core.config import settings
+if settings.ENABLE_REASONING_ADDON:
+    ...
+```
 
+---
 
+## New Shared Helper
+
+**File:** `app/workflows/shared/reasoning_addon.py`
+
+```python
 def add_reasoning(original_message: str, context: str) -> str:
-    """
-    Optionally append a short LLM-generated reasoning sentence to a
-    deterministic success message. ALWAYS returns a string. If the
-    feature is disabled or the LLM call fails, returns the original
-    message unchanged.
+```
 
-    Args:
-        original_message: the deterministic procedural output. This
-            is what the user MUST see; the LLM only adds context.
-        context: a brief description of what the procedural step did,
-            used to prompt the LLM. Plain text, no formatting needed.
+- Checks `settings.ENABLE_REASONING_ADDON` first — returns `original_message`
+  unchanged if `False`/missing.
+- On success: calls `get_llm().invoke(prompt)`, strips leading bullets/quotes,
+  appends `"\n\n" + reasoning` to the original.
+- On any exception: prints to stderr and returns `original_message` unchanged.
+- Always returns a `str`.
 
-    Returns:
-        original_message [+ "\n\n" + reasoning sentence] on success.
-        original_message unchanged on disable/failure.
-    """
-    if not getattr(settings, "ENABLE_REASONING_ADDON", False):
-        return original_message
+---
 
-    try:
-        from app.core.llm import get_llm
-        llm = get_llm()
+## Call Sites Where `add_reasoning` Was Inserted
 
-        prompt = (
-            "You are explaining a workflow action briefly to a user.\n"
-            "The system has ALREADY completed the action and produced "
-            "the confirmation below. Your job is to add ONE short, "
-            "friendly sentence (max 25 words) that explains what just "
-            "happened or what to expect next. Do NOT repeat the "
-            "confirmation. Do NOT add bullet points, markdown, or "
-            "headers. Plain prose, one sentence.\n\n"
-            f"Action context: {context}\n\n"
-            f"System confirmation:\n{original_message}\n\n"
-            "Your one-sentence addition:"
-        )
+### RMS Nodes (`app/workflows/rms_workflow/nodes.py`)
 
-        # Use synchronous invoke; this is called from sync paths.
-        # If get_llm() returns a streaming-only LLM, the invoke method
-        # should still work (LangChain ChatOpenAI supports both).
-        response = llm.invoke(prompt)
-        reasoning = getattr(response, "content", "") or ""
-        reasoning = reasoning.strip()
+| # | Node / Function | Branch | Context String |
+|---|----------------|--------|----------------|
+| 1 | `creator_agent_node` | Task created successfully (success DB path, line ~835) | `"Created RMS task assignment for employee {resource_id} on project {project_id}, {plan_hrs} planned hours from {start_date} to {end_date}."` |
+| 2 | `reviewer_agent_node` | Worklog logged (success DB path, line ~1003) | `"Logged {hours} hours against task {worklog_idx} for employee {current_emp_no}; awaiting manager approval."` |
+| 3 | `approver_agent_node` | Worklog approved/rejected (success path, line ~1177) | `"Worklog {wl_id} {decision.lower()} by approver {current_emp_no}."` |
+| 4 | `_handle_creator_excel` | Bulk creation when `created > 0` (line ~918) | `"Bulk task creation processed: {created} tasks inserted, {len(errors_report)} rows skipped."` |
+| 5 | `_handle_reviewer_excel` | Bulk logging when `logged > 0` (line ~1108) | `"Bulk hour logging processed: {logged} worklogs inserted (PENDING), {len(errors_report)} rows skipped."` |
+| 6 | `_handle_approver_excel` | Bulk approval when `approved > 0` (line ~1283) | `"Bulk approval processed: {approved} worklogs approved, {len(errors_report)} rows skipped."` |
 
-        if not reasoning:
-            return original_message
+### MRR Nodes (`app/workflows/material_workflow/nodes.py`)
 
-        # Strip any leading/trailing quotes, code fences, list bullets
-        for prefix in ("- ", "* ", "> ", "\"", "'"):
-            if reasoning.startswith(prefix):
-                reasoning = reasoning[len(prefix):].strip()
-        for suffix in ("\"", "'"):
-            if reasoning.endswith(suffix):
-                reasoning = reasoning[:-1].strip()
+| # | Node / Function | Branch | Context String |
+|---|----------------|--------|----------------|
+| 7 | `auto_verifier_node` | `total_cost < 2000` path (line ~663) | `"MRR {requisition_id} auto-verified; total cost {total_cost}; routed to ERP."` |
+| 8 | `auto_verifier_node` | `total_cost >= 2000` path (line ~679) | `"MRR {requisition_id} auto-verified; total cost {total_cost}; routed to manager."` |
+| 9 | `mrr_submission_node` | After DB insert (line ~1298) | `"MRR {mrr_no} submitted by {requestor_id}; total cost {total_cost}; pending auto-verification."` |
+| 10 | `approver_agent_node` | `approve_one` success (line ~759) | `"Manager {emp_no} approved MRR {mrr_id}; forwarded to ERP."` |
+| 11 | `approver_agent_node` | `reject_one` success (line ~765) | `"Manager {emp_no} rejected MRR {mrr_id}."` |
+| 12 | `approver_agent_node` | `approve_all` success (line ~802) | `"Manager {emp_no} approved {rowcount} pending MRRs in bulk."` |
+| 13 | `erp_approver_agent_node` | `approve_one` success (line ~924) | `"ERP {emp_no} approved MRR {mrr_id}; released to store."` |
+| 14 | `erp_approver_agent_node` | `reject_one` success (line ~941) | `"ERP {emp_no} rejected MRR {mrr_id}."` |
+| 15 | `erp_approver_agent_node` | `approve_all` success (line ~987) | `"ERP {emp_no} approved {rowcount} MRRs in bulk."` |
 
-        return f"{original_message}\n\n{reasoning}"
+---
 
-    except Exception as e:
-        # Silent fallback — log to stderr for diagnostics but never
-        # propagate the failure to the user.
-        try:
-            print(f"[REASONING-ADDON] Failed; returning original. err={e}", flush=True)
-        except Exception:
-            pass
-        return original_message
+## Paths Confirmed NOT Wrapped
 
+The following paths were verified to remain **purely deterministic** with no
+`add_reasoning` calls:
 
-───────────────────────────────────────────────────────────────────
-STEP 3 — Apply in RMS nodes
-───────────────────────────────────────────────────────────────────
+- **RMS:**
+  - `creator_agent_node` validation errors (missing fields)
+  - `creator_agent_node` DB error paths
+  - `reviewer_agent_node` validation errors
+  - `reviewer_agent_node` view-tasks listing
+  - `reviewer_agent_node` DB error paths
+  - `approver_agent_node` "which worklog?" clarification
+  - `approver_agent_node` pending-list output
+  - `approver_agent_node` DB error paths
+  - All three `_handle_*_excel` functions when `created/logged/approved == 0`
 
-At the top of app/workflows/rms_workflow/nodes.py, add:
-    from app.workflows.shared.reasoning_addon import add_reasoning
+- **MRR:**
+  - `evaluate_and_route` intermediate "Requisition saved with ID..." message
+  - `auto_verifier_node` "no requisition to verify" path
+  - `auto_verifier_node` DB error path
+  - `mrr_submission_node` validation error / no pending data
+  - `mrr_submission_node` DB error path
+  - `approver_agent_node` permission denial
+  - `approver_agent_node` "not found in pending state" message
+  - `approver_agent_node` list output ("no pending manager approvals")
+  - `approver_agent_node` DB error paths
+  - `erp_approver_agent_node` permission denial
+  - `erp_approver_agent_node` "not found in pending ERP state" message
+  - `erp_approver_agent_node` list output ("no pending ERP approvals")
+  - `erp_approver_agent_node` DB error paths
+  - `creator_needs_file_node` instructions output
+  - `permission_blocked_node` denial messages
+  - `form_flow` handlers (`handle_header` / `handle_items`) — currently bypassed
+    via `creator_needs_file` route
+  - `issuer_agent_node` output
 
-In creator_agent_node, BEFORE the final return on the success path
-(the one that says "Task created successfully (Task ID: ...) for
-employee ..."), wrap full_text:
+---
 
-    full_text = add_reasoning(
-        full_text,
-        context=f"Created RMS task assignment for employee "
-                f"{fields['resource_id']} on project {fields['project_id']}, "
-                f"{fields['plan_hrs']} planned hours from {fields['start_date']} "
-                f"to {fields['end_date']}."
-    )
+## Silent Fallback Confirmation
 
-DO NOT wrap the validation-error full_text. Only the success branch.
+All node functions still return the deterministic message if the LLM call fails:
 
-In reviewer_agent_node, ONLY in the log-hours success branch (where
-worklog was inserted):
+1. **Feature flag disabled** (`ENABLE_REASONING_ADDON=False`): `add_reasoning()`
+   returns `original_message` immediately with zero LLM calls.
 
-    full_text = add_reasoning(
-        full_text,
-        context=f"Logged {fields['hours']} hours against task "
-                f"{fields['worklog_idx']} for employee {current_emp_no}; "
-                f"awaiting manager approval."
-    )
+2. **LLM exception** (timeout, network, API error): The helper catches all
+   exceptions, prints a diagnostic to stderr, and returns `original_message`.
 
-DO NOT wrap the view-tasks listing or the validation-error path.
+3. **Empty LLM response**: The helper checks `if not reasoning` and returns
+   `original_message` unchanged.
 
-In approver_agent_node, ONLY in the approve/reject success branch:
+4. **No reasoning prefix cleanup changes result**: The helper strips common
+   markdown bullets/quotes from the reasoning but never modifies the original
+   message.
 
-    full_text = add_reasoning(
-        full_text,
-        context=f"Worklog {wl_id} {decision.lower()} by approver "
-                f"{current_emp_no}."
-    )
+---
 
-DO NOT wrap the pending-list output or the "which worklog?" message.
+## Syntax Check
 
-In _handle_creator_excel, AFTER building msg_lines and joining to a
-single string, AND only when created > 0:
-
-    summary = "\n".join(msg_lines)
-    if created > 0:
-        summary = add_reasoning(
-            summary,
-            context=f"Bulk task creation processed: {created} tasks "
-                    f"inserted, {len(errors_report)} rows skipped."
-        )
-
-Similarly in _handle_reviewer_excel (when logged > 0) and
-_handle_approver_excel (when approved > 0), with analogous contexts.
-
-───────────────────────────────────────────────────────────────────
-STEP 4 — Apply in MRR nodes
-───────────────────────────────────────────────────────────────────
-
-At the top of app/workflows/material_workflow/nodes.py, add:
-    from app.workflows.shared.reasoning_addon import add_reasoning
-
-Apply in:
-
-1. auto_verifier_node — wrap the success "confirmation" string
-   before returning. Context:
-     f"MRR {requisition_id} auto-verified; total cost "
-     f"{total_cost}; routed to {'ERP' if total_cost < 2000 else 'manager'}."
-
-2. approver_agent_node (the MRR one) — ONLY in the approve_one /
-   reject_one / approve_all success branches (not the list, not the
-   not-found message). Context examples:
-     f"Manager {emp_no} approved MRR {mrr_id}; forwarded to ERP."
-     f"Manager {emp_no} rejected MRR {mrr_id}."
-     f"Manager {emp_no} approved {rowcount} pending MRRs in bulk."
-
-3. erp_approver_agent_node — same pattern, ONLY on approve_one /
-   reject_one / approve_all success branches. Contexts:
-     f"ERP {emp_no} approved MRR {mrr_id}; released to store."
-     f"ERP {emp_no} rejected MRR {mrr_id}."
-
-DO NOT wrap evaluate_and_route's intermediate "Requisition saved
-with ID..." message (it's an internal step; auto_verifier_node is
-the one that produces the user-facing confirmation).
-
-DO NOT wrap form_flow handler outputs (handle_header / handle_items)
-since that path is currently bypassed (creator_needs_file route).
-
-───────────────────────────────────────────────────────────────────
-NOTES
-───────────────────────────────────────────────────────────────────
-- The LLM call here is intentionally synchronous (llm.invoke), not
-  streamed. The reasoning sentence is short and fits in the controller
-  return path. It will appear in the chat as part of the static
-  message returned by the node.
-- The helper catches ALL exceptions so a flaky LLM never blocks the
-  user from seeing the procedural confirmation.
-- A 25-word ceiling is enforced via prompt; the helper does not
-  truncate. If the LLM ignores it, the user sees a slightly longer
-  sentence — not a failure.
-- ENABLE_REASONING_ADDON=False in config disables all reasoning
-  calls instantly; the nodes still call add_reasoning() but it
-  returns the input unchanged.
-
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_6_5_REPORT.md with:
-- INTENDED/ACTUAL footprint
-- Confirmation of the new app/workflows/shared/reasoning_addon.py
-- The settings flag added to config (and the convention used)
-- A list of every node call site where add_reasoning was inserted,
-  with the context string used
-- Confirmation that error/denial/list paths were NOT wrapped
-- Confirmation that all node functions still return the deterministic
-  message if the LLM call fails or the flag is disabled
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+All modified files passed Python syntax validation via `py_compile`:
+- `app/core/config.py` — OK
+- `app/workflows/shared/reasoning_addon.py` — OK
+- `app/workflows/rms_workflow/nodes.py` — OK
+- `app/workflows/material_workflow/nodes.py` — OK
