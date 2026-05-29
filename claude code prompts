@@ -1,8 +1,32 @@
-data: {"type": "meta", "thread_id": "adb13a0a-74e0-40a1-bb48-640fe7482e19"}
+Table: posproject
+Columns:
+PROJECTID int(11) PK 
+WAREHOUSEID smallint(6) 
+PROJECTNUMBER varchar(20) 
+DESCRIPTION varchar(250) 
+COSTTYPEID smallint(6) 
+PROJECTSTARTDATE varchar(20) 
+PROJECTENDDATE varchar(20) 
+WHOCOLUMN varchar(100) 
+PRJ_MTL_COST_LKHS decimal(10,2) 
+DELIVERY_VALUE_CRORE decimal(10,2) 
+MTL_EST_COST_FROM_DEL_VAL_LAKHS decimal(10,2) 
+CUSTOMERNAME varchar(100) 
+ESTIMATED_MAN_HRS decimal(10,2) 
+TRAVEL_EXPENSES_L decimal(10,2) 
+PROJECT_CATEGORY varchar(45) 
+PM_NAME varchar(45) 
+DELIVERY_FY varchar(45)
 
-data: {"type": "chunk", "text": "Requisition MRR/17/25-26 (total \u20b9280.54) submitted and auto-approved at manager stage. Awaiting ERP approval.\n\nThe requisition is now in the ERP approval queue, so please wait for the next system update.\n\n"}
+Table: posprojectphases
+Columns:
+PROJECTPHASEID int(11) PK 
+PROJECTID int(11) 
+PHASENAME varchar(100) 
+PHASEDESCRIPTION varchar(200) 
+PHASESTARTDATE date 
+PHASEENDDATE date 
+WHOCOLUMN varchar(100) 
+PROGRAMNUMBER varchar(45)
 
-data: [DONE]
-
-# MATREQUISITIONID, MATREQUISITIONNO, WAREHOUSEID, REQUISITIONTYPE, REQUESTORID, REQUISITIONDATE, DEPARTMENT, NEEDBYDATE, WHOCOLUMN, STATUS, PROJECTID, PROJECTPHASEID, REQTRANSACTIONTYPE, SUPPLIERID, SUPPLIERSITEID, DESCRIPTION, COMMENTS, VERIFICATION_STATUS, VERIFICATION_DATE, APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE, TOTAL_COST
-'0', 'MRR/17/25-26', NULL, NULL, '2830', '2026-05-29 19:21:56', 'EAG', NULL, NULL, 'ENTERED', '0', NULL, 'RETURNABLE', '0', '0', NULL, 'new latest test', 'APPROVED', '2026-05-29 19:21:56', 'APPROVED', '2026-05-29 19:21:56', 'PENDING', NULL, '281'
+these 2 tables only we are using for project id mapping no connection with rms tables
