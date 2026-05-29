@@ -1,159 +1,35 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.7-FIX6: Project lookup, phase lookup, description fetch,
-                 PK handling, REQUESTORID cast
-═══════════════════════════════════════════════════════════════════
-Consolidate all remaining MRR form_submit fixes in ONE pass.
+The mrr_submission_node Excel path also has WAREHOUSEID — need to check if that's a real column. It is (from DESCRIBE). That node already includes MATREQUISITIONID in the INSERT correctly. But it references WAREHOUSEID which IS a real column, and REQUISITIONTYPE which is also real. That node looks fine schema-wise — let me just verify REQUESTORID casting there.
 
-CRITICAL CONSTRAINT
-- Only touch app/workflows/material_workflow/nodes.py
-  (form_submit_handler_node, and evaluate_and_route to keep the
-   Excel path consistent).
-- Do NOT modify other files.
+The mrr_submission_node uses header["requestor_id"] from the validated Excel data which should already be a number from the validator. It's already fine. No changes needed there.
 
-PROBLEMS TO FIX (all in this task)
-1. User enters project CODE (e.g., "YEA2719") but PROJECTID column
-   is bigint. Need to resolve PROJECTNUMBER → PROJECTID.
-2. The lookup should ALSO retrieve DESCRIPTION from posproject and
-   store it in mrr_matrequisitionheader.DESCRIPTION (auto-fetched).
-3. PROJECTPHASEID should be resolved from posprojectphases for the
-   resolved project. Pick the LATEST phase
-   (ORDER BY PROJECTPHASEID DESC LIMIT 1) — works today (1 phase)
-   and future-proofs for multi-phase projects.
-4. MATREQUISITIONID came out as 0. Inspect whether the column is
-   AUTO_INCREMENT and handle accordingly.
-5. REQUESTORID is bigint; we pass user_id which is a string.
-   Cast to int.
+Done. Here's the consolidated report:
 
-FIXES
+SHOW CREATE TABLE key findings:
 
-STEP 1 — Add helpers (top of nodes.py, near _parse_form_submit_message)
+MATREQUISITIONID is bigint(20) NOT NULL with PRIMARY KEY — NOT AUTO_INCREMENT. Must explicitly provide it.
+Max current ID: 16, total rows: 17 (PK collision risk with manual sequence)
+New helpers — nodes.py:68-102:
 
-    from typing import Optional
-    from sqlalchemy import text
+_lookup_project(db, project_code) — queries posproject WHERE PROJECTNUMBER = :code, returns {"project_id": int, "description": str}.
 
-    def _lookup_project(db_session, project_code: str) -> Optional[dict]:
-        \"""Resolve project code (e.g., 'YEA2719') to:
-        {'project_id': int, 'description': str}
-        Returns None if not found.\"""
-        row = db_session.execute(text(\"""
-            SELECT PROJECTID, DESCRIPTION
-            FROM posproject
-            WHERE PROJECTNUMBER = :code
-            LIMIT 1
-        \"""), {"code": project_code}).mappings().first()
-        if not row:
-            return None
-        return {
-            "project_id": int(row["PROJECTID"]),
-            "description": row["DESCRIPTION"] or ""
-        }
+_lookup_latest_phase(db, project_id) — queries posprojectphases WHERE PROJECTID = :pid ORDER BY PROJECTPHASEID DESC LIMIT 1, returns PROJECTPHASEID or None.
 
-    def _lookup_latest_phase(db_session, project_id: int) -> Optional[int]:
-        \"""Return the PROJECTPHASEID of the most recent phase for a
-        project. Today projects have 1 phase, but ORDER BY ... DESC
-        future-proofs for multi-phase.\"""
-        row = db_session.execute(text(\"""
-            SELECT PROJECTPHASEID
-            FROM posprojectphases
-            WHERE PROJECTID = :pid
-            ORDER BY PROJECTPHASEID DESC
-            LIMIT 1
-        \"""), {"pid": project_id}).first()
-        return int(row.PROJECTPHASEID) if row else None
+form_submit_handler_node INSERT — nodes.py:1300-1315:
 
-STEP 2 — Use the lookups in form_submit_handler_node
+Now includes MATREQUISITIONID (=computed header_id), DESCRIPTION (auto-fetched from posproject)
+Column order matches real schema exactly
+PK computed before INSERT: seq + 1 → header_id → mrr_no
+evaluate_and_route INSERT — nodes.py:635-650:
 
-In the validation phase, AFTER basic presence checks for project_id
-but BEFORE the items loop:
+Same fixes: explicit MATREQUISITIONID, DESCRIPTION column, PROJECTPHASEID (not PHASEID), DEPARTMENT (not DEPARTMENTID)
+REQUESTORID cast: int(user_id) if str(user_id).isdigit() else 0
+DEPARTMENT sourced from user_info.dept (default "EAG")
+Fixes summary:
 
-    resolved = _lookup_project(db, project_id_raw)
-    if resolved is None:
-        errors["project_id"] = (
-            f"Project '{project_id_raw}' not found. "
-            f"Please enter a valid project code."
-        )
-        resolved_project_id = None
-        resolved_description = ""
-        resolved_phase_id = None
-    else:
-        resolved_project_id = resolved["project_id"]
-        resolved_description = resolved["description"]
-        resolved_phase_id = _lookup_latest_phase(db, resolved_project_id)
-        # phase is optional — null is acceptable if project has no phases
-
-Then in the INSERT:
-    "proj": resolved_project_id,           # bigint, not the string
-    "phase": resolved_phase_id,            # bigint or None
-    "description": resolved_description,   # auto-fetched
-
-And the INSERT statement should include the DESCRIPTION column and
-PROJECTPHASEID column:
-
-    INSERT INTO mrr_matrequisitionheader (
-        MATREQUISITIONNO, STATUS, ...,
-        DEPARTMENT, REQUESTORID, REQUISITIONDATE, TOTAL_COST,
-        PROJECTID, PROJECTPHASEID, DESCRIPTION,
-        REQTRANSACTIONTYPE, COMMENTS,
-        ...
-    ) VALUES (
-        :mrrno, 'ENTERED', ...,
-        :dept, :user, NOW(), :total,
-        :proj, :phase, :description,
-        :reqtype, :comments,
-        ...
-    )
-
-STEP 3 — MATREQUISITIONID handling
-
-Inspect:
-    SHOW CREATE TABLE mrr_matrequisitionheader;
-
-If MATREQUISITIONID is AUTO_INCREMENT:
-  - OMIT it from the INSERT column list.
-  - Use `result = db.execute(text(<insert>), {...})` and read
-    `header_id = result.lastrowid` after the execute.
-  - Use `seq` lookup ONLY to build the human-readable MRR number
-    (next_id = IFNULL(MAX(MATREQUISITIONID), 0) + 1) — but DO NOT
-    insert that next_id into MATREQUISITIONID. The DB picks the PK.
-  - Note: with AUTO_INCREMENT, next_id estimated BEFORE insert and
-    actual PK assigned BY insert may differ. If MRR number formatting
-    must match the PK exactly, INSERT first, then UPDATE the
-    MATREQUISITIONNO using result.lastrowid:
-        new_id = result.lastrowid
-        mrr_no = f"MRR/{new_id}/25-26"
-        db.execute(text("UPDATE mrr_matrequisitionheader SET MATREQUISITIONNO=:no WHERE MATREQUISITIONID=:id"),
-                   {"no": mrr_no, "id": new_id})
-    This guarantees the MRR number matches the PK.
-
-If MATREQUISITIONID is NOT AUTO_INCREMENT:
-  - Compute next_id and include MATREQUISITIONID = :id in the INSERT.
-  - This matches the existing pattern; verify it actually works
-    (the previous row had MATREQUISITIONID=0, suggesting the insert
-    omitted the id but the column was not auto-increment, so MySQL
-    defaulted to 0).
-
-Apply identical logic in evaluate_and_route (Excel path).
-
-STEP 4 — REQUESTORID cast
-
-In the INSERT bind params, change:
-    "user": user_id,
-To:
-    "user": int(user_id) if str(user_id).isdigit() else 0,
-
-STEP 5 — DEPARTMENT
-
-Already working (came out as 'EAG' in the test row). Make sure it's
-still being set from state.get("user_info", {}).get("dept", "EAG")
-or whatever the previous successful insert used. Don't regress.
-
-DELIVERABLE
-- Paste SHOW CREATE TABLE mrr_matrequisitionheader (relevant
-  AUTO_INCREMENT detail).
-- Show the new _lookup_project and _lookup_latest_phase helpers.
-- Show the corrected form_submit_handler_node INSERT.
-- Show the corrected evaluate_and_route INSERT.
-- Confirm REQUESTORID and DEPARTMENT are correctly cast.
-- Confirm PROJECTPHASEID uses the latest-phase lookup.
-- Confirm DESCRIPTION is auto-fetched.
-═══════════════════════════════════════════════════════════════════
+Issue	Fix
+Project code string → bigint ID	_lookup_project() resolves via posproject
+Description not stored	Auto-fetched into DESCRIPTION column
+Phase not resolved	_lookup_latest_phase() queries posprojectphases
+MATREQUISITIONID = 0	Explicit next_id + include in INSERT (not AUTO_INCREMENT)
+REQUESTORID string → bigint	Cast: int(user_id) if str(user_id).isdigit() else 0
+DEPARTMENT missing	Sourced from state.user_info.dept
