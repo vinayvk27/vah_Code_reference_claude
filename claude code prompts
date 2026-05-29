@@ -1,58 +1,7 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.7-FIX: Detect form_submit BEFORE keyword classifier
-═══════════════════════════════════════════════════════════════════
+data: {"type": "meta", "thread_id": "831d4fa2-6c0e-46f5-8ec6-dc806bf1fc35"}
 
-CRITICAL CONSTRAINT
-- Only touch app/workflows/material_workflow/nodes.py
-  (parse_intent_node body — add an early-exit branch).
-- Do NOT modify intent.py, graph.py, the router, or other workflow
-  logic.
+data: {"type": "chunk", "text": "I couldn't submit the form. Please fix the highlighted fields and try again.\n\n"}
 
-PROBLEM
-A form_submit message arrives as a JSON string starting with
-{"action":"form_submit",...}. The keyword classifier (which expects
-natural language) does not find creator keywords inside this JSON,
-so it classifies the message as OUT_OF_DOMAIN and routes to
-permission_blocked. The form_submit_handler is never reached.
+data: {"type": "form_errors", "form_id": "mrr_create_form", "errors": {"items.0.item_name": "Item lookup failed: cannot import name 'get_item_availability' from 'app.services.mariadb_queries' (d:\\dev\\agentic_ai\\dpah_backend_v1\\app\\services\\mariadb_queries.py)"}}
 
-FIX
-At the TOP of parse_intent_node (immediately after the entry print
-and after extracting last_user_message — BEFORE the call to
-classify_mrr_intent), add a short-circuit branch:
-
-    # Short-circuit: if the message is a form_submit JSON payload,
-    # bypass the keyword classifier and route straight to creator.
-    # The form_submit handler will validate the payload.
-    form_submit_payload = _parse_form_submit_message(last_user_message)
-    if form_submit_payload is not None:
-        return {
-            "parsed_intent": "IN_DOMAIN",
-            "selected_collection": "mrr_general",
-            "selected_agent_role": "creator",
-            "classifier_confidence": "HIGH",
-            "append_soft_correction": False,
-            "execution_log": state.get("execution_log", []) + [
-                "Form submit detected; bypassing keyword classifier."
-            ]
-        }
-
-NOTES
-- _parse_form_submit_message is already defined in nodes.py from
-  Task 6.7. Reuse it here; do NOT redefine.
-- This short-circuit covers ONLY form_submit. Any other JSON-shaped
-  message falls through to the normal classifier (because
-  _parse_form_submit_message returns None for non-matching JSON).
-- After this fix, the flow is:
-    parse_intent_node       -> IN_DOMAIN creator (short-circuit)
-    permission_check_node   -> permission granted for 2830
-    creator_path_router     -> detects form_submit -> form_submit_handler
-    form_submit_handler_node-> validate + insert + return confirmation
-- Verify by reading the surrounding code: the same approach (early
-  exit from parse_intent_node based on a structured signal) is the
-  cleanest place to intercept JSON-shaped messages.
-
-DELIVERABLE
-Show the modified parse_intent_node with the short-circuit branch
-visible at the top, before the call to classify_mrr_intent. Confirm
-_parse_form_submit_message is reused (not redefined).
-═══════════════════════════════════════════════════════════════════
+data: [DONE]
