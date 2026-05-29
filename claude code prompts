@@ -1,55 +1,12 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.5-FIX: Fix msg_lines NameError in bulk Excel handlers
-═══════════════════════════════════════════════════════════════════
+process tasks file
+ rms_create_tasks.xlsx
+V
+🤖
+Your three new tasks are now ready i**Bulk Task Creation Summary**
 
-CRITICAL CONSTRAINT
-- Only touch app/workflows/rms_workflow/nodes.py
-- Fix the NameError only; do not change other logic
+- Created: **3** tasks
+- Skipped: **0** rows
 
-PROBLEM
-Server error: "msg_lines is not defined" in one of the bulk Excel
-handlers (_handle_creator_excel, _handle_reviewer_excel, or
-_handle_approver_excel) where add_reasoning was added.
+Your three new tasks are now ready in your list.
 
-CAUSE
-The add_reasoning wrapping likely references msg_lines in a scope
-where it's not defined, OR the variable was renamed/moved and the
-return statement still references the old name.
-
-FIX
-In each of the three handlers (_handle_creator_excel,
-_handle_reviewer_excel, _handle_approver_excel), inspect the final
-section. The correct pattern is:
-
-    msg_lines = ["**Bulk ... Summary**", ""]
-    msg_lines.append(...)
-    msg_lines.append(...)
-    if errors_report:
-        msg_lines.append("")
-        msg_lines.append("**Errors:**")
-        for e in errors_report[:20]:
-            msg_lines.append(f"- {e}")
-        if len(errors_report) > 20:
-            msg_lines.append(f"- ...and {len(errors_report)-20} more.")
-
-    full_text = "\n".join(msg_lines)
-
-    if created > 0:    # or 'logged > 0' / 'approved > 0' per handler
-        full_text = add_reasoning(full_text, context=f"...")
-
-    return {
-        "messages": [AIMessage(content=full_text)],
-        "execution_log": execution_log + [f"... created={...} skipped={...}"],
-    }
-
-Ensure msg_lines is built before the join, full_text holds the
-joined string, and add_reasoning operates on full_text. The return
-references full_text, NOT msg_lines.
-
-Apply the fix to all three handlers identically.
-
-DELIVERABLE
-Show the final ~20 lines of each of the three handlers, confirming
-msg_lines is defined locally, full_text is built from join, and the
-return uses full_text.
-═══════════════════════════════════════════════════════════════════
+n your list.
