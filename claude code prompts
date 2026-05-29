@@ -1,57 +1,8 @@
-All changes applied. Here's the report:
+data: {"type": "meta", "thread_id": "adb13a0a-74e0-40a1-bb48-640fe7482e19"}
 
-DESCRIBE mrr_matrequisitionheader (23 columns):
+data: {"type": "chunk", "text": "Requisition MRR/17/25-26 (total \u20b9280.54) submitted and auto-approved at manager stage. Awaiting ERP approval.\n\nThe requisition is now in the ERP approval queue, so please wait for the next system update.\n\n"}
 
-Column	Type
-MATREQUISITIONID	bigint(20)
-MATREQUISITIONNO	varchar(40)
-WAREHOUSEID	bigint(20)
-REQUISITIONTYPE	varchar(50)
-REQUESTORID	bigint(20)
-REQUISITIONDATE	datetime
-DEPARTMENT	varchar(50)
-NEEDBYDATE	datetime
-WHOCOLUMN	varchar(100)
-STATUS	varchar(50)
-PROJECTID	bigint(20)
-PROJECTPHASEID	bigint(20)
-REQTRANSACTIONTYPE	varchar(50)
-SUPPLIERID	bigint(20)
-SUPPLIERSITEID	bigint(20)
-DESCRIPTION	varchar(250)
-COMMENTS	varchar(250)
-VERIFICATION_STATUS	varchar(50)
-VERIFICATION_DATE	datetime
-APPROVAL_STATUS	varchar(50)
-APPROVAL_DATE	datetime
-ERP_APPROVAL_STATUS	varchar(50)
-ERP_APPROVAL_DATE	datetime
-TOTAL_COST	int(11)
-DESCRIBE mrr_matrequisitionlines (13 columns):
+data: [DONE]
 
-Column	Type
-MATREQUISITIONLINEID	bigint(20)
-MATREQUISITIONID	bigint(20)
-ITEMID	bigint(20)
-ITEMREVISIONID	bigint(20)
-UOMID	bigint(20)
-REQUISITIONQTY	decimal(15,4)
-ISSUEQTY	decimal(15,4)
-WHOCOLUMN	varchar(100)
-RETURNQUANTITY	decimal(15,4)
-STATUS	varchar(25)
-CLOSEREASON	varchar(4000)
-ITEMCOST	decimal(15,4)
-RETURN_DATE	datetime
-Columns fixed:
-
-Old (broken)	New (correct)	Note
-DEPARTMENTID	DEPARTMENT	Renamed in schema, varchar(50) not int
-TOTALCOST	TOTAL_COST	evaluate_and_route had typo
-PHASEID	PROJECTPHASEID	Renamed in schema
-ITEMNAME	—	Removed, no such column
-REQUANTITY	REQUISITIONQTY	Renamed in schema
-—	WHOCOLUMN	Added, varchar(100), was missing
-—	STATUS	Added for lines, was missing
-—	RETURN_DATE	Added for lines, was missing
-Both evaluate_and_route and form_submit_handler_node header/line INSERTs now match the real schema.
+# MATREQUISITIONID, MATREQUISITIONNO, WAREHOUSEID, REQUISITIONTYPE, REQUESTORID, REQUISITIONDATE, DEPARTMENT, NEEDBYDATE, WHOCOLUMN, STATUS, PROJECTID, PROJECTPHASEID, REQTRANSACTIONTYPE, SUPPLIERID, SUPPLIERSITEID, DESCRIPTION, COMMENTS, VERIFICATION_STATUS, VERIFICATION_DATE, APPROVAL_STATUS, APPROVAL_DATE, ERP_APPROVAL_STATUS, ERP_APPROVAL_DATE, TOTAL_COST
+'0', 'MRR/17/25-26', NULL, NULL, '2830', '2026-05-29 19:21:56', 'EAG', NULL, NULL, 'ENTERED', '0', NULL, 'RETURNABLE', '0', '0', NULL, 'new latest test', 'APPROVED', '2026-05-29 19:21:56', 'APPROVED', '2026-05-29 19:21:56', 'PENDING', NULL, '281'
