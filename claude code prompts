@@ -1,58 +1,30 @@
-═══════════════════════════════════════════════════════════════════
-TASK 6.7-FIX7: Fix total_cost ordering in form_submit_handler
-═══════════════════════════════════════════════════════════════════
+create a task
+V
+🤖
 
-CRITICAL CONSTRAINT
-- Only touch app/workflows/material_workflow/nodes.py
-  (form_submit_handler_node body).
-- Do NOT change other files or other functions.
+I couldn't create the task. Please fix and resend in one message:
 
-PROBLEM
-After the consolidated rewrite (Task 6.7-FIX6), form_submit_handler
-returns: "Could not submit total_cost is not defined". The variable
-`total_cost` is referenced before being assigned. Likely cause: the
-INSERT block (which uses :total) now runs before the items loop
-finishes accumulating totals, OR the totals calculation was moved
-but a reference to total_cost remained in the wrong place.
 
-FIX
-Inspect form_submit_handler_node and ensure this ORDER:
+    missing resource_id
 
-    1. Parse payload + early payload checks (form_id, etc.)
-    2. Open SessionLocal()
-    3. Validate header fields (project_id, requisition_type,
-       need_by_date, comments).
-    4. Resolve project + description + phase via lookups.
-    5. Validate items loop:
-         - For each item: lookup, validate, build validated_items
-           list with item_id, item_name, unit_price_rs, qty, total,
-           return_date.
-    6. If errors → return form_errors event, close session, exit.
-    7. AFTER items loop succeeds:
-         total_cost = sum(it["total"] for it in validated_items)
-       This line MUST exist before the INSERT statement that binds
-       :total.
-    8. INSERT header (uses total_cost).
-    9. INSERT lines (loop validated_items).
-    10. Commit.
-    11. Auto-verify update.
-    12. Build confirmation message + add_reasoning.
-    13. Close session in finally.
+    missing project_id
 
-If `total_cost` is defined inside a try/except and the INSERT lives
-outside that scope, hoist it.
+    missing product_id
 
-ALSO verify:
-- `validated_items` is defined before the items loop (e.g.,
-  validated_items = []), not inside any conditional.
-- `errors` is defined as {} before any validation, so the "if errors"
-  branch always works.
+    missing task_idx
 
-DELIVERABLE
-Show the ordered sections of form_submit_handler_node (you can use
-comments like # --- step N --- ) and confirm:
-- total_cost is computed exactly once, after the items loop and
-  before the INSERT.
-- validated_items is initialized before the items loop.
-- errors is initialized before any validation.
-═══════════════════════════════════════════════════════════════════
+    missing activity_idx
+
+    missing start date
+
+    missing end date
+
+    missing planned hours
+
+
+Example: create a task for emp 3010, project 100, product 10, task index 1, activity 1, from 2026-05-26 to 2026-05-28, planned 8 hours
+
+[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task
+[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
+[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task
+[DIAG-RMS] creator_agent_node returning validation errors. error_count=8
