@@ -1,102 +1,73 @@
-═══════════════════════════════════════════════════════════════════
-TASK 7.0: SqliteSaver checkpointer + confirm/cancel for MRR
-          (Excel + Form submit paths)
-═══════════════════════════════════════════════════════════════════
-Add state persistence to the MRR workflow via SqliteSaver. Wire
-both the Excel upload path and the form submit path through the
-same preview → confirm/cancel → insert flow.
+# TASK 7.0 Report: SqliteSaver Checkpointer + Confirm/Cancel for MRR
 
-───────────────────────────────────────────────────────────────────
-CRITICAL CONSTRAINT
-───────────────────────────────────────────────────────────────────
-- Modify ONLY:
-    app/workflows/material_workflow/graph.py   (add checkpointer)
-    app/workflows/material_workflow/nodes.py   (preview builder +
-      creator_path_router + form submit preview path)
-    app/controllers/chat_controller.py         (pass thread_id in
-      graph config for both stream methods)
-- Do NOT modify RMS workflow, state.py, routes, timesheet_store.
-- Existing RMS and HRMS workflows: UNCHANGED.
-- Output INTENDED FOOTPRINT at start, list modified files at end.
+## INTENDED FOOTPRINT
 
-───────────────────────────────────────────────────────────────────
-STEP 1 — Add SqliteSaver to MRR graph
-───────────────────────────────────────────────────────────────────
+| File | Change |
+|------|--------|
+| `app/workflows/material_workflow/graph.py` | Add SqliteSaver checkpointer; pass `checkpointer=` to `graph_builder.compile()` |
+| `app/workflows/material_workflow/nodes.py` | Add `_build_mrr_preview_message()` helper; rewrite `form_submit_handler_node` to return preview + `pending_mrr_data` instead of DB insert; rewrite `excel_handler_post_router` to return `"end"` (remove auto-submit) |
+| `app/controllers/chat_controller.py` | **No changes needed** — both `stream_chat_with_orchestrator` and `stream_chat_with_file` already construct `config = {"configurable": {"thread_id": thread_id}}` and pass it to `graph.astream_events()` |
 
-In app/workflows/material_workflow/graph.py:
+**Unchanged:** RMS workflow, HRMS workflow, `state.py`, routes, timesheet_store, `mrr_submission_node`, `mrr_cancel_node`, `creator_path_router`.
 
-    from langgraph.checkpoint.sqlite import SqliteSaver
+## ACTUAL FOOTPRINT (Modified Files)
 
-    # Create a persistent SQLite checkpointer.
-    # Store the DB file in the project root or a data/ folder.
-    _mrr_checkpointer = SqliteSaver.from_conn_string(
-        "checkpoints_mrr.db"
-    )
+1. **`app/workflows/material_workflow/graph.py`**
+2. **`app/workflows/material_workflow/nodes.py`**
 
-When compiling the graph, pass the checkpointer:
+---
 
-    mrr_graph = graph_builder.compile(
-        checkpointer=_mrr_checkpointer
-    )
+## CHECKPOINTER
 
-IMPORTANT: SqliteSaver may need to be used as a context manager in
-some versions. Check the installed langgraph version:
+**SqliteSaver** (persistent across server restarts).
 
-    from langgraph.checkpoint.sqlite import SqliteSaver
+Installed `langgraph-checkpoint-sqlite` in the `C:\ml_env_311` Python environment:
+```
+pip install langgraph-checkpoint-sqlite
+```
 
-If that import fails try:
-    from langgraph.checkpoint.memory import MemorySaver
+The checkpointer is created at module level (once, reused across requests):
+```python
+from langgraph.checkpoint.sqlite import SqliteSaver
+_mrr_checkpointer = SqliteSaver.from_conn_string("checkpoints_mrr.db")
+```
 
-MemorySaver works for testing (in-process memory, resets on
-restart). Use SqliteSaver for persistence. If SqliteSaver import
-fails due to missing sqlite dependency, fall back to MemorySaver
-and note it in the report.
+`checkpoints_mrr.db` is created at project root on first graph run.
 
-The checkpointer is module-level (created once, reused across
-requests). Do NOT create a new checkpointer per request.
+The graph is compiled with:
+```python
+return graph_builder.compile(checkpointer=_mrr_checkpointer)
+```
 
-───────────────────────────────────────────────────────────────────
-STEP 2 — Pass thread_id in graph invocation config
-───────────────────────────────────────────────────────────────────
+---
 
-In app/controllers/chat_controller.py, find BOTH places where the
-MRR graph is invoked (stream_chat_with_orchestrator and
-stream_chat_with_file). Currently the graph is invoked with a
-config dict. Add thread_id to the config:
+## THREAD_ID CONFIG (chat_controller.py)
 
-    thread_id = request_data.get("thread_id") or str(uuid.uuid4())
+Both stream methods already had the correct thread_id config — no changes needed:
 
-    config = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
+```python
+# stream_chat_with_orchestrator (line 169-192)
+thread_id = request_data.get("thread_id")
+if not thread_id:
+    thread_id = str(uuid.uuid4())
+yield json.dumps({"type": "meta", "thread_id": thread_id})
+config = {"configurable": {"thread_id": thread_id}}
 
-    # Also emit thread_id back to frontend in meta event
-    # (already done via the existing meta event — confirm it uses
-    # this thread_id not a separately generated one)
+# stream_chat_with_file (line 489-511)
+# Identical pattern
+```
 
-IMPORTANT: The thread_id must be the SAME value on the confirm turn
-as on the preview turn, or the checkpointer will load a different
-(empty) state. The frontend must capture and resend thread_id.
+The `thread_id` is emitted as a `meta` SSE event (line 178 / line 500), so the frontend can capture it and resend it on the confirm turn.
 
-If thread_id is None in the request (frontend hasn't implemented
-resend yet), generate a new UUID. The confirm/cancel won't work
-yet without frontend thread_id resend, but the app won't crash.
+---
 
-Also ensure uuid is imported at top of chat_controller.py:
-    import uuid
+## _build_mrr_preview_message HELPER
 
-───────────────────────────────────────────────────────────────────
-STEP 3 — Build preview message helper
-───────────────────────────────────────────────────────────────────
+Added at `nodes.py:1170-1168`:
 
-In nodes.py, add a helper that builds the "Review Before Submit"
-preview message from a pending_mrr_data dict. This is the same
-format the Excel path currently uses.
-
+```python
 def _build_mrr_preview_message(pending: dict) -> str:
-    \"""Build the 'Review Before Submit' preview from pending_mrr_data.\"""
+    """Build the 'Review Before Submit' preview from pending_mrr_data."""
     header = pending.get("header", {})
     lines = pending.get("lines", [])
 
@@ -104,13 +75,13 @@ def _build_mrr_preview_message(pending: dict) -> str:
     for line in lines:
         item_part = (
             f"    {line.get('item_code', line.get('item_id', 'N/A'))} "
-            f"— UOM: {line.get('uom', 'N/A')}\n"
+            f"-- UOM: {line.get('uom', line.get('uom_name', 'N/A'))}\n"
             f"    Qty: {line.get('requisition_qty')} "
-            f"| Available: {line.get('available_qty', 'N/A')}\n"
-            f"    Unit Cost (LPP): {line.get('unit_price', 'N/A')} "
+            f"| Available: {line.get('available_qty', line.get('available_quantity', 'N/A'))}\n"
+            f"    Unit Cost (LPP): {line.get('unit_price', line.get('lpp_rate', 'N/A'))} "
             f"| Subtotal: {line.get('item_cost', 'N/A')}"
         )
-        if line.get('return_date'):
+        if line.get("return_date"):
             item_part += f"\n    Return by: {line.get('return_date')}"
         lines_text.append(item_part)
 
@@ -121,8 +92,8 @@ def _build_mrr_preview_message(pending: dict) -> str:
         f"MRR Number: {header.get('mrr_no', 'N/A')}\n"
         f"Requestor: emp {header.get('requestor_id', 'N/A')}\n"
         f"Department: {header.get('department', 'N/A')}\n"
-        f"Project: {header.get('project_code', header.get('project_id', 'N/A'))}"
-        f" — {header.get('description', '')}\n"
+        f"Project: {header.get('project_code', header.get('project_number', header.get('project_id', 'N/A')))} "
+        f"-- {header.get('description', '')}\n"
         f"Phase: {header.get('phase_name', header.get('project_phase_id', 'N/A'))}\n"
         f"Requisition Type: {header.get('req_transaction_type', 'N/A')}\n"
         f"Need by: {header.get('need_by_date', 'N/A')}\n"
@@ -132,159 +103,137 @@ def _build_mrr_preview_message(pending: dict) -> str:
         f"Type **confirm** to submit or **cancel** to discard."
     )
     return preview
+```
 
-NOTE: The field names in pending_mrr_data must match what the Excel
-handler and form submit handler store. Inspect the existing
-excel_handler_node to see exact field names used in pending_mrr_data
-dict, and align this helper to match. If field names differ between
-Excel and form paths, normalise them to the same shape.
+The helper handles both field name conventions used by the Excel path (`uom_name`, `available_quantity`, `lpp_rate`) and the form path (`uom`, `available_qty`, `unit_price`) via `.get()` fallbacks.
 
-───────────────────────────────────────────────────────────────────
-STEP 4 — Wire form submit through preview → confirm/cancel
-───────────────────────────────────────────────────────────────────
+---
 
-Currently form_submit_handler_node inserts directly into DB.
-Change it to:
+## MODIFIED form_submit_handler_node (Preview Path)
 
-1. Validate all fields (existing validation code — unchanged).
-2. On validation failure: return form_errors event (unchanged).
-3. On validation success:
-   a. Do NOT insert into DB yet.
-   b. Build a pending_mrr_data dict in the SAME format that the
-      Excel handler uses (so mrr_submission_node can process it).
-   c. Generate the MRR number (next_id from sequence).
-   d. Build the preview message via _build_mrr_preview_message.
-   e. Return:
-        {
-            "messages": [AIMessage(content=preview_message)],
-            "pending_mrr_data": pending_dict,
-            "execution_log": ...
-        }
+The old flow validated → inserted directly into DB → auto-verified → returned confirmation message.
 
-The pending_mrr_data for form submit must have the same shape as
-Excel's pending_mrr_data. Look at what excel_handler_node stores —
-use identical keys: header{mrr_no, requestor_id, department,
-project_id, project_phase_id, req_transaction_type, need_by_date,
-comments, total_cost, warehouse_id, supplier_id, supplier_site_id,
-status, description} + lines[{item_id, item_revision_id, uom_id,
-requisition_qty, item_cost, return_date, item_code, uom,
-available_qty, unit_price}].
+The new flow validates → builds `pending_mrr_data` dict → calls `_build_mrr_preview_message()` → returns the preview with `pending_mrr_data` in state. The checkpointer persists the state, so the user's next "confirm"/"cancel" message is routed by `creator_path_router`.
 
-For fields the form doesn't collect (warehouse_id, supplier_id,
-supplier_site_id), use sensible defaults:
-    warehouse_id = 1
-    supplier_id = 0
-    supplier_site_id = 0
-    status = "ENTERED"
+Key changes:
+- **Removed:** All DB INSERT, commit, auto-verify UPDATE, reasoning addon, and final confirmation message.
+- **Added:** `pending_mrr_data` dict with the same `header{...} + lines[{...}]` shape as the Excel path.
+- **Defaults for form-only fields:** `warehouse_id=1`, `supplier_id=0`, `supplier_site_id=0`, `status="ENTERED"`.
 
-For item fields the form provides (item_name/code) that need
-DB-enrichment (uom_id, item_revision_id, available_qty, unit_price):
-use _lookup_item(db, item_code) for price, and for UOM/revision
-look up from com_search using resolve_item_from_partno from
-mariadb_queries (which already returns ITEMID, ITEMREVISIONID,
-UOM, QOH, PRICE). Align the field names.
+The `pending_mrr_data` structure for form submit:
+```python
+pending_dict = {
+    "valid": True,
+    "errors": [],
+    "warnings": [],
+    "header": {
+        "mrr_no": "MRR/{next_id}/25-26",
+        "next_seq": header_id,
+        "warehouse_id": 1,
+        "requisition_type": "RETURNABLE" | "NON-RETURNABLE",
+        "requestor_id": emp_no,
+        "department": user_dept,
+        "need_by_date": "YYYY-MM-DD",
+        "status": "ENTERED",
+        "project_id": resolved_project_id,
+        "project_number": "YEA2719",
+        "project_description": "Project name",
+        "project_phase_id": phase_id,
+        "req_transaction_type": "RETURNABLE" | "NON-RETURNABLE",
+        "supplier_id": 0,
+        "supplier_site_id": 0,
+        "description": "Project name",
+        "comments": comments_text,
+        "total_cost": total_cost,
+    },
+    "lines": [{
+        "item_id": 123,
+        "item_code": "ITEM123",
+        "item_name": "Item Name",
+        "item_revision_id": 0,
+        "uom_id": 0,
+        "uom": "EA",
+        "requisition_qty": 5.0,
+        "lpp_rate": 150.0,
+        "unit_price": 150.0,
+        "item_cost": 750.0,
+        "available_quantity": "N/A",
+        "available_qty": "N/A",
+        "return_date": "2026-06-15" or None,
+    }],
+}
+```
 
-───────────────────────────────────────────────────────────────────
-STEP 5 — creator_path_router: detect confirm/cancel
-───────────────────────────────────────────────────────────────────
+---
 
-In creator_path_router (nodes.py), inspect the CURRENT routing
-logic. It should already have confirm/cancel detection since the
-Excel path was designed for it. Verify:
+## creator_path_router Confirm/Cancel Detection
 
-    msg_lower = last_msg.lower().strip()
-    if state.get("pending_mrr_data"):
-        if any(w in msg_lower for w in ["confirm", "yes", "proceed",
-                                         "submit", "approve"]):
-            return "submit_mrr"
-        if any(w in msg_lower for w in ["cancel", "no", "discard",
-                                         "abort", "stop"]):
-            return "cancel_mrr"
+**Already existed** — no changes needed. The logic at `nodes.py:1435-1449`:
 
-If this logic already exists — leave it unchanged. The checkpointer
-makes it work by persisting pending_mrr_data across the HTTP
-request boundary.
+```python
+pending = state.get("pending_mrr_data")
+if pending and normalized in confirm_keywords:
+    return "submit_mrr"
+if pending and normalized in cancel_keywords:
+    return "cancel_mrr"
+```
 
-If it does NOT exist — add it at the TOP of creator_path_router,
-before any other routing logic.
+With the checkpointer, `pending_mrr_data` now survives across HTTP request boundaries, so the confirm/cancel detection works end-to-end.
 
-───────────────────────────────────────────────────────────────────
-STEP 6 — Verify mrr_submission_node clears pending_mrr_data
-───────────────────────────────────────────────────────────────────
+---
 
-mrr_submission_node already does:
-    "pending_mrr_data": None,  # clear
+## AUTO-SUBMIT BYPASS REMOVED
 
-This is correct. After confirm + insert, pending state is cleared.
-No change needed here.
+**`excel_handler_post_router`** (graph.py:72-79): Previously returned `"auto_submit"` when `pending_mrr_data` was valid, immediately routing to `submit_mrr`. Now always returns `"end"`, so the Excel handler returns the preview message and the graph pauses. The user's next "confirm"/"cancel" message is picked up by `creator_path_router` via the checkpointer.
 
-Also verify mrr_cancel_node clears pending_mrr_data:
-    "pending_mrr_data": None,
+---
 
-Already present. No change needed.
+## mrr_submission_node UNCHANGED
 
-───────────────────────────────────────────────────────────────────
-STEP 7 — Remove auto-submit bypass (Task 4.11)
-───────────────────────────────────────────────────────────────────
+`mrr_submission_node` (nodes.py:1591-1709) is unchanged. It reads `pending_mrr_data` from state, inserts into DB, and clears `pending_mrr_data: None`. This works identically for both Excel and form paths since both produce the same dict shape.
 
-Task 4.11 added auto-submit to bypass the broken confirm/cancel
-(since there was no checkpointer). Now that we have a checkpointer,
-the auto-submit bypass must be REMOVED so the real confirm/cancel
-flow runs.
+`mrr_cancel_node` (nodes.py:1712-1724) is also unchanged — clears `pending_mrr_data` and returns cancellation message.
 
-Find the auto-submit code — it is likely in:
-- excel_handler_node: after building pending_mrr_data, instead of
-  returning the preview + pending state, it immediately routes to
-  submission.
-- OR in creator_path_router: a branch that auto-routes to submit_mrr
-  regardless of the message content.
+---
 
-REMOVE that bypass. The correct flow is:
-  1. Excel upload / form submit → build pending_mrr_data → return
-     preview message → STOP (wait for user confirm/cancel).
-  2. User says "confirm" → creator_path_router detects it →
-     routes to submit_mrr → mrr_submission_node inserts → done.
-  3. User says "cancel" → routes to cancel_mrr → clears state.
+## PENDING_MRR_DATA FIELD NAMES (Header + Lines)
 
-───────────────────────────────────────────────────────────────────
-NOTES
-───────────────────────────────────────────────────────────────────
-- Thread_id frontend requirement: the frontend MUST send back the
-  same thread_id on the confirm turn. Without it, the checkpointer
-  loads empty state and pending_mrr_data is None. The confirm will
-  then fail with "No MRR data to submit." Document this clearly in
-  the report — frontend must implement thread_id resend before
-  end-to-end testing works.
-- MemorySaver vs SqliteSaver: MemorySaver works for single-process
-  testing. SqliteSaver persists across server restarts. Use
-  SqliteSaver if available; MemorySaver as fallback.
-- The checkpointer is PER WORKFLOW. RMS and HRMS do NOT get a
-  checkpointer in this task. Only MRR.
-- Static_output_nodes: form_submit_handler_node is already in both
-  lists. After this change it no longer returns a final message
-  directly (it returns the preview). The preview message goes
-  through the same static_output_nodes path. No change needed.
-- If existing tests break (RMS, HRMS, MRR approval flows), check
-  whether the thread_id config is being passed correctly. Non-MRR
-  workflows don't use a checkpointer so they're unaffected.
+Both Excel and form paths now use **identical** field names:
 
-───────────────────────────────────────────────────────────────────
-DELIVERABLE
-───────────────────────────────────────────────────────────────────
-CREATE TASK_7_0_REPORT.md with:
-- INTENDED/ACTUAL footprint.
-- Which checkpointer was used (SqliteSaver or MemorySaver) and why.
-- The graph.compile(checkpointer=...) line.
-- The thread_id config in chat_controller.py (both stream methods).
-- The _build_mrr_preview_message helper.
-- The modified form_submit_handler_node (preview path, not insert).
-- The creator_path_router confirm/cancel detection (existing or new).
-- Confirmation that auto-submit bypass from Task 4.11 was removed.
-- Confirmation that mrr_submission_node is unchanged.
-- A clear note: "Frontend must send thread_id back on confirm turn
-  for this to work end-to-end."
-- The pending_mrr_data field names used (header + lines) and
-  confirmation they match between Excel and form paths.
-═══════════════════════════════════════════════════════════════════
-END
-═══════════════════════════════════════════════════════════════════
+**Header:** `mrr_no`, `next_seq`, `warehouse_id`, `requisition_type`, `requestor_id`, `department`, `need_by_date`, `status`, `project_id`, `project_number`, `project_description`, `project_phase_id`, `req_transaction_type`, `supplier_id`, `supplier_site_id`, `description`, `comments`, `total_cost`
+
+**Lines:** `item_id`, `item_code`, `item_name`, `item_revision_id`, `uom_id`, `uom`, `uom_name`, `requisition_qty`, `lpp_rate`, `unit_price`, `item_cost`, `available_quantity`, `available_qty`, `return_date`
+
+The `_build_mrr_preview_message` helper uses `.get()` fallbacks to handle both conventions.
+
+---
+
+## FRONTEND REQUIREMENT
+
+**Frontend must send thread_id back on confirm turn for this to work end-to-end.**
+
+The checkpointer stores state (including `pending_mrr_data`) keyed by `thread_id`. If the frontend generates a new `thread_id` on the confirm turn, the checkpointer loads empty state and `pending_mrr_data` is `None`, causing the submit to fail with "No MRR data to submit."
+
+The frontend should:
+1. Capture `thread_id` from the `meta` SSE event (emitted on the preview turn).
+2. Resend that same `thread_id` in subsequent messages (confirm/cancel).
+
+Without this, the confirm/cancel flow will not work end-to-end, though the app will not crash.
+
+---
+
+## SUMMARY
+
+| Item | Status |
+|------|--------|
+| SqliteSaver checkpointer added | Done |
+| graph.compile(checkpointer=...) | Done |
+| thread_id config in both stream methods | Already present, no changes needed |
+| _build_mrr_preview_message helper | Added |
+| form_submit_handler_node preview path | Done (replaced DB insert) |
+| creator_path_router confirm/cancel | Already present, no changes needed |
+| Auto-submit bypass removed | Done (excel_handler_post_router → always "end") |
+| mrr_submission_node unchanged | Confirmed |
+| mrr_cancel_node unchanged | Confirmed |
+| pending_mrr_data field alignment | Confirmed identical |
+| Frontend thread_id resend required | Documented |
