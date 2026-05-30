@@ -1,13 +1,65 @@
-data: {"type": "meta", "thread_id": "f726545b-d550-435c-b94b-d47e158a16be"}
+process this file
+ test_mrr.xlsx
+V
+🤖
 
-data: {"type": "chunk", "text": "Sure, I can help you create a task. Fill in the form below, or type all details in one message.\n\n"}
+Material Requisition — Review Before Submit
 
-data: {"type": "form_widget", "form": {"form_id": "rms_create_task_form", "title": "Create Task Assignment", "description": "Fill in all fields and click Submit.", "submit_label": "Submit", "cancel_label": "Cancel", "fields": [{"name": "employee_id", "label": "Employee ID", "type": "text", "required": true, "placeholder": "e.g. 3010"}, {"name": "project_id", "label": "Project ID", "type": "text", "required": true, "placeholder": "e.g. YEA2719"}, {"name": "product_id", "label": "Product ID", "type": "text", "required": true, "placeholder": "e.g. PRD001"}, {"name": "task_index", "label": "Task Index", "type": "number", "required": true, "min": 1, "placeholder": "e.g. 1"}, {"name": "activity_index", "label": "Activity Index", "type": "number", "required": true, "min": 1, "placeholder": "e.g. 1"}, {"name": "start_date", "label": "Start Date", "type": "date", "required": true}, {"name": "end_date", "label": "End Date", "type": "date", "required": true}, {"name": "planned_hours", "label": "Planned Hours", "type": "number", "required": true, "min": 0.5, "placeholder": "e.g. 8"}]}}
+MRR Number: DPE/MRR/18/26-27
+Requestor: emp 2830
+Department: EAG
+Project: YEC2723 — MDI-Osprey Air Cooled Processor(Standard)
+Phase: PDN_PDN
+Requisition Type: RETURNABLE
+Need by: 2026-06-30
+Description: MDI-Osprey Air Cooled Processor(Standard)
+Comments: Urgent test order
 
-data: [DONE]
+Line Items:
 
-data: {"type": "meta", "thread_id": "f726545b-d550-435c-b94b-d47e158a16be"}
 
-data: {"type": "chunk", "text": "Task created successfully (Task ID: 51) for employee 3010, project YEA123, from 2026-06-22 to 2026-06-24, 112.5 planned hours.\n\nThe task is now active in the system and ready for tracking.\n\n"}
 
-data: [DONE]
+    DP-RM-CAB-01740 — UOM: MTR
+    Qty: 100.0 | Available: 9.22
+    Unit Cost (LPP): 72.05 | Subtotal: 7204.61
+    Return by: 2026-08-18T00:00:00
+
+
+
+    DP-RM-CAB-01250 — UOM: MTR
+    Qty: 200.0 | Available: 43.55
+    Unit Cost (LPP): 12.25 | Subtotal: 2450.00
+    Return by: 2026-08-14T00:00:00
+
+
+
+Total Cost: 9,654.61
+
+Please confirm or cancel below:
+
+Your MRR DPE/MRR/18/26-27 has been submitted.
+Total cost: ₹9,654.61
+
+Running verification...
+
+Please wait a moment while the system completes the automatic verification process.
+
+Your requisition (total cost: ₹9654.61) has been submitted for manager approval.
+
+Please await manager approval to proceed with the next steps in your requisition process.
+
+
+process task file
+ rms_create_tasks.xlsx
+V
+🤖
+
+Bulk Task Creation Summary
+
+
+    Created: 3 tasks
+
+    Skipped: 0 rows
+
+
+Your three new tasks are now ready for you to view and manage in the task list.
