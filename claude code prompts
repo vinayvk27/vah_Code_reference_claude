@@ -1,183 +1,34 @@
-# Task 6.8 + 6.9: RMS Webform — Form Widget + Form Submit
+═══════════════════════════════════════════════════════════════════
+FRONTEND UPDATE — RMS task creation form
+═══════════════════════════════════════════════════════════════════
+Backend will now emit a form_widget event for RMS task creation.
+Same rendering as the MRR form — no new component needed.
 
-## INTENDED FOOTPRINT
+form_id: "rms_create_task_form"
+Fields: employee_id (text), project_id (text), product_id (text),
+        task_index (number), activity_index (number),
+        start_date (date), end_date (date), planned_hours (number).
 
-Modify ONLY:
-- `app/workflows/rms_workflow/nodes.py` — new helpers + bare-create detection
-- `app/workflows/rms_workflow/prompts.py` — new keywords + `get_rms_task_form_widget_json()`
-- `app/workflows/rms_workflow/intent.py` — new keywords
-- `app/workflows/rms_workflow/graph.py` — NO changes needed (creator already routed)
-- `app/controllers/chat_controller.py` — NO changes needed (markers already wired)
+No conditional fields. No items table. All fields required.
+No pre-filled defaults — user enters everything manually.
 
-DO NOT MODIFY: state.py, routes, timesheet_store, MRR files.
-
-## ACTUAL FOOTPRINT
-
-Modified:
-1. `app/workflows/rms_workflow/keys`
-
-## ACTUAL FOOTPRINT
-
-Modified:
-1. `app/workflows/rms_workflow/prompts.py` — keyword additions + `get_rms_task_form_widget_json()`
-2. `app/workflows/rms_workflow/intent.py` — keyword additions only
-3. `app/workflows/rms_workflow/nodes.py` — `_parse_rms_form_submit`, `_handle_rms_form_submit`, `parse_intent_node` short-circuit, bare-create detection in `creator_agent_node`
-
-No changes to: graph.py, chat_controller.py, state.py, routes, timesheet_store, MRR files.
-
----
-
-## `get_rms_task_form_widget_json()` (prompts.py)
-
-```python
-def get_rms_task_form_widget_json(current_emp_no: str = "") -> dict:
-    """Returns the FROZEN JSON spec for the RMS create task form."""
-    return {
-        "form_id": "rms_create_task_form",
-        "title": "Create Task Assignment",
-        "description": "Fill in all fields and click Submit.",
-        "submit_label": "Submit",
-        "cancel_label": "Cancel",
-        "fields": [
-            {"name": "employee_id", "label": "Employee ID", "type": "text", "required": True, "placeholder": "e.g. 3010"},
-            {"name": "project_id", "label": "Project ID", "type": "text", "required": True, "placeholder": "e.g. YEA2719"},
-            {"name": "product_id", "label": "Product ID", "type": "text", "required": True, "placeholder": "e.g. PRD001"},
-            {"name": "task_index", "label": "Task Index", "type": "number", "required": True, "min": 1, "placeholder": "e.g. 1"},
-            {"name": "activity_index", "label": "Activity Index", "type": "number", "required": True, "min": 1, "placeholder": "e.g. 1"},
-            {"name": "start_date", "label": "Start Date", "type": "date", "required": True},
-            {"name": "end_date", "label": "End Date", "type": "date", "required": True},
-            {"name": "planned_hours", "label": "Planned Hours", "type": "number", "required": True, "min": 0.5, "placeholder": "e.g. 8"},
-        ]
+Submit payload (message = JSON.stringify):
+{
+    "action": "form_submit",
+    "form_id": "rms_create_task_form",
+    "data": {
+        "employee_id": "3010",
+        "project_id": "YEA2719",
+        "product_id": "PRD001",
+        "task_index": 1,
+        "activity_index": 1,
+        "start_date": "2026-06-10",
+        "end_date": "2026-06-12",
+        "planned_hours": 8
     }
-```
+}
 
-## `_parse_rms_form_submit()` (nodes.py)
-
-```python
-def _parse_rms_form_submit(message: str) -> Optional[dict]:
-    """If the message is a JSON form_submit for rms_create_task_form,
-    return the parsed dict. Otherwise return None."""
-    import json as _json
-    s = (message or "").strip()
-    if not s.startswith("{"):
-        return None
-    try:
-        obj = _json.loads(s)
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    if obj.get("action") != "form_submit":
-        return None
-    if obj.get("form_id") != "rms_create_task_form":
-        return None
-    return obj
-```
-
-## `_handle_rms_form_submit()` (nodes.py) — key sections
-
-Validates all 8 form fields (employee_id, project_id, product_id, task_index, activity_index, start_date, end_date, planned_hours). Returns `[[FORM_ERRORS:...]]` marker on any validation failure. On success, calls `timesheet_store.create_task()` and returns a success message with reasoning addon.
-
-```python
-def _handle_rms_form_submit(state, payload, current_emp_no, execution_log):
-    data = payload.get("data") or {}
-    errors = {}
-    # --- Validate all 8 fields ---
-    # (employee_id -> resource_id, project_id, product_id, task_index -> task_idx,
-    #  activity_index -> activity_idx, start_date, end_date, planned_hours -> plan_hrs)
-    # --- Return errors via [[FORM_ERRORS:...]] marker ---
-    # --- DB Insert via timesheet_store.create_task() ---
-    # --- Reasoning addon on success ---
-```
-
-## Bare-create detection in `creator_agent_node` (nodes.py)
-
-Added between the form_submit check (Step 3.5) and the existing regex extraction (Step 4):
-
-```python
-# Step 4.5: Bare-create detection — emit form widget instead of error list
-all_missing = all(
-    err.startswith("missing") for err in fields["errors"]
-) and len(fields["errors"]) >= 6
-
-if all_missing:
-    import json as _json
-    from app.workflows.rms_workflow.prompts import get_rms_task_form_widget_json
-    form_json = get_rms_task_form_widget_json()
-    form_marker = "[[FORM_WIDGET:" + _json.dumps(form_json) + "]]"
-    full_text = (
-        "Sure, I can help you create a task. "
-        "Fill in the form below, or type all details in one message.\n\n"
-        + form_marker
-    )
-    execution_log.append("RMS: emitted task creation form widget.")
-    return {
-        "messages": [AIMessage(content=full_text)],
-        "execution_log": execution_log,
-    }
-```
-
-## `parse_intent_node` short-circuit (nodes.py)
-
-Added before `classify_rms_intent()`:
-
-```python
-# Short-circuit: JSON form_submit bypasses keyword classifier
-if _parse_rms_form_submit(last_user_message) is not None:
-    return {
-        "parsed_intent": "IN_DOMAIN",
-        "selected_collection": "rms_timesheet",
-        "selected_agent_role": "creator",
-        "classifier_confidence": "HIGH",
-        "append_soft_correction": False,
-        "execution_log": state.get("execution_log", []) + [
-            "RMS form_submit detected; bypassing classifier."
-        ]
-    }
-```
-
-## Confirmed: Unchanged paths
-
-- **Chat-regex path**: User sends "create task for emp 3010, project 100..." — regex extracts fields → validation → insert. **UNCHANGED**.
-- **Excel path**: User uploads Excel file with task data — `uploaded_files` check triggers `_handle_creator_excel`. **UNCHANGED**.
-- **Graph routing**: `creator_agent` node already registered and routed in `graph.py`. **NO CHANGES NEEDED**.
-
-## Confirmed: Controller needs no changes
-
-- `[[FORM_WIDGET:...]]` marker already handled by `_emit_with_form_widget()` in [chat_controller.py:76-103](app/controllers/chat_controller.py#L76-L103)
-- `[[FORM_ERRORS:...]]` marker already handled by `_emit_with_form_errors()` in [chat_controller.py:106-129](app/controllers/chat_controller.py#L106-L129)
-- `creator_agent_node` already in `static_output_nodes` list in both `stream_chat_with_orchestrator` and `stream_chat_with_file` methods. **NO CHANGES NEEDED**.
-
-## Simulated Event Stream
-
-### (i) Bare "create a task" → form_widget emitted
-
-```
-USER: "create a task"
-
-SSE events:
-1. {"type": "meta", "thread_id": "abc-123"}
-2. {"type": "chunk", "text": "Sure, I can help you create a task. Fill in the form below, or type all details in one message.\n\n"}
-3. {"type": "form_widget", "form": {"form_id": "rms_create_task_form", "title": "Create Task Assignment", ...}}
-```
-
-### (ii) form_submit → task created
-
-```
-USER: {"action": "form_submit", "form_id": "rms_create_task_form", "data": {"employee_id": "3010", "project_id": "YEA2719", "product_id": "PRD001", "task_index": "1", "activity_index": "1", "start_date": "2026-05-30", "end_date": "2026-06-02", "planned_hours": "8"}}
-
-SSE events:
-1. {"type": "meta", "thread_id": "abc-123"}
-2. {"type": "chunk", "text": "Task created successfully (Task ID: 42) for employee 3010, project YEA2719, from 2026-05-30 to 2026-06-02, 8.0 planned hours.\n\n"}
-```
-
-### (iii) form_submit with missing field → form_errors event
-
-```
-USER: {"action": "form_submit", "form_id": "rms_create_task_form", "data": {"employee_id": "3010", "project_id": "", "product_id": "PRD001", "task_index": "", "activity_index": "1", "start_date": "", "end_date": "", "planned_hours": "8"}}
-
-SSE events:
-1. {"type": "meta", "thread_id": "abc-123"}
-2. {"type": "chunk", "text": "I couldn't submit the form. Please fix the highlighted fields and try again.\n\n"}
-3. {"type": "form_errors", "form_id": "rms_create_task_form", "errors": {"project_id": "Project ID is required", "task_index": "Task Index is required", "start_date": "Start Date is required", "end_date": "End Date is required"}}
-```
+form_errors events use the same format as MRR. Field keys:
+employee_id, project_id, product_id, task_index, activity_index,
+start_date, end_date, planned_hours.
+═══════════════════════════════════════════════════════════════════
