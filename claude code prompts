@@ -1,30 +1,439 @@
-create a task
-V
-🤖
+═══════════════════════════════════════════════════════════════════
+TASK 6.8 + 6.9: RMS webform — emit form widget + process form_submit
+═══════════════════════════════════════════════════════════════════
+Add webform support to RMS creator. When user invokes creator with
+no file and no field data, emit a form_widget event. When user
+submits the form, validate and insert via timesheet_store.create_task.
+Mirrors the MRR webform pattern (Tasks 6.6 + 6.7).
 
-I couldn't create the task. Please fix and resend in one message:
+───────────────────────────────────────────────────────────────────
+CRITICAL CONSTRAINT
+───────────────────────────────────────────────────────────────────
+- Modify ONLY:
+    app/workflows/rms_workflow/nodes.py
+    app/workflows/rms_workflow/prompts.py  (add form trigger keywords)
+    app/workflows/rms_workflow/intent.py   (same keyword additions)
+    app/workflows/rms_workflow/graph.py    (new node + routing)
+    app/controllers/chat_controller.py     (static_output_nodes only)
+- Do NOT modify state.py, routes, timesheet_store, or MRR files.
+- Existing chat-regex path and Excel path: UNCHANGED.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
+───────────────────────────────────────────────────────────────────
+KEYWORD ADDITIONS
+───────────────────────────────────────────────────────────────────
 
-    missing resource_id
+Add to CREATOR_KEYWORDS in BOTH prompts.py and intent.py:
+    "create a task",
+    "new task",
+    "add a task",
+    "i want to create a task",
+    "i need to create a task",
+    "open a task",
+    "raise a task"
 
-    missing project_id
+These trigger the creator path when user sends a bare request with
+no field data and no file.
 
-    missing product_id
+───────────────────────────────────────────────────────────────────
+STEP 1 — RMS form JSON helper
+───────────────────────────────────────────────────────────────────
 
-    missing task_idx
+Add to app/workflows/rms_workflow/prompts.py:
 
-    missing activity_idx
+def get_rms_task_form_widget_json(current_emp_no: str = "") -> dict:
+    """Returns the FROZEN JSON spec for the RMS create task form."""
+    return {
+        "form_id": "rms_create_task_form",
+        "title": "Create Task Assignment",
+        "description": "Fill in all fields and click Submit.",
+        "submit_label": "Submit",
+        "cancel_label": "Cancel",
+        "fields": [
+            {
+                "name": "employee_id",
+                "label": "Employee ID",
+                "type": "text",
+                "required": True,
+                "placeholder": "e.g. 3010"
+            },
+            {
+                "name": "project_id",
+                "label": "Project ID",
+                "type": "text",
+                "required": True,
+                "placeholder": "e.g. YEA2719"
+            },
+            {
+                "name": "product_id",
+                "label": "Product ID",
+                "type": "text",
+                "required": True,
+                "placeholder": "e.g. PRD001"
+            },
+            {
+                "name": "task_index",
+                "label": "Task Index",
+                "type": "number",
+                "required": True,
+                "min": 1,
+                "placeholder": "e.g. 1"
+            },
+            {
+                "name": "activity_index",
+                "label": "Activity Index",
+                "type": "number",
+                "required": True,
+                "min": 1,
+                "placeholder": "e.g. 1"
+            },
+            {
+                "name": "start_date",
+                "label": "Start Date",
+                "type": "date",
+                "required": True
+            },
+            {
+                "name": "end_date",
+                "label": "End Date",
+                "type": "date",
+                "required": True
+            },
+            {
+                "name": "planned_hours",
+                "label": "Planned Hours",
+                "type": "number",
+                "required": True,
+                "min": 0.5,
+                "placeholder": "e.g. 8"
+            }
+        ]
+    }
 
-    missing start date
+───────────────────────────────────────────────────────────────────
+STEP 2 — Detect "bare create" in creator_agent_node
+───────────────────────────────────────────────────────────────────
 
-    missing end date
+Currently creator_agent_node:
+  1. Checks uploaded_files → Excel path.
+  2. Extracts fields via regex → validates → inserts or returns errors.
 
-    missing planned hours
+Add a third detection BETWEEN steps 1 and 2:
 
+After the uploaded_files check and BEFORE _extract_task_fields,
+detect whether the message is a form_submit JSON:
 
-Example: create a task for emp 3010, project 100, product 10, task index 1, activity 1, from 2026-05-26 to 2026-05-28, planned 8 hours
+    # Check: is this a form_submit payload?
+    rms_form_payload = _parse_rms_form_submit(last_user_message)
+    if rms_form_payload is not None:
+        return _handle_rms_form_submit(state, rms_form_payload,
+                                       current_emp_no, execution_log)
 
-[DIAG-RMS] parse_intent_node entered. emp_no=2830, last_msg=create a task
-[DIAG-RMS] permission_check_node entered. parsed_intent=IN_DOMAIN, persona='creator', collection='rms_timesheet'
-[DIAG-RMS] creator_agent_node entered. emp_no=2830, collection='rms_timesheet', last_msg=create a task
-[DIAG-RMS] creator_agent_node returning validation errors. error_count=8
+Also add detection for "bare create" (no fields, no file, no JSON):
+After the form_submit check, check if the message has NO extractable
+field data. If _extract_task_fields returns ALL 8 fields as None
+(all errors are "missing X"), AND no form_submit detected, AND no
+uploaded_files — emit the form widget instead of the error list:
+
+    fields = _extract_task_fields(last_user_message, current_emp_no)
+    all_missing = all(
+        err.startswith("missing") for err in fields["errors"]
+    ) and len(fields["errors"]) >= 6
+
+    if all_missing:
+        # User sent a bare "create a task" with no data — show form
+        import json as _json
+        from app.workflows.rms_workflow.prompts import get_rms_task_form_widget_json
+        form_json = get_rms_task_form_widget_json()
+        form_marker = "[[FORM_WIDGET:" + _json.dumps(form_json) + "]]"
+        full_text = (
+            "Sure, I can help you create a task. "
+            "Fill in the form below, or type all details in one message.\n\n"
+            + form_marker
+        )
+        execution_log.append("RMS: emitted task creation form widget.")
+        return {
+            "messages": [AIMessage(content=full_text)],
+            "execution_log": execution_log,
+        }
+
+    # Existing validation + insert flow continues below...
+    if fields["errors"]:
+        ...
+
+NOTE: The threshold "all errors are missing AND >= 6" handles edge
+cases where the user typed partial data ("create a task for emp
+3010") — in that case we return the validation error list as before
+(guides the user to add the rest). Only a completely bare message
+with zero data triggers the form widget.
+
+───────────────────────────────────────────────────────────────────
+STEP 3 — _parse_rms_form_submit helper
+───────────────────────────────────────────────────────────────────
+
+Add near _parse_form_submit_message (which is in MRR nodes.py):
+
+def _parse_rms_form_submit(message: str) -> Optional[dict]:
+    """
+    If the message is a JSON form_submit for rms_create_task_form,
+    return the parsed dict. Otherwise return None.
+    Mirrors MRR's _parse_form_submit_message but for RMS form_id.
+    """
+    import json as _json
+    s = (message or "").strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        obj = _json.loads(s)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("action") != "form_submit":
+        return None
+    if obj.get("form_id") != "rms_create_task_form":
+        return None
+    return obj
+
+───────────────────────────────────────────────────────────────────
+STEP 4 — _handle_rms_form_submit handler
+───────────────────────────────────────────────────────────────────
+
+Add near creator_agent_node:
+
+def _handle_rms_form_submit(state, payload, current_emp_no,
+                             execution_log):
+    """
+    Procedural handler for RMS task form_submit.
+    Validates fields, inserts via timesheet_store.create_task.
+    Mirrors MRR's form_submit_handler_node but uses
+    timesheet_store instead of direct SQL.
+    """
+    import json as _json
+    from datetime import datetime
+
+    data = payload.get("data") or {}
+    errors = {}
+
+    # --- Validate header fields ---
+    employee_id_raw = str(data.get("employee_id") or "").strip()
+    if not employee_id_raw:
+        errors["employee_id"] = "Employee ID is required"
+    else:
+        try:
+            resource_id = int(employee_id_raw)
+        except Exception:
+            errors["employee_id"] = f"Employee ID must be a number"
+            resource_id = None
+
+    project_id = str(data.get("project_id") or "").strip()
+    if not project_id:
+        errors["project_id"] = "Project ID is required"
+
+    product_id = str(data.get("product_id") or "").strip()
+    if not product_id:
+        errors["product_id"] = "Product ID is required"
+
+    task_index_raw = data.get("task_index")
+    if task_index_raw is None or str(task_index_raw).strip() == "":
+        errors["task_index"] = "Task Index is required"
+        task_idx = None
+    else:
+        try:
+            task_idx = int(float(task_index_raw))
+            if task_idx < 1:
+                errors["task_index"] = "Task Index must be >= 1"
+                task_idx = None
+        except Exception:
+            errors["task_index"] = "Task Index must be a number"
+            task_idx = None
+
+    activity_index_raw = data.get("activity_index")
+    if activity_index_raw is None or str(activity_index_raw).strip() == "":
+        errors["activity_index"] = "Activity Index is required"
+        activity_idx = None
+    else:
+        try:
+            activity_idx = int(float(activity_index_raw))
+            if activity_idx < 1:
+                errors["activity_index"] = "Activity Index must be >= 1"
+                activity_idx = None
+        except Exception:
+            errors["activity_index"] = "Activity Index must be a number"
+            activity_idx = None
+
+    start_date = str(data.get("start_date") or "").strip()
+    end_date = str(data.get("end_date") or "").strip()
+
+    if not start_date:
+        errors["start_date"] = "Start Date is required"
+    else:
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+        except Exception:
+            errors["start_date"] = "Invalid date (use YYYY-MM-DD)"
+
+    if not end_date:
+        errors["end_date"] = "End Date is required"
+    else:
+        try:
+            ed = datetime.strptime(end_date, "%Y-%m-%d")
+            if start_date and not errors.get("start_date"):
+                sd = datetime.strptime(start_date, "%Y-%m-%d")
+                if ed < sd:
+                    errors["end_date"] = "End Date must be on or after Start Date"
+        except Exception:
+            errors["end_date"] = "Invalid date (use YYYY-MM-DD)"
+
+    planned_hours_raw = data.get("planned_hours")
+    if planned_hours_raw is None or str(planned_hours_raw).strip() == "":
+        errors["planned_hours"] = "Planned Hours is required"
+        plan_hrs = None
+    else:
+        try:
+            plan_hrs = float(planned_hours_raw)
+            if plan_hrs <= 0:
+                errors["planned_hours"] = "Planned Hours must be positive"
+                plan_hrs = None
+        except Exception:
+            errors["planned_hours"] = "Planned Hours must be a number"
+            plan_hrs = None
+
+    # --- Return field errors if any ---
+    if errors:
+        import json as _json
+        marker = "[[FORM_ERRORS:" + _json.dumps({
+            "form_id": "rms_create_task_form",
+            "errors": errors
+        }) + "]]"
+        full_text = (
+            "I couldn't submit the form. Please fix the "
+            "highlighted fields and try again.\n\n" + marker
+        )
+        execution_log.append(
+            f"RMS form_submit validation: {len(errors)} errors"
+        )
+        return {
+            "messages": [AIMessage(content=full_text)],
+            "execution_log": execution_log,
+        }
+
+    # --- DB Insert via timesheet_store ---
+    try:
+        db = SessionLocal()
+        try:
+            result = timesheet_store.create_task(
+                db=db,
+                resource_id=resource_id,
+                project_id=project_id,
+                product_id=product_id,
+                task_idx=task_idx,
+                activity_idx=activity_idx,
+                start_date=start_date,
+                end_date=end_date,
+                plan_hrs=plan_hrs,
+                created_by=current_emp_no,
+            )
+            task_id = result.get("task_id")
+            full_text = (
+                f"Task created successfully (Task ID: {task_id}) "
+                f"for employee {resource_id}, project {project_id}, "
+                f"from {start_date} to {end_date}, "
+                f"{plan_hrs} planned hours."
+            )
+            execution_log.append(f"RMS form_submit: task created id={task_id}")
+        except Exception as e:
+            db.rollback()
+            full_text = (
+                f"Could not create the task due to a database error: {e}"
+            )
+            execution_log.append(f"RMS form_submit DB error: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        full_text = f"Database error: {e}"
+        execution_log.append(f"RMS form_submit session error: {e}")
+
+    # Reasoning addon on success only
+    if "Task created successfully" in full_text:
+        from app.workflows.shared.reasoning_addon import add_reasoning
+        full_text = add_reasoning(
+            full_text,
+            context=(
+                f"RMS task created via form for employee {resource_id}, "
+                f"project {project_id}, {plan_hrs} hours, "
+                f"{start_date} to {end_date}."
+            )
+        )
+
+    return {
+        "messages": [AIMessage(content=full_text)],
+        "execution_log": execution_log,
+    }
+
+───────────────────────────────────────────────────────────────────
+STEP 5 — parse_intent_node short-circuit for RMS
+───────────────────────────────────────────────────────────────────
+
+In RMS parse_intent_node (rms_workflow/nodes.py), add the same
+short-circuit we added for MRR. BEFORE calling classify_rms_intent:
+
+    # Short-circuit: JSON form_submit bypasses keyword classifier
+    if _parse_rms_form_submit(last_user_message) is not None:
+        return {
+            "parsed_intent": "IN_DOMAIN",
+            "selected_collection": "rms_timesheet",
+            "selected_agent_role": "creator",
+            "classifier_confidence": "HIGH",
+            "append_soft_correction": False,
+            "execution_log": state.get("execution_log", []) + [
+                "RMS form_submit detected; bypassing classifier."
+            ]
+        }
+
+───────────────────────────────────────────────────────────────────
+STEP 6 — static_output_nodes
+───────────────────────────────────────────────────────────────────
+
+creator_agent_node is ALREADY in static_output_nodes (added in
+Task 6.1-FIX2). The form widget emission and form_submit handling
+both happen inside creator_agent_node — no new node names needed.
+
+Verify creator_agent_node / creator_agent is in both
+static_output_nodes lists. If already present, no change needed.
+
+───────────────────────────────────────────────────────────────────
+NOTES
+───────────────────────────────────────────────────────────────────
+- RMS form_submit is handled INSIDE creator_agent_node (not a
+  separate node like MRR's form_submit_handler_node). This is
+  simpler because RMS creator already owns the task-creation logic
+  and uses timesheet_store — no need for a parallel node.
+- The [[FORM_WIDGET:...]] and [[FORM_ERRORS:...]] markers are
+  already wired in the controller from Tasks 6.6 + 6.7. No
+  controller changes needed.
+- The "bare create" threshold (all_missing AND >= 6 errors) is
+  intentionally conservative — if the user typed any partial data
+  (even one field), the existing validation error path runs.
+- graph.py: NO changes needed. creator_agent_node is already
+  registered and routed.
+
+───────────────────────────────────────────────────────────────────
+DELIVERABLE
+───────────────────────────────────────────────────────────────────
+CREATE TASK_6_8_9_REPORT.md with:
+- INTENDED/ACTUAL footprint.
+- The get_rms_task_form_widget_json() function.
+- The _parse_rms_form_submit helper.
+- The _handle_rms_form_submit handler (key sections).
+- The "bare create" detection block in creator_agent_node.
+- The parse_intent_node short-circuit.
+- Confirmed: chat-regex path and Excel path unchanged.
+- Confirmed: controller needs no changes (markers already wired).
+- A simulated event stream for:
+    (i) "create a task" bare → form_widget emitted.
+    (ii) form_submit → task created.
+    (iii) form_submit with missing field → form_errors event.
+═══════════════════════════════════════════════════════════════════
+END
+═══════════════════════════════════════════════════════════════════
