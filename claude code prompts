@@ -1,26 +1,13 @@
-═══════════════════════════════════════════════════════════════════
-TASK 7.0-FIX: Switch to MemorySaver (no extra dependencies)
-═══════════════════════════════════════════════════════════════════
-
-CRITICAL CONSTRAINT
-- Only touch app/workflows/material_workflow/graph.py
-
-CHANGE
-Replace the SqliteSaver setup with MemorySaver:
-
-Remove:
-    import sqlite3
-    from langgraph.checkpoint.sqlite import SqliteSaver
-    _mrr_conn = sqlite3.connect("checkpoints_mrr.db", check_same_thread=False)
-    _mrr_checkpointer = SqliteSaver(_mrr_conn)
-
-Add:
-    from langgraph.checkpoint.memory import MemorySaver
-    _mrr_checkpointer = MemorySaver()
-
-Everything else stays the same:
-    graph_builder.compile(checkpointer=_mrr_checkpointer)
-
-DELIVERABLE
-Show the updated graph.py imports and checkpointer line.
-═══════════════════════════════════════════════════════════════════
+Bug 1 — Available quantity shows N/A for form path.
+The form path builds pending_mrr_data with available_qty: "N/A" hardcoded (I put that in the spec as a placeholder since the form doesn't do a live inventory check). Fix: when building pending_mrr_data in form_submit_handler, query com_search.QOH for each item (same table we already query for price). One extra field from the same SELECT.
+Bug 2 — Need by date and return date displaying incorrectly.
+Likely a datetime format issue — dates coming as Python datetime objects or ISO strings with timestamps (2026-06-03T00:00:00) instead of clean YYYY-MM-DD. Fix: normalize all date fields to YYYY-MM-DD string when building pending_mrr_data and in _build_mrr_preview_message.
+Bug 3 — Financial year in MRR number (25-26 hardcoded, should be dynamic).
+Current code has f"MRR/{next_id}/25-26" hardcoded in multiple places. Fix: compute current FY dynamically — if current month >= April, FY is {year}-{year+1}, else {year-1}-{year}. E.g., June 2026 → FY 26-27. Need to find ALL places where the MRR number is built and fix consistently. This may be in form_submit_handler_node, evaluate_and_route, and possibly mrr_submission_node.
+Bug 4 — UOM sometimes missing.
+The form path queries com_search for price but may not always get UOM. com_search has a UOM column — same row, same query. Fix: include UOM in the _lookup_item inline query. Need to verify which table mrr_submission_node uses for UOM (uom_id in lines — is that from com_search.UOMID?). Need clarification:
+Question for you on Bug 4: When UOM is missing, is it missing in the PREVIEW message only, or also in the DB (UOMID=0 in mrr_matrequisitionlines)? This tells me if the bug is in the display layer or the data layer.
+Bug 5 — Phase showing ID number instead of name.
+PROJECTPHASEID (a number like 42) is stored and displayed instead of PHASENAME (like "PDN_PDN"). Fix: when looking up phase in _lookup_latest_phase, also fetch PHASENAME from posprojectphases. Store both project_phase_id AND phase_name in pending_mrr_data header. _build_mrr_preview_message already tries header.get('phase_name') — just need to populate it.
+Bug 6 — Pending list not in descending order.
+The approver list query needs ORDER BY MATREQUISITIONID DESC (or REQUISITIONDATE DESC). Fix: update the SELECT in approver_agent_node pending list query. Simple one-line fix.
