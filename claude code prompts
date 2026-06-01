@@ -1,7 +1,26 @@
-⚠️ Connection failed. Server error: The SqliteSaver does not support async methods. Consider using AsyncSqliteSaver instead.
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-Note: AsyncSqliteSaver requires the aiosqlite package to use.
-Install with:
-pip install aiosqlite
+═══════════════════════════════════════════════════════════════════
+TASK 7.0-FIX: Switch to MemorySaver (no extra dependencies)
+═══════════════════════════════════════════════════════════════════
 
-See https://langchain-ai.github.io/langgraph/reference/checkpoints/#langgraph.checkpoint.sqlite.aio.AsyncSqliteSaverfor more information.
+CRITICAL CONSTRAINT
+- Only touch app/workflows/material_workflow/graph.py
+
+CHANGE
+Replace the SqliteSaver setup with MemorySaver:
+
+Remove:
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    _mrr_conn = sqlite3.connect("checkpoints_mrr.db", check_same_thread=False)
+    _mrr_checkpointer = SqliteSaver(_mrr_conn)
+
+Add:
+    from langgraph.checkpoint.memory import MemorySaver
+    _mrr_checkpointer = MemorySaver()
+
+Everything else stays the same:
+    graph_builder.compile(checkpointer=_mrr_checkpointer)
+
+DELIVERABLE
+Show the updated graph.py imports and checkpointer line.
+═══════════════════════════════════════════════════════════════════
