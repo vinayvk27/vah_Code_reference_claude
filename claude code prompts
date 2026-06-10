@@ -1,203 +1,226 @@
-ENVIRONMENT: React 19, Vite, Tailwind CSS. Read the codebase before making changes.
+ENVIRONMENT: React 19, Vite, Tailwind CSS. 
+File to modify: src/components/FormRenderer.jsx only.
+Read the current file completely before making any changes.
 
-TASK FRONTEND-1: Fix two active bugs and resolve known gaps from the documentation. 
-Three sections — read all before starting.
-
-==============================================================================
-SECTION 1 — FIX: form_errors not displaying in chat
-==============================================================================
-SYMPTOM: Backend sends {"type": "form_errors", "form_id": "...", "errors": {...}} 
-but frontend only shows "⚠️ Form validation failed. Please correct the errors above." 
-with no actual field-level errors visible.
-
-DIAGNOSIS: In src/hooks/useChatStream.js, the form_errors SSE event handler sets 
-formErrors on the message object. But FormRenderer.jsx either does not read 
-formErrors or does not map them to individual field error displays.
-
-FIX STEPS:
-
-A. In src/hooks/useChatStream.js, find the form_errors case in the SSE event handler:
-
-   The current handler sets formErrors on a message at msgIndex. Verify:
-   - formErrors is being set as: { "project_id": "error text", "items.0.item_name": "error text" }
-   - The message object at msgIndex is being mutated/replaced correctly
-   - State update triggers a re-render (check if setMessages is called with a new array)
-
-   If formErrors is being set but UI doesn't show it, the bug is in FormRenderer.jsx (go to B).
-   If formErrors is not being set at all, fix the handler first.
-
-B. In src/components/FormRenderer.jsx, find where individual fields are rendered.
-
-   For EACH field, add inline error display below the input:
-   
-   - FormRenderer receives a `formErrors` prop (object: {fieldName: errorMessage})
-   - After each field's input element, add:
-   
-     {formErrors?.[field.name] && (
-       <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
-         <span>⚠</span>
-         <span>{formErrors[field.name]}</span>
-       </p>
-     )}
-   
-   - For nested errors like "items.0.item_name", map them as:
-     key = "items.0.item_name" → show below the field with name "item_name" 
-     that is at index 0 in the items array. 
-     If the form has table/array rows, each row's field should check 
-     formErrors[`items.${rowIndex}.${field.name}`]
-   
-   - Apply error styling to the input itself when an error exists:
-     Add to the input className: formErrors?.[field.name] ? 'border-red-500 ring-1 ring-red-500/20' : ''
-   
-   - The overall error banner ("⚠️ Form validation failed...") should REMAIN at 
-     the top of the form but should only appear when Object.keys(formErrors).length > 0
-
-C. In src/components/ChatOverlay.jsx (or wherever MessageBubble renders forms), 
-   verify that when re-rendering a form message with formErrors set, the FormRenderer 
-   is passed the updated formErrors prop. The form should NOT be re-mounted — 
-   it should update in place preserving user's filled values.
-
-D. IMPORTANT: After errors are shown, user fixes fields and resubmits. On new 
-   submission, clear the formErrors state for that message so stale errors disappear. 
-   In useChatStream.js submitForm(), before sending, clear formErrors on the 
-   relevant message.
-
-EXPECTED RESULT: User submits form with invalid project_id → backend returns 
-form_errors → the project_id field shows red border + "Project 'yaq134e' not found" 
-below it → item_name field shows "Item code 'rewqg435' not found in catalog" below it.
+TASK: Two improvements to FormRenderer.jsx:
+1. Add radio button field type support
+2. Elevate the visual design to premium quality
 
 ==============================================================================
-SECTION 2 — REDESIGN: Make forms compact and chat-native
+SECTION 1 — Add radio field type
 ==============================================================================
-CURRENT PROBLEM: Forms are large (7-8 fields, textarea, full-width) and feel 
-like a web form dropped into chat. They should feel like part of the conversation.
+The backend sends fields with type: "radio" in this shape:
 
-DESIGN PRINCIPLES:
-- Max width: 380px (mobile-card feel, not full-width)
-- Compact padding: 12px internal
-- Label font: 11px, uppercase, tracking-wide, muted color
-- Input height: 32px (not 40px+)
-- Font size in inputs: 13px
-- Minimal borders — use subtle backgrounds instead of heavy borders
-- Submit/Cancel inline side-by-side at the bottom
-- No heavy card shadow — just a thin border
-- Feels like a Slack /slash command form, not an admin panel form
-
-IMPLEMENT IN src/components/FormRenderer.jsx:
-
-A. WRAPPER: Change the outer container from full-width to:
-   className="w-full max-w-[380px] rounded-xl border border-slate-200 
-   dark:border-slate-700 bg-white dark:bg-slate-800/60 p-3 my-1"
-
-B. TITLE: Make it small and inline:
-   className="text-xs font-bold uppercase tracking-widest text-slate-500 
-   dark:text-slate-400 mb-2.5 pb-2 border-b border-slate-100 dark:border-slate-700"
-
-C. DESCRIPTION (if present): 
-   className="text-xs text-slate-500 dark:text-slate-400 mb-2 -mt-1"
-
-D. FIELDS LAYOUT: Change from 2-column grid to single column, compact spacing:
-   className="flex flex-col gap-2"
-
-   For each field:
-   - Label: className="block text-[11px] font-semibold uppercase tracking-wide 
-     text-slate-500 dark:text-slate-400 mb-0.5"
-   - Text/number input: className="w-full px-2.5 py-1.5 text-[13px] rounded-lg 
-     border bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 
-     text-slate-800 dark:text-slate-200 outline-none focus:border-blue-500 
-     focus:ring-1 focus:ring-blue-500/20 transition-colors"
-   - Textarea: same as above but rows={3} — NOT rows={5} or more
-   - Select: same as text input with appearance-none
-   - Error text: "mt-0.5 text-[11px] text-red-400 flex items-center gap-1"
-
-E. TABLE/ARRAY FIELDS (if form has rows): Keep rows compact — 
-   32px row height, 11px fonts, minimal padding.
-
-F. FOOTER BUTTONS: Side-by-side, right-aligned:
-   <div className="flex justify-end gap-2 mt-3 pt-2.5 
-   border-t border-slate-100 dark:border-slate-700">
-     <button Cancel className="px-3 py-1.5 text-xs font-medium text-slate-500 
-       dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 
-       transition-colors">
-       {cancelLabel}
-     </button>
-     <button Submit className="px-4 py-1.5 text-xs font-semibold rounded-lg 
-       bg-blue-600 hover:bg-blue-700 text-white transition-colors 
-       disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
-       {submitLabel}
-     </button>
-   </div>
-
-G. SUBMITTED STATE: When form is submitted successfully, replace form with 
-   a compact inline chip:
-   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg 
-   bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium">
-     <CheckCircle2 size={12} />
-     <span>{formSpec.title} submitted</span>
-   </div>
-
-H. CANCELLED STATE: When cancelled, replace with:
-   <div className="text-xs text-slate-500 dark:text-slate-400 italic">
-     Form cancelled.
-   </div>
-
-==============================================================================
-SECTION 3 — FIX KNOWN GAPS (from documentation section 14)
-==============================================================================
-
-Fix the following gaps from the MD file. Each is small and targeted.
-
-GAP 3 — authService.getCapabilities() not defined:
-In src/services/api.js, add this method to authService:
-  getCapabilities: async () => {
-    const token = localStorage.getItem('access_token');
-    const response = await fetch('/api/v1/me/capabilities', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (!response.ok) throw new Error('Failed to fetch capabilities');
-    return response.json();
-  },
-This unblocks Settings.jsx from crashing on load.
-
-GAP 4 — Sidebar Chat History and Settings use handleComingSoon() toast:
-In src/components/Sidebar.jsx, find the "Chat History" and "Settings" nav items. 
-Replace the onClick={handleComingSoon} handlers with proper NavLink navigation 
-to /dashboard/chat-history and /dashboard/settings respectively. 
-These should work the same as the Dashboard nav link.
-
-GAP 1 + 2 — Wire Chat History and Settings routes:
-In src/App.jsx, find the routes for chat-history and settings that currently 
-show "Coming Soon" text. Replace with the actual lazy-loaded components:
-  const ChatHistory = lazy(() => import('./pages/ChatHistory'));
-  const Settings = lazy(() => import('./pages/Settings'));
-Wire them into the route tree the same way Dashboard and Timesheet are wired, 
-with Suspense + LoadingFallback.
-
-GAP 10 — Remove console.log debug statements:
-In src/components/InteractiveChatTable.jsx and src/layouts/DashboardLayout.jsx, 
-remove all console.log() statements that are debug artifacts.
-
-GAP 6 — refreshAccess failure should inform the user:
-In src/layouts/DashboardLayout.jsx, find the refreshAccess() call. 
-Change the catch block from just logging errors to also showing a toast:
-  catch (error) {
-    console.error('Permission sync failed:', error);
-    toast.error('Could not refresh permissions. Some features may be unavailable.');
+  {
+    "name": "requisition_type",
+    "label": "Requisition Type",
+    "type": "radio",
+    "required": true,
+    "options": [
+      {"value": "returnable", "label": "Returnable"},
+      {"value": "non_returnable", "label": "Non-Returnable"}
+    ],
+    "default": "returnable"
   }
 
-==============================================================================
-REPORT BACK
-==============================================================================
-For each section:
-- Section 1 (form errors): Confirm where formErrors was being lost 
-  (useChatStream.js or FormRenderer.jsx) and what the fix was. 
-  Show the before/after of the field error rendering.
-- Section 2 (compact form): Confirm FormRenderer.jsx was updated. 
-  Show the new wrapper className and footer button classes.
-- Section 3 (gaps): Confirm each gap fixed — list which file was changed.
+Add a radio renderer in the scalar fields section alongside the existing 
+select/text/textarea/checkbox handlers:
 
-DO NOT:
-- Change useChatStream.js streaming logic beyond the formErrors handling
-- Modify any backend API calls or endpoint URLs
-- Change the overall ChatOverlay layout
-- Touch any backend files
+  } else if (field.type === 'radio') {
+    inputElement = (
+      <div className="flex flex-wrap gap-2 pt-0.5">
+        {(field.options || []).map(opt => {
+          const isSelected = (formValues[field.name] ?? field.default) === opt.value;
+          return (
+            <label
+              key={opt.value}
+              className={`
+                flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer
+                text-[12px] font-medium transition-all duration-150 select-none
+                ${isSelected
+                  ? 'bg-blue-600 border-blue-600 text-white shadow-sm shadow-blue-500/30'
+                  : 'bg-slate-50 dark:bg-slate-700/40 border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500'
+                }
+                ${hasError ? 'border-red-400' : ''}
+              `}
+            >
+              <input
+                type="radio"
+                name={field.name}
+                value={opt.value}
+                checked={isSelected}
+                onChange={() => handleChange(field.name, opt.value)}
+                className="sr-only"
+              />
+              {isSelected && (
+                <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" 
+                    strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+              {opt.label}
+            </label>
+          );
+        })}
+      </div>
+    );
+  }
+
+This renders as a row of pill-style toggles — the selected option highlights 
+in solid blue, unselected pills are subtle. No native radio buttons visible.
+Looks like a segmented control / button group.
+
+==============================================================================
+SECTION 2 — Premium form design
+==============================================================================
+The current form looks "basic" — increase quality significantly. 
+Target aesthetic: Notion forms, Linear issue creation, Stripe dashboard inputs.
+
+Key improvements:
+
+A. WRAPPER — Wider, better elevated:
+   className="w-full max-w-[480px] rounded-2xl border 
+   border-slate-200 dark:border-slate-700/80 
+   bg-white dark:bg-slate-800/80 
+   shadow-lg shadow-black/5 dark:shadow-black/20
+   backdrop-blur-sm p-4 my-2"
+
+B. TITLE BAR — Add a colored left accent stripe, make it feel like a modal header:
+   <div className="flex items-center gap-2.5 mb-4 pb-3 
+   border-b border-slate-100 dark:border-slate-700/60">
+     <div className="w-1 h-5 rounded-full bg-blue-500 shrink-0" />
+     <div>
+       <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 
+         leading-tight">{formSpec.title}</h3>
+       {formSpec.description && (
+         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+           {formSpec.description}
+         </p>
+       )}
+     </div>
+   </div>
+
+C. LABELS — Slightly larger, better contrast:
+   className="block text-[11px] font-semibold uppercase tracking-widest 
+   text-slate-400 dark:text-slate-500 mb-1"
+
+D. INPUTS — Refined borders, better focus states, feels tactile:
+   Base: "w-full px-3 py-2 text-[13px] font-medium rounded-lg 
+   border bg-slate-50/80 dark:bg-slate-700/30 
+   text-slate-800 dark:text-slate-100 
+   border-slate-200 dark:border-slate-600/80
+   placeholder-slate-400 dark:placeholder-slate-500
+   outline-none transition-all duration-150
+   focus:bg-white dark:focus:bg-slate-700/60
+   focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+   
+   Error state adds: "border-red-400 dark:border-red-500/70 
+   focus:border-red-400 focus:ring-red-400/15"
+   
+   Textarea: same as above but rows={3}
+   Select: same as above plus "appearance-none cursor-pointer"
+     Wrap select in a relative div with a chevron icon:
+     <div className="relative">
+       <select .../>
+       <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 
+         text-slate-400 pointer-events-none"/>
+     </div>
+
+E. ERROR TEXT — More styled:
+   <p className="mt-1 text-[11px] font-medium text-red-400 
+   flex items-center gap-1.5">
+     <AlertCircle size={11} className="shrink-0"/>
+     {error}
+   </p>
+
+F. REQUIRED INDICATOR — Add a small colored dot, not asterisk:
+   {field.required && (
+     <span className="inline-block w-1 h-1 rounded-full bg-blue-500 
+       ml-1 mb-0.5 align-middle"/>
+   )}
+
+G. FIELD GROUPS — Add subtle visual separation between fields:
+   className="flex flex-col gap-3" (was gap-2)
+   
+   Optionally group related fields (date range from/to) side by side:
+   If two consecutive fields have names ending in from_date/to_date or 
+   start/end, wrap in:
+   <div className="grid grid-cols-2 gap-2">...</div>
+
+H. FOOTER BUTTONS — More substantial, clearly primary vs secondary:
+   <div className="flex items-center justify-between mt-4 pt-3 
+   border-t border-slate-100 dark:border-slate-700/60">
+     <button Cancel 
+       className="px-3 py-1.5 text-[12px] font-medium rounded-lg
+       text-slate-500 dark:text-slate-400 
+       hover:bg-slate-100 dark:hover:bg-slate-700/40
+       hover:text-slate-700 dark:hover:text-slate-200
+       transition-all duration-150">
+       {cancelLabel || 'Cancel'}
+     </button>
+     <button Submit
+       className="px-5 py-1.5 text-[12px] font-semibold rounded-lg
+       bg-blue-600 hover:bg-blue-500 active:bg-blue-700
+       text-white shadow-sm shadow-blue-500/20
+       disabled:opacity-40 disabled:cursor-not-allowed
+       transition-all duration-150">
+       {isSubmitting ? (
+         <span className="flex items-center gap-1.5">
+           <Loader2 size={11} className="animate-spin"/>
+           Submitting...
+         </span>
+       ) : (submitLabel || 'Submit')}
+     </button>
+   </div>
+
+I. SUBMITTED STATE — More celebratory:
+   <div className="flex items-center gap-2 px-3 py-2 rounded-lg
+   bg-emerald-500/10 dark:bg-emerald-500/10
+   border border-emerald-500/20 dark:border-emerald-500/20">
+     <div className="w-5 h-5 rounded-full bg-emerald-500/20 
+       flex items-center justify-center shrink-0">
+       <CheckCircle2 size={12} className="text-emerald-400"/>
+     </div>
+     <div>
+       <p className="text-[12px] font-semibold text-emerald-400">
+         {formSpec.title} submitted
+       </p>
+       <p className="text-[11px] text-slate-500 dark:text-slate-400">
+         Your request has been sent for review.
+       </p>
+     </div>
+   </div>
+
+J. CANCELLED STATE:
+   <p className="text-[11px] text-slate-400 dark:text-slate-500 italic px-1">
+     Request cancelled.
+   </p>
+
+K. TABLE/ARRAY ROWS (if the form has repeatable row sections):
+   Each row: rounded-lg bg-slate-50 dark:bg-slate-700/20 
+   border border-slate-200 dark:border-slate-700/50 p-2.5
+   Row header: text-[10px] uppercase tracking-widest font-bold 
+   text-slate-400 mb-2
+   "Add Row" button: dashed border, hover solid:
+   className="w-full mt-2 py-1.5 rounded-lg border border-dashed 
+   border-slate-300 dark:border-slate-600 text-[11px] font-medium 
+   text-slate-500 hover:border-blue-400 hover:text-blue-400
+   hover:bg-blue-500/5 transition-all duration-150
+   flex items-center justify-center gap-1.5"
+
+==============================================================================
+VERIFY
+==============================================================================
+1. Confirm radio type is handled (no field silently disappears).
+2. Confirm form max-width is 480px (was 380px).
+3. Confirm chevron icon is added to selects.
+4. Confirm isSubmitting state shows loading spinner in submit button.
+5. Confirm submitted/cancelled states use the new designs.
+
+REPORT BACK:
+- Confirm radio renderer added (show the isSelected className logic)
+- Confirm max-width updated to 480px
+- List any field types in the current form spec that still lack a renderer
+  (check if backend sends any other types like 'autocomplete', 'multiselect', 
+  'date_range', 'file' — if found, flag them as TODOs)
+- DO NOT modify any other component files
