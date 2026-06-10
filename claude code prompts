@@ -1,13 +1,896 @@
-Bug 1 — Available quantity shows N/A for form path.
-The form path builds pending_mrr_data with available_qty: "N/A" hardcoded (I put that in the spec as a placeholder since the form doesn't do a live inventory check). Fix: when building pending_mrr_data in form_submit_handler, query com_search.QOH for each item (same table we already query for price). One extra field from the same SELECT.
-Bug 2 — Need by date and return date displaying incorrectly.
-Likely a datetime format issue — dates coming as Python datetime objects or ISO strings with timestamps (2026-06-03T00:00:00) instead of clean YYYY-MM-DD. Fix: normalize all date fields to YYYY-MM-DD string when building pending_mrr_data and in _build_mrr_preview_message.
-Bug 3 — Financial year in MRR number (25-26 hardcoded, should be dynamic).
-Current code has f"MRR/{next_id}/25-26" hardcoded in multiple places. Fix: compute current FY dynamically — if current month >= April, FY is {year}-{year+1}, else {year-1}-{year}. E.g., June 2026 → FY 26-27. Need to find ALL places where the MRR number is built and fix consistently. This may be in form_submit_handler_node, evaluate_and_route, and possibly mrr_submission_node.
-Bug 4 — UOM sometimes missing.
-The form path queries com_search for price but may not always get UOM. com_search has a UOM column — same row, same query. Fix: include UOM in the _lookup_item inline query. Need to verify which table mrr_submission_node uses for UOM (uom_id in lines — is that from com_search.UOMID?). Need clarification:
-Question for you on Bug 4: When UOM is missing, is it missing in the PREVIEW message only, or also in the DB (UOMID=0 in mrr_matrequisitionlines)? This tells me if the bug is in the display layer or the data layer.
-Bug 5 — Phase showing ID number instead of name.
-PROJECTPHASEID (a number like 42) is stored and displayed instead of PHASENAME (like "PDN_PDN"). Fix: when looking up phase in _lookup_latest_phase, also fetch PHASENAME from posprojectphases. Store both project_phase_id AND phase_name in pending_mrr_data header. _build_mrr_preview_message already tries header.get('phase_name') — just need to populate it.
-Bug 6 — Pending list not in descending order.
-The approver list query needs ORDER BY MATREQUISITIONID DESC (or REQUISITIONDATE DESC). Fix: update the SELECT in approver_agent_node pending list query. Simple one-line fix.
+** ok thanks for clarity i need one help from because i am facing some issue in frontend i need to you to give the best task prompt for my claude for that since it is frontend changes you can straight away give the task prompt with out asking
+me any questions as i trust you.
+1.so i have a webform as you know when submitting i purpose fully submitting wrong project id and item name so that i am testing whether users can feel good experience what errors they are getting but there is a collisin b/w frontend adn backedn
+
+backend:
+data: {"type": "meta", "thread_id": "dfd4d90f-81bf-4f3d-99a4-cdc6ecf4699c"}
+
+data: {"type": "chunk", "text": "I couldn't submit the form. Please fix the highlighted fields and try again.\n\n"}
+
+data: {"type": "form_errors", "form_id": "mrr_create_form", "errors": {"project_id": "Project 'yaq134e' not found. Please enter a valid project code.", "items.0.item_name": "Item code 'rewqg435' not found in catalog"}}
+
+data: [DONE]
+
+frontend:
+⚠️ Form validation failed. Please correct the errors above.
+
+[no errors are displaying apart from message]
+
+2. also second thing related to ui change , currently the form having close to 7-8 fileds including text area fileds but it is very enlarged. it looks like webform but i need chat form like which will give best user experience 
+like a small webform in mobile with good consistency , i think you know what i am suggesting. 
+
+** so take a look on latest md file below nad give me the prompt that i asked also if there are any unclosed gaps mentioned in md file also include the solutions for them also in prompt.
+
+
+
+
+
+
+# DPAH Frontend — Architecture & Documentation
+
+> **Application:** Data Patterns Agents Hub (VAH - Virtual AI Hub)
+> **Generated:** 2026-06-02
+> **Last Updated:** 2026-06-10
+> **Repository Root:** `c:\xampp1\htdocs\hemish\VAH_Chatbot_1`
+
+---
+
+## 1. Executive Summary & Tech Stack
+
+The DPAH Frontend is a React 19 single-page application serving as the internal AI control plane for Data Patterns employees. It provides role-based access to domain-specific AI agent chat interfaces (RMS, MRR, SCM, HRMS, Finance, IT, OPS), timesheet management, and chat history navigation.
+
+### Tech Stack
+
+| Category | Library / Version | Purpose |
+|---|---|---|
+| **Build Tool** | Vite 6.3.1 | Fast dev server & production bundler |
+| **Framework** | React 19.0.0 | UI component library with hooks |
+| **UI Styling** | Tailwind CSS 3.4.17 + PostCSS | Utility-first CSS with dark/light mode |
+| **Routing** | React Router DOM 7.5.2 | Client-side routing with lazy loading |
+| **State Management** | Zustand 5.0.10 | Global state (available but not currently used for core flows) |
+| **HTTP Client** | Axios 1.9.0 + native `fetch` | API calls (api.js uses native fetch; axios is a listed dependency) |
+| **HTTP Proxy** | Vite dev proxy (`/api` → `http://10.5.1.58`) | Bypasses CORS during development |
+| **Authentication** | JWT (stored in `localStorage`) | Stateless token-based auth |
+| **Token Decoding** | `jwt-decode` 4.0.0 | Client-side JWT parsing |
+| **Markdown Rendering** | `react-markdown` 10.1.0 | AI response rendering with custom table bypass |
+| **Notifications** | Sonner 2.0.7 | Toast notifications (top-right, rich colors) |
+| **Animations** | Framer Motion 12.29.2 + CSS transitions | Page/component animations |
+| **Icons** | Lucide React 0.563.0 | Icon system across the app |
+| **Data Grids** | AG-Grid 35 / MUI Data Grid 8.22 | Table rendering (available; current Timesheet uses plain HTML tables) |
+| **Charts** | Recharts 3.7.0 / ECharts 5.6.0 / Plotly 2.6.0 | Data visualization (available) |
+| **Graph Viz** | `@xyflow/react` 12.10.0 / `react-force-graph-2d` | Flow/force-graph visualizations (available) |
+| **Form Validation** | Zod 4.3.6 | Schema validation (available) |
+| **PDF Export** | jsPDF 4.0.0 | PDF generation (available) |
+| **Component Libraries** | Ant Design 6 / PrimeReact 10 / React Bootstrap 5 | Multi-library UI component sets (available) |
+| **File Upload** | HTML5 File API + `FormData` | Drag-and-drop file attachment to chat |
+| **Date Handling** | date-fns 4.4.0, `@mui/x-date-pickers` 8.22 | Date utilities (available) |
+| **Tooltip** | react-tooltip 5.28.1 | Tooltip system (installed) |
+| **Cookie Handling** | js-cookie 3.0.5 | Cookie utilities (installed) |
+| **CSS Utilities** | tailwind-merge 3.6.0 | Class merging (installed) |
+| **Scrollbars** | tailwind-scrollbar-hide 2.0.0 | Hide scrollbars (active plugin) |
+
+### Key Architectural Decisions
+
+- **No server-side rendering** — pure client SPA with `BrowserRouter`.
+- **Auth is purely localStorage-based** — JWT `access_token` persisted client-side; no HttpOnly cookies.
+- **Tailwind-only styling** — no CSS modules, SCSS, or CSS-in-JS (despite `@emotion/react`, `@mui/material`, Ant Design, PrimeReact being installed).
+- **Zustand is a dependency but not wired** — core global state uses `localStorage` + React Router `Outlet` context.
+- **Chat streaming via native `fetch` + `ReadableStream`** — not through Axios, due to SSE chunk handling requirements.
+- **Dual theme approach** — `body.light-mode` class toggle for custom `@layer components` CSS, plus `dark:` Tailwind prefix utilities directly in JSX.
+
+---
+
+## 2. Directory Structure
+
+```
+src/
+├── main.jsx                        # Entry point — renders <App /> under StrictMode
+├── App.jsx                         # Route definitions (BrowserRouter, lazy routes, Toaster)
+├── index.css                       # Tailwind directives + all custom @layer components (412 lines)
+│
+├── assets/
+│   ├── Header_Logo.png             # Data Patterns logo used in login & sidebar
+│   └── satellite_image_8.png       # Unused asset
+│
+├── components/
+│   ├── ChatOverlay.jsx             # Full-screen chat panel with streaming, file upload, quick prompts, approval dashboard widget
+│   ├── FormRenderer.jsx            # Dynamic form from backend formSpec (scalar + table fields)
+│   ├── InteractiveChatTable.jsx    # Scrollable table wrapper with CSV export functionality
+│   ├── Sidebar.jsx                 # Collapsible navigation sidebar with theme toggle & user profile
+│
+├── hooks/
+│   └── useChatStream.js            # Core SSE streaming hook — sendMessage, submitForm, cancelForm
+│
+├── layouts/
+│   └── DashboardLayout.jsx         # Shell component with auth guard, Outlet, ChatOverlay mount
+│
+├── pages/
+│   ├── Login.jsx                   # Username/password form → stores JWT + user_profile + access_tree
+│   ├── Dashboard.jsx               # Module grid (agent cards) from access_tree + request flow diagram
+│   ├── Timesheet.jsx               # Task table + worklog table with approver approve/reject actions
+│   ├── ChatHistory.jsx             # Thread list with resume-to-chat via openChat()
+│   └── Settings.jsx                # User profile display + RBAC overview (currently stub)
+│
+├── services/
+│   └── api.js                      # API service layer — authService, chatService, timesheetService, systemService
+│
+└── utils/
+    ├── markdownParser.jsx          # renderWithCustomTables() — regex table detection + ReactMarkdown fallback
+    └── quickPrompts.js             # PROMPT_DICTIONARY + getSuggestedPrompts(role-based)
+```
+
+---
+
+## 3. Routing & Authentication
+
+### Route Structure
+
+The application uses React Router v7 with `BrowserRouter` and lazy-loaded route components.
+
+```
+/                              → LoginPage (public)
+/dashboard                     → DashboardLayout (protected)
+│  ├─ index                     → Dashboard (lazy)      — Agent module grid + Request Flow diagram
+│  ├─ timesheet                 → Timesheet (lazy)      — Worklog management with approver approve/reject actions
+│  ├─ chat-history              → [stub: "Coming Soon"]  — Chat History (page fully implemented but route is stub; shows thread cards with resume)
+│  └─ settings                  → [stub: "Coming Soon"]  — Settings (page fully implemented but route is stub; calls missing API method)
+/*                             → Navigate to / (catch-all redirect)
+```
+
+#### Route Protection
+
+- **Public Route:** `/` — Login page, accessible without authentication.
+- **Protected Routes:** All `/dashboard/*` routes are guarded inside [DashboardLayout.jsx](src/layouts/DashboardLayout.jsx):
+  ```jsx
+  const isAuthenticated = !!localStorage.getItem('access_token');
+  if (!isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+  ```
+- Upon mounting, `DashboardLayout` calls `authService.refreshAccess()` to sync the user's current permission tree from the server and updates `localStorage.access_tree`.
+
+#### Lazy Loading
+
+Two route components use React `lazy()`:
+- `Dashboard` — `import('./pages/Dashboard')`
+- `Timesheet` — `import('./pages/Timesheet')`
+
+Each wrapped in `<Suspense fallback={<LoadingFallback />} />`.
+
+### Authentication Flow
+
+1. **Login:** [Login.jsx](src/pages/Login.jsx) — User enters username/password → `authService.login()` → POST `/api/v1/auth/login`.
+2. **Token Storage:** On successful login, three items are stored in `localStorage`:
+   | Key | Content | Source |
+   |---|---|---|
+   | `access_token` | JWT string | `data.access_token` |
+   | `user_profile` | JSON object `{ emp_no, name, dept, grade, ... }` | `data.user_profile` |
+   | `access_tree` | JSON object with `modules[]` + per-module `collections[].agents[].persona` | `data.access_tree` |
+3. **Session Validation:** Every API call in [api.js](src/services/api.js) reads the token via `localStorage.getItem('access_token')` and attaches `Authorization: Bearer <token>`. If the server returns `401`, all auth data is cleared and the user is redirected to `/`.
+4. **Permission Sync:** On dashboard mount, `authService.refreshAccess()` fetches `GET /api/v1/auth/me/access` and re-stores the access tree. This ensures stale permissions are refreshed.
+5. **403 Handling:** If a chat request returns `403`, the hook attempts a one-shot permission re-sync and throws an access-denied message.
+6. **Sign Out:** Clears all `localStorage` keys and navigates to `/`.
+
+### Access Tree Structure
+
+The `access_tree` is the central authorization artifact:
+
+```json
+{
+  "modules": [
+    {
+      "module_name": "RMS",
+      "collections": [
+        {
+          "name": "RMS_Collection",
+          "agents": [
+            { "persona": "REVIEWER" },
+            { "persona": "APPROVER" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+This tree drives:
+- Which agent cards appear on the Dashboard
+- Conditional sidebar items (e.g., Timesheet visible when RMS collection or current path matches)
+- Quick prompt suggestions (role-based filtering)
+- Approver action buttons on the Timesheet page
+
+---
+
+## 4. State Management
+
+The application uses a **hybrid approach** — there is no Redux or centralized state store for application data. Instead:
+
+### localStorage (Primary Persistence)
+
+| Key | Data | Lifecycle |
+|---|---|---|
+| `access_token` | JWT string | Set on login, cleared on 401 or sign-out |
+| `user_profile` | `{ emp_no, name, dept, grade }` | Set on login, read by Sidebar/ChatOverlay/Timesheet |
+| `access_tree` | Module/collection/agent hierarchy | Set on login, refreshed on dashboard mount |
+| `lightMode` | `'true'` / `'false'` | Toggled by sidebar theme switch, persisted |
+| `sidebarCollapsed` | `'true'` / `'false'` | Toggled by sidebar collapse button, persisted |
+
+### useChatStream Hook (Chat-Specific State)
+
+The [useChatStream.js](src/hooks/useChatStream.js) hook manages all chat-related state internally:
+
+| State | Type | Purpose |
+|---|---|---|
+| `messages` | `Array<{role, content, isTyping, type, formSpec, formErrors, isSubmitted, isSubmitting, isCancelled, isError, attachedFiles, ...}>` | Full conversation thread with inline form renders, file attachments, and error states |
+| `isStreaming` | `boolean` | Global streaming lock — disables input, shows spinner |
+| `threadIdRef` | `MutableRefObject<string | null>` | Current conversation thread ID, auto-set from SSE `meta` events |
+| `isStreamingRef` | `MutableRefObject<boolean>` | Synchronous lock to prevent double-submission race conditions ("Double-Submit Ghost" fix) |
+| `abortControllerRef` | `MutableRefObject<AbortController | null>` | User-initiated stream cancellation |
+
+#### SSE Event Types Handled
+
+| `parsed.type` | Behavior |
+|---|---|
+| `meta` | Extracts `thread_id` → stored in `threadIdRef.current` for session continuity |
+| `chunk` | Appends `text` to `fullReply`, updates last message's `content` with streamed text |
+| `form_widget` | Replaces last message with `type: 'form'`, sets `formSpec` from `parsed.form` |
+| `form_errors` | Sets `formErrors` on the form message at `msgIndex`, shows validation error text |
+| Error in `parsed.error` | Throws the error message for handling in catch block |
+
+#### Error Handling
+
+| HTTP Status | Behavior |
+|---|---|
+| `401` | Clears all auth keys, redirects to `/` |
+| `403` | Attempts permission re-sync via `refreshAccess()`, shows access-denied toast |
+| `400` | Throws "Malformed request or unknown module" |
+| `AbortError` | Silently logs "Stream stopped by user" — no error displayed |
+| Other non-2xx | Catches `response.json().detail` or falls back to HTTP status code |
+
+### React Router Outlet Context (Parent-to-Child Communication)
+
+[DashboardLayout.jsx](src/layouts/DashboardLayout.jsx) provides state to child routes via React Router context:
+
+```jsx
+<Outlet context={{ openChat, activeCollection, setActiveCollection }} />
+```
+
+- **`openChat(collectionName)`** — Opens the ChatOverlay full-screen slide-in panel.
+- **`activeCollection`** / **`setActiveCollection`** — Tracks which module/collection is currently active for chat routing.
+- Chat state is reset when navigating away from a chat-opened page.
+
+---
+
+## 5. Component Library
+
+### Component Summary
+
+| Component | File | Purpose |
+|---|---|---|
+| `LoginPage` | `src/pages/Login.jsx` | Username/password login, stores JWT + user_profile + access_tree |
+| `Dashboard` | `src/pages/Dashboard.jsx` | Module grid (agent cards) + Request Flow diagram |
+| `Timesheet` | `src/pages/Timesheet.jsx` | Task + worklog tables with approver actions |
+| `ChatHistory` | `src/pages/ChatHistory.jsx` | Thread list with resume-to-chat |
+| `Settings` | `src/pages/Settings.jsx` | User profile display + RBAC overview |
+| `DashboardLayout` | `src/layouts/DashboardLayout.jsx` | Shell with auth guard, sidebar, ChatOverlay, Outlet |
+| `Sidebar` | `src/components/Sidebar.jsx` | Collapsible nav, theme toggle, user profile |
+| `ChatOverlay` | `src/components/ChatOverlay.jsx` | Full-screen chat panel with streaming, files, forms |
+| `FormRenderer` | `src/components/FormRenderer.jsx` | Dynamic server-driven forms with validation |
+| `InteractiveChatTable` | `src/components/InteractiveChatTable.jsx` | Scrollable table wrapper with CSV export |
+| `ApprovalDashboardWidget` | `src/components/ChatOverlay.jsx` (nested) | Inline approval/rejection dashboard |
+| `MessageBubble` | `src/components/ChatOverlay.jsx` (nested) | Chat message renderer (user/AI/form) |
+| `LoadingFallback` | `src/layouts/DashboardLayout.jsx` (nested) | Spinner for Suspense boundaries |
+| `useChatStream` | `src/hooks/useChatStream.js` | SSE streaming hook (sendMessage, submitForm) |
+
+---
+
+## 6. Tailwind Configuration
+
+### Config File: [tailwind.config.js](tailwind.config.js)
+
+```js
+content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"]
+darkMode: 'class'
+
+plugins: [tailwindScrollbarHide]
+```
+
+#### Custom Screens
+
+| Breakpoint | Value | Usage |
+|---|---|---|
+| `xs` | 480px | Small phones |
+| `ss` | 620px | Large phones / small tablets |
+| `sm` | 768px | Tablets |
+| `md` | 1060px | Desktop small |
+| `lg` | 1200px | Desktop medium |
+| `xl` | 1600px | Large desktop |
+| `2xl` | 2000px | Ultra-wide displays |
+
+#### Custom Color Palette
+
+| Token | Hex | Usage |
+|---|---|---|
+| `primary` | `#00040f` | Deepest navy/black |
+| `secondary` | `#00f6ff` | Bright cyan accent |
+| `dpRed` | `#ce2c2c` | Data Patterns red |
+| `dpRed1` | `#af2823` | Darker DP red |
+| `dpRedcustom` | `#c72727` | Custom DP red |
+| `dpYellow` | `#facc15` | Yellow (same as yellow-400) |
+| `cyan` | `#15d1e9` | Cyan accent |
+| `lightCyan` | `#88e5f0` | Lighter cyan |
+| `darkCyan` | `#009fb3` | Dark cyan |
+| `orange` | `#fb9718` | Orange accent |
+| `lightOrange` | `#fac27b` | Light orange |
+| `darkOrange` | `#d28422` | Dark orange |
+| `grey` | `#626965` | Neutral grey |
+| `lightGrey` | `#978580` | Light grey |
+| `darkGrey` | `#3f4441` | Dark grey |
+| `dp-background-light` | `#ffffff` | Light mode background |
+| `dp-background-dark` | `#0f172a` | Dark mode background (slate-900) |
+| `dp-card-dark` | `#1e293b` | Dark mode cards (slate-800) |
+| `dp-text-light` | `#f1f5f9` | Light mode text (slate-100) |
+| `dimWhite` | `rgba(255, 255, 255, 0.7)` | Semi-transparent white |
+| `dimBlue` | `rgba(9, 151, 124, 0.1)` | Faint blue tint |
+
+#### Custom Box Shadows
+
+| Token | Value | Usage |
+|---|---|---|
+| `cyanShadow` | `0px 0px 20px 0px rgba(94, 206, 220, 0.5)` | Button/card glow |
+| `cyanBigShadow` | `10px 10px 1000px 500px rgba(94, 206, 220, 0.3)` | Ambient glow effects |
+| `cyanMediumShadow` | `10px 10px 200px 150px rgba(94, 206, 220, 0.5)` | Medium card shadows |
+| `orangeBigShadow` | `10px 10px 10000px 500px rgba(240, 169, 79, 0.3)` | Orange ambient glow |
+| `orangeMediumShadow` | `10px 10px 2000px 150px rgba(240, 169, 79, 0.5)` | Orange medium glow |
+
+#### Custom Fonts
+
+```js
+fontFamily.sans: ['"Segoe UI"', 'Tahoma', 'Geneva', 'Verdana', 'sans-serif']
+```
+
+#### Custom Animations
+
+| Name | Config | Where Used |
+|---|---|---|
+| `fade-in` | `0.3s ease-out` opacity 0 → 1 | Chat history, settings sections |
+| `slide-in-right` | `0.3s ease-out` translateX(20px) → 0 | Slide-in overlays, toasts |
+| `blob` | `7s infinite` floating orb keyframes | Background ambient orbs |
+| `slideInUp` (CSS) | `translateY(10px)` + opacity → 0 | Custom CSS animation |
+
+#### Custom Utilities (via `addUtilities`)
+
+| Utility | CSS Effect | Usage |
+|---|---|---|
+| `.text-stroke` | `-webkit-text-stroke: 2px #fff; color: transparent` | Outlined text effect |
+| `.text-stroke-1` | `-webkit-text-stroke: 1px #fff; color: transparent` | Thinner outlined text |
+| `.bg-custom-gradient-1` | `linear-gradient(rgba(12,3,51,0.3), rgba(12,3,51,0.3))` | Gradient backgrounds |
+| `.animation-delay-2000` | `animation-delay: 2s` | Staggered animation timing |
+
+---
+
+## 7. Color Palette & Theme System
+
+### Dual Theme Approach
+
+The app uses **two complementary theme strategies**:
+
+1. **`body.light-mode` class toggle** — Applied to `<body>` element. All custom `@layer components` CSS classes in [index.css](src/index.css) have `.light-mode` override selectors. Theme state persisted in `localStorage.lightMode`.
+2. **`dark:` Tailwind prefix** — Used directly in JSX alongside custom classes for components that rely purely on Tailwind utilities (e.g., FormRenderer).
+
+### Dark Mode (Default) Base
+
+| Element | Color |
+|---|---|
+| Background | `#0f172a` (slate-900) |
+| Cards | `#1e293b` (slate-800) |
+| Text | `#f1f5f9` (slate-100) |
+| Borders | `#334155` (slate-700) / `#1e293b` (slate-800) |
+| Accent Blue | `#3b82f6` / `#2563eb` (blue-600) |
+| Accent Cyan | `#00f6ff` (custom secondary) |
+| Success Green | `#22c55e` (emerald-500) |
+| Warning/Error | `#ef4444` (red-500), `#f97316` (orange-500) |
+| Input BG | `#0f172a` / `#1e293b` with `slate-700` borders |
+
+### Light Mode Overrides
+
+| Element | Color |
+|---|---|
+| Background | `#f8fafc` (slate-50) |
+| Cards | `#ffffff` (white) |
+| Text | `#0f172a` (slate-900) |
+| Borders | `#e2e8f0` (slate-200) / `#cbd5e1` (slate-300) |
+| Input BG | `#ffffff` / `#f8fafc` with `slate-300` borders |
+
+### Domain-Specific Flow Box Colors (Dashboard.jsx)
+
+| Step | Text Color | Background | Border |
+|---|---|---|---|
+| 1. Query | `#3b82f6` (blue-600) | `#eff6ff` (blue-50) | `#bfdbfe` (blue-200) |
+| 2. AuthGuard | `#d97706` (amber-600) | `#fffbeb` (amber-50) | `#fde68a` (amber-200) |
+| 3. InGuard | `#ea580c` (orange-600) | `#fff7ed` (orange-50) | `#fed7aa` (orange-200) |
+| 4. ParseIntent | `#8b5cf6` (violet-600) | `#f5f3ff` (violet-50) | `#ddd6fe` (violet-200) |
+| 5. PermCheck | `#ea580c` (orange-600) | `#fff7ed` (orange-50) | `#fed7aa` (orange-200) |
+| 6. Router | `#8b5cf6` (violet-600) | `#f5f3ff` (violet-50) | `#ddd6fe` (violet-200) |
+| 7. Agent Node | `#ea580c` (orange-600) | `#fff7ed` (orange-50) | `#fed7aa` (orange-200) |
+| 8. Action Parser | `#22c55e` (emerald-600) | `#f0fdf4` (emerald-50) | `#bbf7d0` (emerald-200) |
+| 9. OutGuard | `#ea580c` (orange-600) | `#fff7ed` (orange-50) | `#fed7aa` (orange-200) |
+| 10. SSE Reply | `#22c55e` (emerald-600) | `#f0fdf4` (emerald-50) | `#bbf7d0` (emerald-200) |
+
+> **Note:** Flow box colors are applied via inline styles in JS, so they do NOT adapt to dark/light mode. They always use the light-mode palette.
+
+---
+
+## 8. CSS Architecture
+
+### File: [src/index.css](src/index.css) (412 lines)
+
+Single global stylesheet containing ALL application styling via Tailwind `@layer` directives. No separate `.css` or `.scss` files exist in `src/`.
+
+#### Structure
+
+| Layer | Purpose |
+|---|---|
+| `@tailwind base` | Tailwind base reset |
+| `@tailwind components` | Custom component classes |
+| `@tailwind utilities` | Tailwind utility classes |
+| `@layer base` | Root HTML/body background, text colors, font settings, light-mode override |
+| `@layer components` | All custom component classes organized by section |
+
+#### Custom Component Classes by Section
+
+**Login Page (lines 16-37):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.login-container` | Full-screen flex centered container | Gradient: `slate-900 → slate-800 → slate-950` | Gradient: `slate-100 → slate-50 → slate-200` |
+| `.login-box` | Glassmorphism card | `bg-slate-800/40 backdrop-blur-xl border-slate-700/50` | `bg-white/80 border-white shadow-sm` |
+| `.login-logo` | Logo + title + subtitle area | Text `slate-100`, subtitle `blue-500` | Text `slate-900` |
+| `.form-group` | Label + input container | Label `slate-400`, input `slate-900/50 border-slate-700/50` | Label `slate-600 font-semibold`, input `slate-50 border-slate-300` |
+| `.login-btn` | Submit button | Gradient `blue-600 → blue-500`, hover lift + glow | Inherits dark button styles |
+| `.quick-login` | Quick login section | Border `slate-700/50`, text `slate-400` | Border `slate-200`, text `slate-500` |
+| `.quick-login-btn` | Quick role buttons | `bg-slate-800/30 hover:bg-slate-700/50 border-slate-700/50` | `bg-slate-100 hover:bg-slate-200 border-slate-200` |
+| `.role-badge` | Small role tag | `bg-blue-500/20 text-blue-400 border-blue-500/20` | `bg-blue-100 text-blue-700 border-blue-200` |
+
+**Dashboard Layout & Top Navbar (lines 39-55):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.dashboard` | Main background container | `bg-slate-900 text-slate-100` | `bg-slate-50 text-slate-900` |
+| `.dashboard-layout` | Fixed-layout wrapper | `bg-[#0f172a]` | `bg-slate-50` |
+| `.top-navbar` | Fixed top bar (h-20, full width) | `bg-[#0f172a] border-slate-800/60` | `bg-white border-slate-200 shadow-sm` |
+
+**Sidebar (lines 49-103):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.sidebar` | Fixed left sidebar (280px → 88px) | `bg-[#0f172a] border-slate-800/50` | `bg-white border-slate-200 shadow-sm` |
+| `.sidebar-header` | Logo + status area | Border `slate-800/60` | Border `slate-200` |
+| `.logo-placeholder img` | App logo | `h-12 bg-white p-1` | Inherited |
+| `.system-status` | Online indicator bar | `bg-slate-800/80 border-slate-700/50 text-slate-300` | `bg-slate-50 border-slate-200 text-slate-700` |
+| `.status-dot` | Green pulse dot | `bg-slate-500` | Inherited |
+| `.status-dot.highlight-active` | Active status | `bg-emerald-500 animate-pulse glow` | Inherited |
+| `.nav-link` | Sidebar navigation item | `text-slate-400 hover:text-white hover:bg-slate-800/30` | `text-slate-600 hover:text-slate-900 hover:bg-slate-100` |
+| `.nav-link.active-link` | Active nav item | `bg-blue-600 text-white shadow-blue-500` | Same as dark |
+| `.nav-icon` | Nav item icon (Lucide) | `text-xl` | Inherited |
+| `.sidebar-footer` | Bottom area with profile | Border `slate-800/60` | Border `slate-200` |
+| `.collapse-btn` | Sidebar collapse toggle | `text-slate-400 hover:text-white hover:bg-slate-800/40` | `text-slate-500 hover:text-slate-900 hover:bg-slate-50` |
+| `.user-profile` | User info card | `bg-slate-800/40 border-slate-700/30` | `bg-slate-50 border-slate-200 shadow-sm` |
+| `.user-id` | Employee name display | `text-slate-200` | `text-slate-900` |
+| `.toggle-switch` | Theme toggle control | Slider `bg-slate-700` | Slider `bg-slate-300` |
+| `.toggle-switch input:checked + .toggle-slider` | Toggle ON | `bg-blue-500` | Inherited |
+| `.toggle-label` | Toggle text | `text-slate-400` | `text-slate-600` |
+
+**Dashboard Agent Cards & Request Flow (lines 105-130):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.main-header` | Page header area | Border `slate-800` | Border `slate-200` |
+| `.header-title` | Page title | `text-slate-100 font-extrabold` | `text-slate-900` |
+| `.status-tag` | Status pill | `bg-slate-800 border-slate-700 text-slate-300` | `bg-white border-slate-200 text-slate-700` |
+| `.status-indicator` | Status dot | `bg-slate-500` | Inherited |
+| `.status-indicator.highlight-live` | Live green dot | `bg-emerald-500 animate-pulse glow` | Inherited |
+| `.section-title` | Section headings | `text-slate-300` | `text-slate-700` |
+| `.agents-grid` | Responsive agent card grid | `grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4` | Inherited |
+| `.agent-card` | Module card | `bg-slate-800 border-slate-700 hover:-translate-y-2 hover:shadow-blue-900/20` | `bg-white border-slate-200 shadow-sm hover:shadow-slate-200/50` |
+| `.agent-card::after` | Hover gradient overlay | Gradient from `blue-500/5` | Inherited |
+| `.card-icon` | Emoji icon in card | `text-5xl` | Inherited |
+| `.agent-card:hover .card-icon` | Icon hover effect | `scale-110 rotate-3` | Inherited |
+| `.card-title` | Card title text | `text-slate-100` | `text-slate-900` |
+| `.card-tag` | Department tag pill | `bg-slate-900/80 text-slate-400 border-slate-700` | `bg-slate-100 text-slate-600 border-slate-200` |
+| `.card-tools` | Tools container | Flex-wrap | Inherited |
+| `.tool-tag` | Individual tool tag | `bg-blue-500/10 text-blue-400 border-blue-500/20` | `bg-blue-50 text-blue-700 border-blue-200` |
+| `.request-flow-section` | Flow diagram container | `bg-slate-800/50 border-slate-700/80` | `bg-white border-slate-200 shadow-sm` |
+| `.flow-step` | Individual flow item | Flex-col centered | Inherited |
+| `.flow-number` | Step number badge | `bg-blue-600 text-white` | Inherited |
+
+**Chat Overlay (lines 293-367):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.chat-overlay` | Full-screen right panel | `bg-slate-900 border-slate-800` | `bg-[#f4f6f9] border-slate-200` |
+| `.co-wrapper` | Chat chat content area | `bg-slate-900 border-slate-800` | `bg-[#f4f6f9] border-slate-200` |
+| `.co-header` | Chat header bar | `bg-slate-900` | `bg-[#f4f6f9]` |
+| `.co-clear-btn` | Clear session text | `text-slate-500 hover:text-slate-300` | `text-slate-400 hover:text-slate-600` |
+| `.co-close-btn` | Close chat button | `hover:bg-slate-800 text-slate-400` | `hover:bg-slate-200 text-slate-500` |
+| `.co-hero-icon` | Welcome module icon | `bg-gradient-to-br from-indigo-500 to-purple-600` | Inherited |
+| `.co-hero-title` | Welcome heading | `text-slate-100` | `text-[#0f172a]` |
+| `.co-hero-subtitle` | Welcome subtitle | `text-slate-400` | `text-slate-500` |
+| `.co-cap-tag` | Capability tag pill | `bg-slate-800 border-slate-700 text-slate-300` | `bg-white border-slate-200 text-slate-500` |
+| `.co-sugg-pill` | Suggested prompt button | `bg-slate-800 border-slate-700 hover:border-slate-600` | `bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50` |
+| `.co-msg-text` | AI message text | `text-slate-200` | `text-[#0f172a]` |
+| `.co-ai-avatar` | AI robot avatar | `from-indigo-500 to-purple-600 border-purple-400/30` | Inherited |
+| `.co-user-avatar` | User avatar | `bg-[#1d4ed8] border-blue-500/30` | Inherited |
+| `.co-input-area` | Chat input container | `bg-slate-900 border-slate-800/50` | `bg-white` |
+| `.co-input-box` | Input wrapper pill | `bg-slate-800 border-slate-700` | `bg-white border-slate-200` |
+| `.co-input-field` | Text input | `text-slate-200 placeholder-slate-500` | `text-[#0f172a] placeholder-slate-400` |
+| `.co-send-btn` | Send button | `bg-slate-700 hover:bg-slate-600` | `bg-slate-100 hover:bg-slate-200` |
+| `.co-header-container` | New header container | `bg-slate-900 border-slate-800/50` | `bg-white border-slate-200/50` |
+| `.co-header-title` | Header title | `text-slate-200` | `text-slate-800` |
+| `.co-header-btn` | Header action buttons | `bg-blue-500/10 text-blue-400 hover:bg-blue-500/20` | `bg-blue-50 text-blue-600 hover:bg-blue-100` |
+
+**Chat History (lines 216-225):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.history-card` | Thread card | `bg-slate-800 border-slate-700` | `bg-white border-slate-200 shadow-sm` |
+| `.history-icon-box` | Thread icon container | `bg-blue-500/10` | Inherited |
+| `.thread-title` | Thread name | `text-slate-100` | `text-slate-900` |
+| `.thread-subtitle` | Module/role label | `text-slate-500` | Inherited |
+| `.thread-meta` | Metadata row | `text-slate-500` | Inherited |
+
+**Settings (lines 227-235):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.settings-card` | Profile/permissions card | `bg-slate-800/20 backdrop-blur-md border-slate-700/50` | `bg-white border-slate-200` |
+| `.profile-stat .label` | Stat label | `text-[10px] uppercase text-slate-500` | Inherited |
+| `.profile-stat .value` | Stat value | `text-slate-200` | `text-slate-800` |
+| `.settings-action-btn` | Action button row | `hover:bg-slate-800/40 text-slate-400` | `hover:bg-slate-50 text-slate-600` |
+| `.logout-btn` | Logout button | `bg-rose-500/10 border-rose-500/20 text-rose-500 hover:bg-rose-500` | Inherited |
+
+**Request Flow (dash- prefixed, lines 279-291):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.dash-section` | Section wrapper | Inherited | Inherited |
+| `.dash-section-title` | Section heading | `text-slate-400` | `text-slate-500` |
+| `.dash-agent-grid` | Agent card grid | Auto-fill minmax(280px) | Inherited |
+| `.dash-agent-card` | Individual agent card | `bg-slate-800 border-slate-700` | `bg-white border-slate-200 shadow-sm` |
+| `.dash-card-icon` | Card emoji icon | Inherited | Inherited |
+| `.dash-card-title` | Card title | `text-slate-100` | `text-[#0f172a]` |
+| `.dash-dept-tag` | Department tag | `bg-blue-500/10 text-blue-400 border-blue-500/20` | `bg-[#eff6ff] text-[#3b82f6] border-[#bfdbfe]` |
+| `.dash-tools-header` | Tools section label | `text-slate-500` | `text-[#94a3b8]` |
+| `.dash-tool-tag` | Individual tool tag | `bg-[#f97316] bg-opacity-10 text-[#fb923c] border-[#f97316] border-opacity-20` | `bg-[#fff7ed] text-[#ea580c] border-[#fed7aa]` |
+| `.dash-role-tag` | Role tag | `bg-emerald-500/10 text-emerald-400 border-emerald-500/20` | `bg-[#f0fdf4] text-[#22c55e] border-[#bbf7d0]` |
+| `.dash-flow-wrapper` | Flow container | Flex-wrap | Inherited |
+| `.dash-flow-item` | Flow step container | Flex-center | Inherited |
+| `.dash-flow-box` | Flow step box | `rounded-2xl shadow-sm` | Inherited |
+| `.dash-flow-num` | Flow step number | `text-2xl font-black` | Inherited |
+| `.dash-flow-label` | Flow step label | `text-[13px] font-bold` | Inherited |
+| `.dash-flow-arrow` | Arrow between steps | `text-slate-600` | `text-[#cbd5e1]` |
+
+**Timesheet (lines 136-176):**
+| Class | Purpose | Description |
+|---|---|---|
+| `.timesheet-section` | Section wrapper | `mb-10` spacing |
+| `.timesheet-header` | Header bar | Flex layout with title and refresh button |
+| `.section-title` | Section heading | `text-xs font-bold text-slate-400 tracking-widest uppercase` |
+| `.ts-table` | Timesheet table | Standard HTML table with borders, `w-full overflow-x-auto` |
+| `.ts-row-mine` | Current user row highlight | `bg-blue-500/10 border-blue-500/50` |
+| `.badge` | Status badge base | `text-[10px] px-2 py-0.5 rounded-md uppercase font-bold` |
+| `.badge-approved` | Approved status | `bg-emerald-500/10 text-emerald-400 border-emerald-500/30` |
+| `.badge-pending` | Pending status | `bg-yellow-500/10 text-yellow-400 border-yellow-500/30` |
+| `.badge-rejected` | Rejected status | `bg-rose-500/10 text-rose-400 border-rose-500/30` |
+| `.ts-btn` | Action button base | `text-sm font-medium rounded-lg transition-colors` |
+| `.ts-btn-approve` | Approve button | `bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white` |
+| `.ts-btn-reject` | Reject button | `bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white` |
+| `.ts-na` | Not available placeholder | `text-slate-500 italic` |
+| `.refresh-btn` | Refresh button | `text-sm text-slate-400 hover:text-white transition-colors` |
+
+**Breadcrumb (lines 398-411):**
+| Class | Purpose | Dark Style | Light Override |
+|---|---|---|---|
+| `.nav-breadcrumb-muted` | Breadcrumb separator | `text-slate-400` | `text-slate-500` |
+| `.nav-breadcrumb-active` | Current page text | `text-slate-200 font-bold` | `text-slate-900` |
+
+### Dark/Light Mode Implementation
+
+**Theme toggle mechanism:**
+1. Sidebar theme toggle button (Sun/Moon icon when collapsed, labeled switch when expanded)
+2. On click: reads `localStorage.getItem('lightMode')` → toggles `document.body.classList.toggle('light-mode')`
+3. State persisted in `localStorage.lightMode`
+4. Transition: `body` has `@apply transition-colors duration-500` for smooth 500ms theme switch
+
+**Two-layer approach:**
+- **Custom `@layer components`** — Uses `.light-mode` descendant selectors (e.g., `.light-mode .login-box`)
+- **Tailwind `dark:` prefix** — Used directly in JSX (e.g., `dark:bg-slate-800 dark:text-slate-200`) — works independently of the `light-mode` class via the `darkMode: 'class'` config
+
+### No CSS-in-JS or CSS Modules
+
+Despite `@emotion/react`, `@emotion/styled`, `@mui/material`, Ant Design, PrimeReact, React Bootstrap being installed in `package.json`, **none are used** in the codebase. All styling is pure Tailwind utility classes with custom component definitions via `@layer components`.
+
+---
+
+## 9. UI Controls & Patterns Reference
+
+### Buttons
+
+| Pattern | Classes Used | Style |
+|---|---|---|
+| **Primary button** | `bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold rounded-xl` | Gradient blue with hover lift |
+| **Approve button** | `bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white border-emerald-500/30` | Green translucent → solid on hover |
+| **Reject button** | `bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white border-rose-500/30` | Rose translucent → solid on hover |
+| **Form submit** | `bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm` | Solid blue, shadow |
+| **Form cancel** | `text-slate-600 hover:text-slate-800 dark:text-slate-300 dark:hover:text-slate-100` | Text-only |
+| **Logout** | `bg-rose-500/10 border-rose-500/20 text-rose-500 hover:bg-rose-500 hover:text-white active:scale-95` | Rose with scale-95 on active |
+| **Send button** | `bg-slate-700 hover:bg-slate-600 text-white rounded-full` | Circular button |
+| **Header button** | `bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-full` | Translucent blue pill |
+| **Quick login** | `bg-slate-800/30 hover:bg-slate-700/50 border-slate-700/50 hover:border-blue-500/50` | Translucent border |
+| **Collapse sidebar** | `hover:bg-slate-800/40 hover:border-slate-700/50 border-transparent` | Borderless → bordered on hover |
+
+### Form Controls
+
+| Control | Classes | Style |
+|---|---|---|
+| **Text input** | `w-full px-3 py-2 border rounded-lg outline-none dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30` | Rounded, blue focus ring |
+| **Error input** | `border-red-500 focus:border-red-500 ring-1 ring-red-500/20` | Red border + ring |
+| **Textarea** | `w-full px-3 py-2 border rounded-lg outline-none dark:bg-slate-800 dark:text-slate-200 md:col-span-2` | Full-width grid span |
+| **Select** | `w-full px-3 py-2 border rounded-lg outline-none dark:bg-slate-800 dark:text-slate-200` | Same as text input |
+| **Checkbox** | Native checkbox with label `text-sm text-slate-700 dark:text-slate-300` | Standard checkbox |
+| **Radio group** | Native radio buttons with label `text-sm text-slate-700 dark:text-slate-300` | Standard radio buttons |
+| **Autocomplete** | Input + absolute dropdown `max-h-60 overflow-auto` with hover `bg-blue-50 dark:hover:bg-blue-500/10` | Debounced search results dropdown |
+| **File input** | Hidden `<input type="file">` triggered by paperclip button icon | Accepts `.csv, .xlsx, .xls` |
+| **File chips** | `bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5` | Removable chips with icon |
+
+### Cards
+
+| Card Type | Classes | Style |
+|---|---|---|
+| **Agent card** | `bg-slate-800 border-slate-700 hover:-translate-y-2 hover:shadow-2xl hover:border-blue-500/50 rounded-3xl` | Glassmorphic with hover lift |
+| **Dash agent card** | `bg-slate-800 rounded-2xl p-6 border-slate-700 hover:-translate-y-1 hover:shadow-lg` | Simpler card variant |
+| **Login box** | `bg-slate-800/40 backdrop-blur-xl border-slate-700/50 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.3)]` | Glassmorphism |
+| **Settings card** | `bg-slate-800/20 backdrop-blur-md border-slate-700/50 rounded-3xl` | Frosted glass |
+| **History card** | `bg-slate-800 border-slate-700 rounded-2xl p-5` | Standard bordered card |
+| **Chat hero icon** | `bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[1.25rem] shadow-lg border-purple-400/30` | Gradient rounded square |
+| **Request flow box** | Inline styles for bg/border per step color | Rounded-2xl, 100x100px |
+| **Request flow section** | `bg-slate-800/50 border-slate-700/80 rounded-3xl` | Semi-transparent container |
+
+### Tags & Badges
+
+| Type | Dark Style | Light Override |
+|---|---|---|
+| **Department tag** | `bg-blue-500/10 text-blue-400 border-blue-500/20` | `bg-[#eff6ff] text-[#3b82f6] border-[#bfdbfe]` |
+| **Tool tag** | `bg-blue-500/10 text-blue-400 border-blue-500/20` | `bg-blue-50 text-blue-700 border-blue-200` |
+| **Role tag** | `bg-emerald-500/10 text-emerald-400 border-emerald-500/20` | `bg-[#f0fdf4] text-[#22c55e] border-[#bbf7d0]` |
+| **Department (dash)** | `bg-blue-500/10 text-blue-400 border-blue-500/20` | `bg-[#eff6ff] text-[#3b82f6] border-[#bfdbfe]` |
+| **Tool (dash)** | `bg-[#f97316] bg-opacity-10 text-[#fb923c] border-[#f97316] border-opacity-20` | `bg-[#fff7ed] text-[#ea580c] border-[#fed7aa]` |
+| **Status approved** | `bg-emerald-500/10 text-emerald-400 border-emerald-500/30` | Inherited |
+| **Status pending** | `bg-yellow-500/10 text-yellow-400 border-yellow-500/30` | Inherited |
+| **Status rejected** | `bg-rose-500/10 text-rose-400 border-rose-500/30` | Inherited |
+| **Quick login role-badge** | `bg-blue-500/20 text-blue-400 border-blue-500/20` | `bg-blue-100 text-blue-700 border-blue-200` |
+
+### Chat Elements
+
+| Element | Classes | Style |
+|---|---|---|
+| **User message bubble** | `bg-gradient-to-br from-blue-500 to-blue-700 rounded-[1.5rem] rounded-tr-sm shadow-md self-end max-w-[80%]` | Blue gradient, asymmetric rounding, right-aligned |
+| **AI message bubble** | Flex left, avatar + text | Left-aligned with robot avatar |
+| **AI avatar** | `from-indigo-500 to-purple-600 rounded-full` | Gradient circle |
+| **User avatar** | `bg-[#1d4ed8] rounded-full` | Solid blue circle |
+| **Quick prompt pill** | `bg-slate-800 border-slate-700 hover:border-slate-600 hover:bg-slate-700/80 rounded-full` | Translucent pill with hover lift |
+| **Error message** | `bg-red-500/10 border-red-500/30 rounded-xl` | Translucent red box |
+| **Streaming indicator** | `▍` (block cursor) | Blinking cursor for streaming text |
+| **Message typing** | `animate-in fade-in slide-in-from-bottom-2 duration-700` | Slide-up entrance animation |
+
+### Tables
+
+| Element | Dark Style | Light Override |
+|---|---|---|
+| **Chat table container** | `bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600 max-h-[400px]` | Scrollable |
+| **Table header (thead)** | `bg-slate-100 dark:bg-slate-800 sticky top-0 z-10 border-slate-200 dark:border-slate-700` | Sticky on scroll |
+| **Table header cell (th)** | `bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600` | Font-semibold |
+| **Table body cell (td)** | `text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700` | Normal weight |
+| **Table row hover** | `hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors` | Smooth transition |
+| **Timesheet table** | `border border-slate-200 dark:border-slate-700` | Standard bordered |
+| **Timesheet my-row** | `bg-blue-500/10 border-blue-500/50` | Highlighted |
+
+### Avatar / Profile
+
+| Element | Classes | Style |
+|---|---|---|
+| **Profile avatar** | `w-16 h-16 rounded-2xl bg-blue-600 flex items-center justify-center text-2xl shadow-lg shadow-blue-900/20` | Blue circle with glow |
+| **User initials** | `rounded-full flex items-center justify-center text-white text-lg font-bold` | Gradient or solid circle |
+| **User info card** | `bg-slate-800/40 border-slate-700/30 rounded-2xl` | Glassmorphic profile |
+
+### Navigation / Sidebar
+
+| Element | Classes | Style |
+|---|---|---|
+| **Nav link** | `text-slate-400 hover:text-white hover:bg-slate-800/30 rounded-xl` | Subtle hover |
+| **Active nav link** | `bg-blue-600 text-white shadow-[0_4px_20px_rgba(37,99,235,0.4)]` | Solid blue with glow |
+| **Top navbar** | `fixed top-0 left-0 w-full h-20 bg-[#0f172a] border-b border-slate-800/60` | Fixed header bar |
+| **Breadcrumb** | `text-slate-400` (muted) + `text-slate-200 font-bold` (active) | Separator path |
+| **System status** | `bg-slate-800/80 border-slate-700/50` with pulse dot | Operational indicator |
+
+### Overlay / Modal
+
+| Element | Classes | Style |
+|---|---|---|
+| **Chat overlay** | `fixed top-0 right-0 h-screen w-full z-[100]` | Slide-in from right |
+| **Form renderer** | `bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 rounded-xl shadow-sm` | Modal form container |
+| **Approval widget** | Inline table with checkboxes, bulk action bar | `animate-in fade-in slide-in-from-bottom-2` |
+
+### Toast Notifications
+
+| Detail | Value |
+|---|---|
+| Library | Sonner 2.0.7 |
+| Position | `top-right` |
+| Config | `richColors` prop enabled |
+| Types used | `toast.success()`, `toast.error()`, `toast.info()` |
+
+---
+
+## 10. Animation & Transition Patterns
+
+### CSS Animations
+
+| Name | Duration | Keyframes | Where Used |
+|---|---|---|---|
+| `fade-in` | 0.3s | opacity 0 → 1 | Chat history, settings, form entrance |
+| `slide-in-right` | 0.3s | translateX(20px) → 0, opacity 0 → 1 | Overlay panels |
+| `slideInUp` | (CSS-defined) | translateY(10px) → 0, opacity 0 → 1 | Custom CSS animation |
+| `blob` | 7s infinite | Floating orb movement (translate + scale) | Background ambient orbs |
+| `animate-pulse` | (Tailwind) | Opacity pulse | Status dots |
+| `animate-spin` | (Tailwind) | 360 rotation | Loading spinners |
+
+### Tailwind Transition Utilities Used
+
+| Pattern | Where Used |
+|---|---|
+| `transition-all duration-300` | Cards, buttons, sidebar |
+| `transition-colors duration-300` | Theme-dependent elements |
+| `transition-colors duration-500` | Body, major layout (smooth theme switch) |
+| `hover:-translate-y-2` / `hover:-translate-y-1` | Agent cards, flow items |
+| `hover:shadow-2xl` / `hover:shadow-lg` | Agent cards |
+| `hover:scale-105` / `hover:scale-110` | Flow steps, card icons |
+| `hover:border-blue-500/50` | Agent card borders |
+| `active:scale-95` | Logout button, quick buttons |
+| `hover:bg-slate-800/30` / `hover:bg-slate-700/50` | Nav links, quick login |
+| `disabled:opacity-50` | All buttons during loading |
+| `disabled:cursor-not-allowed` | All interactive elements during loading |
+
+### Entrance Animations (Chat Overlay / Pages)
+
+| Animation | Classes | Used For |
+|---|---|---|
+| Hero slide-up | `animate-in fade-in slide-in-from-bottom-4 duration-700` | Welcome message |
+| Quick prompts | `animate-in fade-in duration-500` | Suggested prompt pills |
+| Form renderer | `animate-in fade-in zoom-in-95 duration-300` | Dynamic forms |
+| Chat tables | `animate-in fade-in zoom-in-95 duration-300` | AI-rendered tables |
+| Bulk actions | `animate-in fade-in slide-in-from-bottom-2` | Approval widget action bar |
+| Page sections | `animate-in fade-in slide-in-from-bottom-4 duration-700` | Settings, chat history sections |
+
+---
+
+## 11. Responsive Design Patterns
+
+### Breakpoints
+
+| Breakpoint | Value | Common Usage |
+|---|---|---|
+| `xs` | 480px | Small phones |
+| `ss` | 620px | Large phones |
+| `sm` | 768px | Tablets |
+| `md` | 1060px | Desktop small |
+| `lg` | 1200px | Desktop medium |
+| `xl` | 1600px | Large desktop |
+| `2xl` | 2000px | Ultra-wide |
+
+### Responsive Patterns by Component
+
+| Component | Pattern | Behavior |
+|---|---|---|
+| **Agent card grid** | `grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4` | 1→2→3→4 columns |
+| **Dash agent grid** | `grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))` | Natural wrapping |
+| **Chat overlay width** | `@media (min-width: 1024px) { width: calc(100% - 280px) }` | Full-screen on mobile, sidebar-respecting on desktop |
+| **Chat overlay collapsed** | `@media (min-width: 1024px) { body.sidebar-collapsed .chat-overlay { width: calc(100% - 88px) } }` | Accounts for collapsed sidebar |
+| **Sidebar** | `w-[280px]` expanded, `body.sidebar-collapsed .sidebar { width: 88px }` | Class-based collapse, no media query |
+| **Main content** | `ml-[280px]` expanded, `body.sidebar-collapsed .main-content { ml-[88px] }` | Follows sidebar |
+| **Settings grid** | `grid-cols-1 lg:grid-cols-3 gap-8` | Single → triple column |
+| **Settings profile stats** | `grid-cols-1 md:grid-cols-2 gap-4` | Single → double column |
+| **Form fields** | `grid-cols-1 md:grid-cols-2 gap-5` | Single → double column |
+| **Textareas** | `md:col-span-2` | Full-width on medium+ |
+| **Chat padding** | `px-4 md:px-12 pb-40` | Tight on mobile, spacious on desktop |
+| **Input area** | `px-4 md:px-12` | Responsive horizontal padding |
+| **Timesheet tables** | `overflow-x-auto` | Horizontal scroll on small screens |
+| **Chat tables** | `overflow-x-auto max-h-[400px]` | Scrollable with height cap |
+| **Hero title** | `text-3xl` → inherited | No responsive size change |
+| **Section title** | `text-[13px]` | Fixed small size |
+
+### No Media Queries for Sidebar
+
+The sidebar uses **class-based width toggling** (no media queries):
+- Expanded: `w-[280px]`, sidebar-nav visible, logo visible, system-status text visible
+- Collapsed: `body.sidebar-collapsed` class → `w-[88px]`, text hidden, icons centered, status becomes circle-only
+
+---
+
+## 12. External Service Endpoints Summary
+
+| Backend Endpoint | Frontend Caller | Direction |
+|---|---|---|
+| `POST /api/v1/auth/login` | `authService.login()` | Login |
+| `GET /api/v1/auth/me/access` | `authService.refreshAccess()` | Permission sync |
+| `POST /api/v1/chat/stream` | `useChatStream.sendMessage()` | Text chat with SSE streaming |
+| `POST /api/v1/chat/stream-with-file` | `useChatStream.sendMessage()` | File upload chat with SSE streaming |
+| `GET /api/v1/chat/history` | `chatService.getHistory()` | Thread list |
+| `GET /api/v1/chat/history/:threadId` | `chatService.getThread()` | Single thread (unused) |
+| `GET /api/v1/me/chat/welcome?collection=:name` | `chatService.getWelcomeMessage()` | Welcome message |
+| `GET /api/v1/me/timesheet` | `timesheetService.getTimesheet()` | Task + worklog data |
+| `POST /api/v1/me/timesheet/worklog/:id/decision` | `timesheetService.decideWorklog()` | Approve/reject worklog |
+| `GET /api/v1/health` | `systemService.checkHealth()` | Health check |
+| `GET /api/v1/auth/debug/:empNo` | `authService.getDebugInfo()` | Debug (unused) |
+
+---
+
+## 13. Icon Library
+
+**Primary:** Lucide React (`lucide-react` v0.563.0)
+
+Icons used across the app:
+
+| Icon | Usage |
+|---|---|
+| `User` | Sidebar user profile, login |
+| `LogOut` | Sidebar sign out |
+| `PanelLeftClose` / `PanelLeftOpen` | Sidebar collapse/expand |
+| `Sun` / `Moon` | Theme toggle (collapsed sidebar mode) |
+| `Send` | Chat send button |
+| `X` | Close chat, cancel form, close file chips |
+| `Loader2` | Loading spinners |
+| `CheckCircle2` | Success indicators |
+| `Paperclip` | File upload button |
+| `File` / `FileText` | File type indicators |
+| `AlertCircle` | Form validation errors, error messages |
+| `Plus` | Add row in form table, add user |
+| `Trash2` | Remove file, delete actions |
+| `ChevronDown` | Dropdown indicators |
+| `Check` | Checkbox, approval |
+| `RefreshCw` | Refresh data |
+| `Shield` | Auth/security |
+| `Monitor` | System status |
+| `ChevronRight` | Navigation arrows, breadcrumb |
+| `Download` | CSV export button |
+| `Eye` | View actions |
+| `Clock` | Timestamp display |
+| `ArrowRight` | Flow arrows, navigation |
+| `Database` | Data storage |
+| `Network` | Network/connectivity |
+| `Folder` | Collection folder |
+| `Globe` | Global/system |
+| `Wrench` | Tools/settings |
+
+**Secondary (installed but appears unused):** `@heroicons/react`, `react-icons`, `primeicons`, `@ant-design/icons`
+
+---
+
+## 14. Known Gaps & TODOs
+
+1. **Chat History route** (`/dashboard/chat-history`) shows a "Coming Soon" placeholder in `App.jsx`, but a fully implemented `ChatHistory.jsx` page exists with thread list, module/role display, message count, and resume-to-chat via `openChat()`. It is not wired into the route tree.
+2. **Settings route** (`/dashboard/settings`) shows a "Coming Soon" placeholder, but `Settings.jsx` exists with a fully rendered profile card, RBAC permissions display, and system controls panel. However, it calls `authService.getCapabilities()` which is **not defined** in `api.js` — this will crash on load.
+3. **`authService.getCapabilities()`** is referenced in `Settings.jsx` (line 13) but not defined in `api.js` (commented out at line 64 with "TASK G: getCapabilities completely removed!").
+4. **Sidebar "Chat History" and "Settings" buttons** use `handleComingSoon()` toast instead of actual navigation links — they should use `NavLink` to `/dashboard/chat-history` and `/dashboard/settings` respectively once those routes are wired.
+5. **`DashboardLayout.jsx`** determines `currentPage` via string-based `location.pathname.includes()` matching which is fragile and could match unintended paths.
+6. **`authService.refreshAccess()`** call on dashboard mount only logs errors — it does not redirect or inform the user if permissions fail to sync.
+7. **Zustand** is installed but unused — could be introduced to centralize auth state and avoid localStorage serialization.
+8. **No React Query usage** — despite `@tanstack/react-query` being installed, all data fetching uses raw `useEffect` + `fetch`/`axios`.
+9. **Unused dependencies** — The following are installed but NOT used anywhere in the codebase:
+   - UI Libraries: `antd`, `@mui/material`, `@mui/x-data-grid`, `@mui/x-date-pickers`, `primereact`, `react-bootstrap`, `bootstrap`, `ag-grid-community`, `ag-grid-react`, `recharts`, `echarts`, `react-plotly.js`, `@xyflow/react`, `react-force-graph-2d`
+   - Utilities: `axios`, `@tanstack/react-query`, `@tanstack/react-table`, `zustand`, `zod`, `react-hook-form`, `js-cookie`, `jspdf`, `react-tooltip`, `react-transition-group`, `react-draggable`, `react-scroll`, `react-syntax-highlighter`, `react-zoom-pan-pinch`, `@heroicons/react`, `react-icons`, `primeicons`, `@ant-design/icons`, `framer-motion`/`motion` (only CSS animations used), `socket.io-client`
+   - Emotion/MUI: `@emotion/react`, `@emotion/styled`
+10. **`console.log` debug statements** left in production code: `InteractiveChatTable.jsx` and `DashboardLayout.jsx`.
+11. **Timesheet route** in `App.jsx` is `timesheet` but the Sidebar links use `/dashboard/timesheet` — this works because the route is nested under `/dashboard`, but the route path definition is relative (not `/dashboard/timesheet`).
+12. **`getSuggestedPrompts()`** returns up to 6 prompts but the docstring says "Array of up to 4 unique prompt strings" — there is a docstring/code mismatch.
+13. **No ChatHistory.jsx or Settings.jsx lazy loading** in `App.jsx` — unlike Dashboard and Timesheet, these pages are rendered synchronously when their route is visited (if they were wired up), but both are currently stubs.
+14. **Request flow box colors** are applied via inline styles in JS and do NOT adapt to dark/light mode. The CSS comment in `index.css` explicitly notes this limitation.
+15. **Tailwind unused classes** — With 20+ UI libraries installed but unused, the bundle may include unnecessary code. Tree-shaking in Vite should handle most, but some libraries (e.g., `bootstrap`, `primereact`) may not tree-shake effectively.
+
+
+
+
+*
