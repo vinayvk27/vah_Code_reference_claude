@@ -1,74 +1,203 @@
-All tasks are complete. Here's a summary of every change:
+ENVIRONMENT: React 19, Vite, Tailwind CSS. Read the codebase before making changes.
 
-Section 1 — Fix: form_errors not displaying in chat
-Root cause found: The form_errors handler in useChatStream.js:171-184 was correctly setting formErrors on the message object. The issue was that FormRenderer.jsx had the getError() helper and error display logic, but the input styling for error states and compact inline error text wasn't consistently applied across all field types — and the overall error banner was always visible (not gated by Object.keys(formErrors).length > 0).
+TASK FRONTEND-1: Fix two active bugs and resolve known gaps from the documentation. 
+Three sections — read all before starting.
 
-Fixes applied:
+==============================================================================
+SECTION 1 — FIX: form_errors not displaying in chat
+==============================================================================
+SYMPTOM: Backend sends {"type": "form_errors", "form_id": "...", "errors": {...}} 
+but frontend only shows "⚠️ Form validation failed. Please correct the errors above." 
+with no actual field-level errors visible.
 
-useChatStream.js:247 — Changed formErrors = null to formErrors = {} in submitForm() so stale errors are cleared before re-submission (truthy check for error banner works correctly)
-FormRenderer.jsx — Rewrote field rendering:
-Scalar fields: inputs now get border-red-500 ring-1 ring-red-500/20 when error exists
-Error text below each field: <p className="mt-0.5 text-[11px] text-red-400 flex items-center gap-1"><span>⚠</span><span>{error}</span></p>
-Table cell errors: same treatment with dot-notation paths (items.0.item_name)
-Global error banner now gated: {formErrors && Object.keys(formErrors).length > 0 && ...}
-Section 2 — Redesign: Compact chat-native forms
-File changed: FormRenderer.jsx — Complete rewrite of styling.
+DIAGNOSIS: In src/hooks/useChatStream.js, the form_errors SSE event handler sets 
+formErrors on the message object. But FormRenderer.jsx either does not read 
+formErrors or does not map them to individual field error displays.
 
-Key changes:
+FIX STEPS:
 
-Wrapper: w-full max-w-[380px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 p-3 my-1
-Title: text-xs font-bold uppercase tracking-widest text-slate-500
-Labels: text-[11px] font-semibold uppercase tracking-wide
-Inputs: px-2.5 py-1.5 text-[13px] with subtle bg-slate-50 dark:bg-slate-700/50 backgrounds
-Layout: Single-column flex flex-col gap-2 (no grid)
-Textarea: rows={3} (was 5)
-Footer buttons: Side-by-side right-aligned, px-3/px-4 py-1.5 text-xs, compact
-Submitted state: Compact chip <CheckCircle2 size={12} /> Form submitted
-Cancelled state: <div className="text-xs text-slate-500 italic">Form cancelled.</div>
-Table rows: text-xs, 32px height, minimal padding
-Add Row button: text-[11px] with Plus size={12}
-Section 3 — Fix Known Gaps
-Gap	File Changed	What
-GAP 3	api.js:65-72	Added authService.getCapabilities() method
-GAP 4	Sidebar.jsx:119-138	Replaced handleComingSoon buttons with NavLink to /dashboard/chat-history and /dashboard/settings; removed unused handleComingSoon function and toast import
-GAP 1+2	App.jsx:9-10, 27-28	Lazy-loaded ChatHistory and Settings components, wired into route tree with Suspense (handled by DashboardLayout wrapper)
-GAP 10	useChatStream.js	Removed 2 console.log("Stream stopped by user.") debug statements. InteractiveChatTable.jsx had none. DashboardLayout.jsx console.log was already removed in a prior pass
-GAP 6	DashboardLayout.jsx:31-34	Added toast.error('Could not refresh permissions. Some features may be unavailable.') in the refreshAccess catch block, plus import { toast } from 'sonner'
-Requisition Type input field itself is not coming earlier a radio button will be there to select eithe returnable or non returnable check why it is not coming
-Grep "requisition|returnable|non.returnable|Requisition" (in c:\xampp1\htdocs\hemish\VAH_Chatbot_1\src\components\FormRenderer.jsx)
-1 line of output
-The "Requisition Type" field isn't in the form rendering code at all — FormRenderer.jsx doesn't have any special handling for it. Let me check what field types FormRenderer currently supports and how the backend sends form specs.
+A. In src/hooks/useChatStream.js, find the form_errors case in the SSE event handler:
 
-Read c:\xampp1\htdocs\hemish\VAH_Chatbot_1\src\components\FormRenderer.jsx
-Now I see the issue. The backend sends a form where Requisition Type is likely a field with a type that maps to radio buttons (like type: "radio" or type: "radio_group"), but the current FormRenderer.jsx only handles these types in the scalar fields section:
+   The current handler sets formErrors on a message at msgIndex. Verify:
+   - formErrors is being set as: { "project_id": "error text", "items.0.item_name": "error text" }
+   - The message object at msgIndex is being mutated/replaced correctly
+   - State update triggers a re-render (check if setMessages is called with a new array)
 
-text, number, date (line 235)
-textarea (line 304)
-select (line 317)
-checkbox (line 333)
-There's no handler for radio or radio_group field types, so those fields silently render nothing.
+   If formErrors is being set but UI doesn't show it, the bug is in FormRenderer.jsx (go to B).
+   If formErrors is not being set at all, fix the handler first.
 
-Let me check the original file to confirm this was present before my rewrite.
+B. In src/components/FormRenderer.jsx, find where individual fields are rendered.
 
-Grep "radio" (in c:\xampp1\htdocs\hemish\VAH_Chatbot_1)
-5 lines of output
-Grep "radio" (in c:\xampp1\htdocs\hemish\VAH_Chatbot_1\DPAH_FRONTEND_DOCUMENTATION.md)
-1 line of output
-Read c:\xampp1\htdocs\hemish\VAH_Chatbot_1\DPAH_FRONTEND_DOCUMENTATION.md (lines 601-630)
-Grep "radio" (in c:\xampp1\htdocs\hemish\VAH_Chatbot_1\DPAH_FRONTEND_DOCUMENTATION.md)
-1 line of output
-Grep "requisition|returnable|non.returnable|Requisition|requisition_type|Requisition Type" (in c:\xampp1\htdocs\hemish\VAH_Chatbot_1\DPAH_FRONTEND_DOCUMENTATION.md)
-1 line of output
-Grep "returnable|requisition" (in c:\xampp1\htdocs\hemish\VAH_Chatbot_1\DPAH_FRONTEND_DOCUMENTATION.md)
-1 line of output
-I can see the issue. In FormRenderer.jsx:235-313, the scalar field rendering only handles these types: ['text', 'number', 'date'], textarea, select, and checkbox. There's no handler for radio type fields.
+   For EACH field, add inline error display below the input:
+   
+   - FormRenderer receives a `formErrors` prop (object: {fieldName: errorMessage})
+   - After each field's input element, add:
+   
+     {formErrors?.[field.name] && (
+       <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+         <span>⚠</span>
+         <span>{formErrors[field.name]}</span>
+       </p>
+     )}
+   
+   - For nested errors like "items.0.item_name", map them as:
+     key = "items.0.item_name" → show below the field with name "item_name" 
+     that is at index 0 in the items array. 
+     If the form has table/array rows, each row's field should check 
+     formErrors[`items.${rowIndex}.${field.name}`]
+   
+   - Apply error styling to the input itself when an error exists:
+     Add to the input className: formErrors?.[field.name] ? 'border-red-500 ring-1 ring-red-500/20' : ''
+   
+   - The overall error banner ("⚠️ Form validation failed...") should REMAIN at 
+     the top of the form but should only appear when Object.keys(formErrors).length > 0
 
-When the backend sends a requisition_type field with type: "radio" (with options like "returnable" and "non_returnable"), FormRenderer.jsx renders nothing for it because it falls through all the conditional branches and renders nothing.
+C. In src/components/ChatOverlay.jsx (or wherever MessageBubble renders forms), 
+   verify that when re-rendering a form message with formErrors set, the FormRenderer 
+   is passed the updated formErrors prop. The form should NOT be re-mounted — 
+   it should update in place preserving user's filled values.
 
-Let me fix this by adding a radio group renderer.
+D. IMPORTANT: After errors are shown, user fixes fields and resubmits. On new 
+   submission, clear the formErrors state for that message so stale errors disappear. 
+   In useChatStream.js submitForm(), before sending, clear formErrors on the 
+   relevant message.
 
-Read c:\xampp1\htdocs\hemish\VAH_Chatbot_1\src\components\FormRenderer.jsx (lines 317-331)
-I see the problem. The form field rendering in [FormRenderer.jsx only handles select, text, textarea, checkbox — but not radio. The backend sends a field with type: "radio" for the "Requisition Type" (returnable / non-returnable), but FormRenderer.jsx has no renderer for field.type === 'radio'.
+EXPECTED RESULT: User submits form with invalid project_id → backend returns 
+form_errors → the project_id field shows red border + "Project 'yaq134e' not found" 
+below it → item_name field shows "Item code 'rewqg435' not found in catalog" below it.
 
+==============================================================================
+SECTION 2 — REDESIGN: Make forms compact and chat-native
+==============================================================================
+CURRENT PROBLEM: Forms are large (7-8 fields, textarea, full-width) and feel 
+like a web form dropped into chat. They should feel like part of the conversation.
 
-** mostly its fine but need the best UI form looks basic and very compact increase width it a bit more and also fonts and colour everything looks basic since we are using uses will expect best controls i hope you understood.
+DESIGN PRINCIPLES:
+- Max width: 380px (mobile-card feel, not full-width)
+- Compact padding: 12px internal
+- Label font: 11px, uppercase, tracking-wide, muted color
+- Input height: 32px (not 40px+)
+- Font size in inputs: 13px
+- Minimal borders — use subtle backgrounds instead of heavy borders
+- Submit/Cancel inline side-by-side at the bottom
+- No heavy card shadow — just a thin border
+- Feels like a Slack /slash command form, not an admin panel form
+
+IMPLEMENT IN src/components/FormRenderer.jsx:
+
+A. WRAPPER: Change the outer container from full-width to:
+   className="w-full max-w-[380px] rounded-xl border border-slate-200 
+   dark:border-slate-700 bg-white dark:bg-slate-800/60 p-3 my-1"
+
+B. TITLE: Make it small and inline:
+   className="text-xs font-bold uppercase tracking-widest text-slate-500 
+   dark:text-slate-400 mb-2.5 pb-2 border-b border-slate-100 dark:border-slate-700"
+
+C. DESCRIPTION (if present): 
+   className="text-xs text-slate-500 dark:text-slate-400 mb-2 -mt-1"
+
+D. FIELDS LAYOUT: Change from 2-column grid to single column, compact spacing:
+   className="flex flex-col gap-2"
+
+   For each field:
+   - Label: className="block text-[11px] font-semibold uppercase tracking-wide 
+     text-slate-500 dark:text-slate-400 mb-0.5"
+   - Text/number input: className="w-full px-2.5 py-1.5 text-[13px] rounded-lg 
+     border bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 
+     text-slate-800 dark:text-slate-200 outline-none focus:border-blue-500 
+     focus:ring-1 focus:ring-blue-500/20 transition-colors"
+   - Textarea: same as above but rows={3} — NOT rows={5} or more
+   - Select: same as text input with appearance-none
+   - Error text: "mt-0.5 text-[11px] text-red-400 flex items-center gap-1"
+
+E. TABLE/ARRAY FIELDS (if form has rows): Keep rows compact — 
+   32px row height, 11px fonts, minimal padding.
+
+F. FOOTER BUTTONS: Side-by-side, right-aligned:
+   <div className="flex justify-end gap-2 mt-3 pt-2.5 
+   border-t border-slate-100 dark:border-slate-700">
+     <button Cancel className="px-3 py-1.5 text-xs font-medium text-slate-500 
+       dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 
+       transition-colors">
+       {cancelLabel}
+     </button>
+     <button Submit className="px-4 py-1.5 text-xs font-semibold rounded-lg 
+       bg-blue-600 hover:bg-blue-700 text-white transition-colors 
+       disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+       {submitLabel}
+     </button>
+   </div>
+
+G. SUBMITTED STATE: When form is submitted successfully, replace form with 
+   a compact inline chip:
+   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg 
+   bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium">
+     <CheckCircle2 size={12} />
+     <span>{formSpec.title} submitted</span>
+   </div>
+
+H. CANCELLED STATE: When cancelled, replace with:
+   <div className="text-xs text-slate-500 dark:text-slate-400 italic">
+     Form cancelled.
+   </div>
+
+==============================================================================
+SECTION 3 — FIX KNOWN GAPS (from documentation section 14)
+==============================================================================
+
+Fix the following gaps from the MD file. Each is small and targeted.
+
+GAP 3 — authService.getCapabilities() not defined:
+In src/services/api.js, add this method to authService:
+  getCapabilities: async () => {
+    const token = localStorage.getItem('access_token');
+    const response = await fetch('/api/v1/me/capabilities', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!response.ok) throw new Error('Failed to fetch capabilities');
+    return response.json();
+  },
+This unblocks Settings.jsx from crashing on load.
+
+GAP 4 — Sidebar Chat History and Settings use handleComingSoon() toast:
+In src/components/Sidebar.jsx, find the "Chat History" and "Settings" nav items. 
+Replace the onClick={handleComingSoon} handlers with proper NavLink navigation 
+to /dashboard/chat-history and /dashboard/settings respectively. 
+These should work the same as the Dashboard nav link.
+
+GAP 1 + 2 — Wire Chat History and Settings routes:
+In src/App.jsx, find the routes for chat-history and settings that currently 
+show "Coming Soon" text. Replace with the actual lazy-loaded components:
+  const ChatHistory = lazy(() => import('./pages/ChatHistory'));
+  const Settings = lazy(() => import('./pages/Settings'));
+Wire them into the route tree the same way Dashboard and Timesheet are wired, 
+with Suspense + LoadingFallback.
+
+GAP 10 — Remove console.log debug statements:
+In src/components/InteractiveChatTable.jsx and src/layouts/DashboardLayout.jsx, 
+remove all console.log() statements that are debug artifacts.
+
+GAP 6 — refreshAccess failure should inform the user:
+In src/layouts/DashboardLayout.jsx, find the refreshAccess() call. 
+Change the catch block from just logging errors to also showing a toast:
+  catch (error) {
+    console.error('Permission sync failed:', error);
+    toast.error('Could not refresh permissions. Some features may be unavailable.');
+  }
+
+==============================================================================
+REPORT BACK
+==============================================================================
+For each section:
+- Section 1 (form errors): Confirm where formErrors was being lost 
+  (useChatStream.js or FormRenderer.jsx) and what the fix was. 
+  Show the before/after of the field error rendering.
+- Section 2 (compact form): Confirm FormRenderer.jsx was updated. 
+  Show the new wrapper className and footer button classes.
+- Section 3 (gaps): Confirm each gap fixed — list which file was changed.
+
+DO NOT:
+- Change useChatStream.js streaming logic beyond the formErrors handling
+- Modify any backend API calls or endpoint URLs
+- Change the overall ChatOverlay layout
+- Touch any backend files
