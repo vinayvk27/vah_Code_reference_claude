@@ -340,3 +340,598 @@ Thought: {agent_scratchpad}"""
         return response.get("output", "No response from agent.")
     except Exception as e:
         return f"Error running approver agent: {e}"
+
+
+
+
+
+result :
+
+
+> Entering new AgentExecutor chain...
+Thought: Do I need to use a tool? Yes
+Action: List_Pending_Approvals
+Action Input: {}[TOOL DEBUG] List_Pending_Approvals triggered | persona=pl_approver | emp_no=16
+[TOOL DEBUG] Routing persona=pl_approver...
+[TOOL DEBUG] -> PL/PM DAO path
+[TOOL DEBUG] DB fetch complete. Found 28 records.
+[TOOL DEBUG] Returning 28 enriched records as JSON string.
+Observation: Here are the pending approvals:
+[
+  {
+    "MATREQUISITIONID": 86,
+    "MATREQUISITIONNO": "DPE/MRR/38/26-27",
+    "REQUESTORID": 3010,
+    "PROJECTID": 13971,
+    "DESCRIPTION": "MDI-Osprey Air Cooled Processor(Standard)",
+    "TOTAL_COST": 9655,
+    "NEEDBYDATE": "2026-06-30 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": "PENDING",
+    "VERIFICATION_STATUS": "APPROVED",
+    "AI_VERIFICATION_REMARK": "Verification agent execution failed: Missing some input keys: {'tools', 'tool_names'}. Decision: FLAG_REVIEW. Reason: AI agent encountered an error during analysis.",
+    "STATUS": "ENTERED",
+    "is_urgent": false,
+    "needby_str": "2026-06-30",
+    "is_high_value": true
+  },
+  {
+    "MATREQUISITIONID": 85,
+    "MATREQUISITIONNO": "MRR/85/26-27",
+    "REQUESTORID": 3010,
+    "PROJECTID": 13983,
+    "DESCRIPTION": "Repair support for Checkout Equipment (COE)",
+    "TOTAL_COST": 184,
+    "NEEDBYDATE": "2026-06-17 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-17",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 84,
+    "MATREQUISITIONNO": "MRR/84/26-27",
+    "REQUESTORID": 2721,
+    "PROJECTID": 13964,
+    "DESCRIPTION": "Development, Supply, Site Assembly, Integration and Installation of Radar Hardware",
+    "TOTAL_COST": 1945275000,
+    "NEEDBYDATE": "2026-06-11 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-11",
+    "is_high_value": true
+  },
+  {
+    "MATREQUISITIONID": 83,
+    "MATREQUISITIONNO": "MRR/83/26-27",
+    "REQUESTORID": 3010,
+    "PROJECTID": 14007,
+    "DESCRIPTION": "Development and Testing of DLRL-AIES-D22V1 (Airborne Indigenous ESM System)",
+    "TOTAL_COST": 1696,
+    "NEEDBYDATE": "2026-06-26 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": "APPROVED",
+    "VERIFICATION_STATUS": "APPROVED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": false,
+    "needby_str": "2026-06-26",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 81,
+    "MATREQUISITIONNO": "MRR/81/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13982,
+    "DESCRIPTION": "4 Axis Integrated Processor and Controller",
+    "TOTAL_COST": 115,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 78,
+    "MATREQUISITIONNO": "MRR/78/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13985,
+    "DESCRIPTION": "Repair support for Checkout Equipment (COE)",
+    "TOTAL_COST": 824,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 77,
+    "MATREQUISITIONNO": "MRR/77/26-27",
+    "REQUESTORID": 531,
+    "PROJECTID": 14090,
+    "DESCRIPTION": "1 MW S-BAND TRANSMITTER (TERLS)",
+    "TOTAL_COST": 30,
+    "NEEDBYDATE": "2026-06-18 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-18",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 74,
+    "MATREQUISITIONNO": "MRR/74/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13971,
+    "DESCRIPTION": "MDI-Osprey Air Cooled Processor(Standard)",
+    "TOTAL_COST": 38,
+    "NEEDBYDATE": "2026-06-18 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-18",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 56,
+    "MATREQUISITIONNO": "MRR/56/26-27",
+    "REQUESTORID": 3010,
+    "PROJECTID": 13460,
+    "DESCRIPTION": "1. Repair of TRC checkout Units 2. Software Modifications and harness fabrication for TRC Checkout Units 3. AMC for 5 Nos of TRC Checkout Units (2 Years AMC from Acceptance of Software Modifications)",
+    "TOTAL_COST": 58,
+    "NEEDBYDATE": "2026-06-19 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-08 12:01:07",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-19",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 55,
+    "MATREQUISITIONNO": "MRR/55/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13971,
+    "DESCRIPTION": "MDI-Osprey Air Cooled Processor(Standard)",
+    "TOTAL_COST": 355,
+    "NEEDBYDATE": "2026-06-23 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": false,
+    "needby_str": "2026-06-23",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 54,
+    "MATREQUISITIONNO": "MRR/54/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13971,
+    "DESCRIPTION": "MDI-Osprey Air Cooled Processor(Standard)",
+    "TOTAL_COST": 355,
+    "NEEDBYDATE": "2026-06-26 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": false,
+    "needby_str": "2026-06-26",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 53,
+    "MATREQUISITIONNO": "MRR/53/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12553,
+    "DESCRIPTION": "Mini RESINS scaled down configuration IIST",
+    "TOTAL_COST": 153,
+    "NEEDBYDATE": "2026-06-03 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-05 14:59:30",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-03",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 52,
+    "MATREQUISITIONNO": "MRR/52/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12487,
+    "DESCRIPTION": "1553B cable assemblies and bus couplers",
+    "TOTAL_COST": 926380,
+    "NEEDBYDATE": "2026-06-05 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 21:17:40",
+    "APPROVAL_STATUS": "APPROVED",
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-05",
+    "is_high_value": true
+  },
+  {
+    "MATREQUISITIONID": 51,
+    "MATREQUISITIONNO": "MRR/51/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12475,
+    "DESCRIPTION": "SPS Checkout.",
+    "TOTAL_COST": 2,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 20:56:24",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 49,
+    "MATREQUISITIONNO": "MRR/49/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12429,
+    "DESCRIPTION": "AINSCE Checkout",
+    "TOTAL_COST": 372,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-08 13:20:32",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 48,
+    "MATREQUISITIONNO": "MRR/48/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12388,
+    "DESCRIPTION": "Portable SIP Checkout",
+    "TOTAL_COST": 24,
+    "NEEDBYDATE": "2026-06-05 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 19:27:49",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-05",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 47,
+    "MATREQUISITIONNO": "MRR/47/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13869,
+    "DESCRIPTION": "1553B Interface module with carrier",
+    "TOTAL_COST": 28,
+    "NEEDBYDATE": "2026-06-18 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 17:06:47",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-18",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 46,
+    "MATREQUISITIONNO": "MRR/46/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13869,
+    "DESCRIPTION": "1553B Interface module with carrier",
+    "TOTAL_COST": 6,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 17:02:11",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 45,
+    "MATREQUISITIONNO": "MRR/45/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13193,
+    "DESCRIPTION": "ADC Board and Quad M Module Carrier Part",
+    "TOTAL_COST": 43,
+    "NEEDBYDATE": "2026-06-19 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 15:31:15",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": "VERIFIED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "PENDING_ERP",
+    "is_urgent": true,
+    "needby_str": "2026-06-19",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 44,
+    "MATREQUISITIONNO": "MRR/44/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13069,
+    "DESCRIPTION": "DPU checkout hardware",
+    "TOTAL_COST": 195,
+    "NEEDBYDATE": "2026-06-19 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 14:46:00",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-19",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 43,
+    "MATREQUISITIONNO": "MRR/43/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13102,
+    "DESCRIPTION": "XMC Based Dual Output Graphics Module",
+    "TOTAL_COST": 978,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 13:53:32",
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 42,
+    "MATREQUISITIONNO": "MRR/42/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12133,
+    "DESCRIPTION": "Additional Modules (RS 485, Mux and 1553B)",
+    "TOTAL_COST": 147,
+    "NEEDBYDATE": "2026-06-05 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 14:59:43",
+    "APPROVAL_STATUS": "APPROVED",
+    "VERIFICATION_STATUS": "APPROVED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-05",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 41,
+    "MATREQUISITIONNO": "MRR/41/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13987,
+    "DESCRIPTION": "4.5M Satcom Ground Data terminal (4.5m GDT-SAT)",
+    "TOTAL_COST": 1612,
+    "NEEDBYDATE": "2026-06-05 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-05",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 40,
+    "MATREQUISITIONNO": "MRR/40/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13986,
+    "DESCRIPTION": "ATE development for IRST Processor unit",
+    "TOTAL_COST": 216,
+    "NEEDBYDATE": "2026-06-05 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-05",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 39,
+    "MATREQUISITIONNO": "MRR/39/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13987,
+    "DESCRIPTION": "4.5M Satcom Ground Data terminal (4.5m GDT-SAT)",
+    "TOTAL_COST": 328,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 38,
+    "MATREQUISITIONNO": "MRR/38/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13984,
+    "DESCRIPTION": "cPCI Serial Bus IO Modules",
+    "TOTAL_COST": 459,
+    "NEEDBYDATE": "2026-06-05 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-05",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 34,
+    "MATREQUISITIONNO": "MRR/34/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 12320,
+    "DESCRIPTION": "cPCI Processor Board with Backplane and Powersupply",
+    "TOTAL_COST": 656,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": "2026-06-04 11:16:11",
+    "APPROVAL_STATUS": "APPROVED",
+    "VERIFICATION_STATUS": "APPROVED",
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": false
+  },
+  {
+    "MATREQUISITIONID": 33,
+    "MATREQUISITIONNO": "MRR/33/26-27",
+    "REQUESTORID": 3428,
+    "PROJECTID": 13427,
+    "DESCRIPTION": "OnBoard Computer for Nano Satellite",
+    "TOTAL_COST": 88174,
+    "NEEDBYDATE": "2026-06-12 00:00:00",
+    "PL_APPROVAL_STATUS": "PENDING",
+    "PL_APPROVAL_DATE": null,
+    "APPROVAL_STATUS": null,
+    "VERIFICATION_STATUS": null,
+    "AI_VERIFICATION_REMARK": null,
+    "STATUS": "ENTERED",
+    "is_urgent": true,
+    "needby_str": "2026-06-12",
+    "is_high_value": true
+  }
+]Thought: I have retrieved the list of pending MRRs. As a PL Approver, I need to present these items highlighting Urgency (NeedbyDate within 7 days), High Value (Cost > 2000), and AI Verification Remarks.
+
+Analysis of the data:
+1.  **MRR 86**: Cost 9,655 (High Value). AI Remark indicates a verification error (FLAG_REVIEW), requiring manual review. Needby 2026-06-30 (Not urgent relative to immediate deadlines in the list, but let's check dates. The list contains dates in June 2026. Assuming "current date" is around June 2026 based on the "NEEDBYDATE" values being close. Items with NeedbyDate 2026-06-05 to 2026-06-12 are critically urgent).
+2.  **MRR 84**: Cost 1,945,275,000 (Extremely High Value). Needby 2026-06-11 (URGENT).
+3.  **MRR 52**: Cost 926,380 (High Value). Needby 2026-06-05 (URGENT/PAST DUE if current date is later).
+4.  **MRR 33**: Cost 88,174 (High Value). Needby 2026-06-12 (URGENT).
+5.  **MRR 41**: Cost 1,612. Needby 2026-06-05 (URGENT).
+6.  **MRR 43**: Cost 978. Needby 2026-06-12 (URGENT).
+7.  Many other items are marked `is_urgent: true` with NeedbyDates in early-mid June.
+
+I will group them by priority for the PL Approver.
+
+Action: I will now format the response to present these findings clearly to the user, categorizing by High Value/Urgent vs. Standard, and including the AI remark for MRR 86.
+
+Final Answer: Here are your pending Material Requisition Requests (MRRs) for approval. As a **PL Approver**, please review the **Project Needs**, **Cost Implications**, and **Timeline Urgency**.
+
+### 🔴 CRITICAL PRIORITY (High Value &/or Urgent Need)
+
+1.  **MRR/84/26-27** (ID: 84)
+    *   **Project:** Radar Hardware Integration
+    *   **Cost:** ₹1,945,275,000 **[HIGH VALUE]**
+    *   **Need By:** 2026-06-11 **[URGENT]**
+    *   **Action Required:** Immediate review due to high cost and tight deadline.
+
+2.  **MRR/86/26-27** (ID: 86)
+    *   **Project:** MDI-Osprey Air Cooled Processor
+    *   **Cost:** ₹9,655 **[HIGH VALUE]**
+    *   **Need By:** 2026-06-30
+    *   **⚠️ AI Verification Remark:** `FLAG_REVIEW`. The AI agent encountered an error ("Missing input keys: tools"). **Manual verification of requirements and budget is strongly recommended before approval.**      
+
+3.  **MRR/55/26-27** (ID: 55) & **MRR/54/26-27** (ID: 54)
+    *   **Project:** MDI-Osprey Air Cooled Processor
+    *   **Cost:** ₹355 each
+    *   **Need By:** 2026-06-23 / 2026-06-26
+
+4.  **MRR/52/26-27** (ID: 52)
+    *   **Project:** 1553B cable assemblies
+    *   **Cost:** ₹926,380 **[HIGH VALUE]**
+    *   **Need By:** 2026-06-05 **[URGENT/PAST DUE]**
+
+5.  **MRR/33/26-27** (ID: 33)
+    *   **Project:** OnBoard Computer for Nano Satellite
+    *   **Cost:** ₹88,174 **[HIGH VALUE]**
+    *   **Need By:** 2026-06-12 **[URGENT]**
+
+### 🟡 URGENT TIMELINE (Need By Within 7 Days)
+*Note: All these items are marked as URGENT based on the `is_urgent` flag.*
+
+*   **MRR/41/26-27** (ID: 41): 4.5M Satcom Ground Data Terminal (Cost: ₹1,612) - Need By: 2026-06-05
+*   **MRR/40/26-27** (ID: 40): ATE development for IRST Processor (Cost: ₹216) - Need By: 2026-06-05
+*   **MRR/38/26-27** (ID: 38): cPCI Serial Bus IO Modules (Cost: ₹459) - Need By: 2026-06-05
+*   **MRR/85/26-27** (ID: 85): Repair support for Checkout Equipment (Cost: ₹184) - Need By: 2026-06-17
+*   **MRR/81/26-27** (ID: 81): 4 Axis Integrated Processor (Cost: ₹115) - Need By: 2026-06-12
+*   **MRR/78/26-27** (ID: 78): Repair support for Checkout Equipment (Cost: ₹824) - Need By: 2026-06-12
+*   **MRR/77/26-27** (ID: 77): 1 MW S-BAND TRANSMITTER (Cost: ₹30) - Need By: 2026-06-18
+*   **MRR/74/26-27** (ID: 74): MDI-Osprey Air Cooled Processor (Cost: ₹38) - Need By: 2026-06-18
+*   **MRR/43/26-27** (ID: 43): XMC Based Dual Output Graphics Module (Cost: ₹978) - Need By: 2026-06-12
+*   **MRR/39/26-27** (ID: 39): 4.5M Satcom Ground Data Terminal (Cost: ₹328) - Need By: 2026-06-12
+
+### 🟢 STANDARD (No specific urgent/high flags)
+*   **MRR/83/26-27** (ID: 83): DLRL-AIES-D22V1 Development (Cost: ₹1,696) - Need By: 2026-06-26
+*   **MRR/44/26-27** (ID: 44): DPU checkout hardware (Cost: ₹195) - Need By: 2026-06-19
+*   **MRR/42/26-27** (ID: 42): Additional Modules (Cost: ₹147) - Need By: 2026-06-05 (Note: Flagged urgent but low cost)
+
+---
+
+**How would you like to proceed?**
+Please specify the action for specific IDs or "Approve All" / "Reject All" (though manual review is recommended for High Value/AI-Flagged items).
+
+*Example: "Approve MRR 84" or "Reject MRR 86 due to AI error"*
+
+> Finished chain.
