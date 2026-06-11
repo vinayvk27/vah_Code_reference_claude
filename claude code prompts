@@ -1,821 +1,342 @@
-ENVIRONMENT: React 19, Vite, Tailwind CSS.
-File: src/components/FormRenderer.jsx — FULL REPLACEMENT.
-Read the current file first, then replace entirely with the code below.
-Do not partially edit — replace the whole file.
+"""
+SCM Approver ReAct Agent (Modern LangChain)
+=============================================
+A ReAct agent that reviews pending MRRs for all three approval stages
+(PL/PM, Manager, ERP Approver). It dynamically selects the correct DAO
+based on the user's persona, reads the AI Verifier's reasoning, and
+provides SCM-aware summaries with urgency/value alerts.
+Uses the Modern ReAct pattern (create_react_agent + AgentExecutor).
+"""
 
-The current file has 5 bugs:
-1. useRef called inside .map() — illegal hook, crashes component
-2. overflow:hidden on wrapper clips dropdowns + breaks resize
-3. Conflicting overflow on table wrapper
-4. Date pair logic renders second field twice
-5. Inconsistent padding
+import json
+from datetime import datetime, timedelta
 
-This rewrite fixes all 5, keeps all existing functionality, and improves
-visual quality. Copy this file exactly as written.
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain_core.prompts import PromptTemplate
+from langchain_core.tools import Tool
+from sqlalchemy import text
 
-WRITE this as the complete new content of FormRenderer.jsx:
+from app.core.llm import get_llm_non_streaming
+from app.dao.database import SessionLocal
+from app.dao.mrr_dao import MRRDao
+from app.workflows.shared.reasoning_addon import add_reasoning
 
----
 
-import { useState, useRef, useCallback, useEffect } from 'react';
-import {
-  Plus, Trash2, AlertCircle, Loader2,
-  ChevronDown, CheckCircle2, Minimize2, Maximize2
-} from 'lucide-react';
+def _build_approver_tools(emp_no: str, persona: str):
+    """Build LangChain Tool wrappers for the approver ReAct agent.
 
-// ─── ItemAutocompleteCell ────────────────────────────────────────────────────
-// Extracted as a proper component so useRef is called at the top level,
-// not inside a .map() callback. This is the fix for the blank-page crash.
-function ItemAutocompleteCell({
-  value, tableName, rowIndex, col, isSubmitting,
-  onItemChange, cellError
-}) {
-  const inputRef = useRef(null);
-  const timerRef = useRef(null);
-  const [query, setQuery] = useState('');
-  const [suggestions, setSuggestions] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState(null);
+    Persona mapping:
+      pl_pm / pl_approver -> fetches PL/PM stage (PL_APPROVAL_STATUS = 'PENDING')
+      approver            -> fetches Manager stage (STATUS = 'PENDING_MANAGER')
+      erp_approver        -> fetches ERP stage (STATUS = 'PENDING_ERP')
+    """
 
-  useEffect(() => {
-    if (!query || query.length < 2) { setSuggestions([]); return; }
-    setLoading(true);
-    const controller = new AbortController();
-    fetch(`/api/v1/mrr/search/items?q=${encodeURIComponent(query)}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
-      signal: controller.signal,
-    })
-      .then(r => r.json())
-      .then(data => setSuggestions(data.status === 'success' ? data.data : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    return () => controller.abort();
-  }, [query]);
+    def list_pending_requests(_x=None):
+        """Fetch pending MRRs for the current persona's approval stage.
 
-  const handleChange = (e) => {
-    const val = e.target.value;
-    onItemChange(tableName, rowIndex, col.name, val);
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setQuery(val), 300);
-  };
+        Accepts and ignores a dummy argument (LangChain may pass "{}" or "").
+        Returns a pure string for LangChain, or an error string.
+        """
+        print(f"[TOOL DEBUG] List_Pending_Approvals triggered | persona={persona} | emp_no={emp_no}", flush=True)
+        db = SessionLocal()
+        try:
+            # --- Safe persona routing ---
+            print(f"[TOOL DEBUG] Routing persona={persona}...", flush=True)
+            if persona in ("pl_pm", "pl_approver"):
+                print("[TOOL DEBUG] -> PL/PM DAO path", flush=True)
+                results = MRRDao.get_pending_mrrs_for_pl_pm(db, emp_no)
+            elif persona == "erp_approver":
+                print("[TOOL DEBUG] -> ERP DAO path", flush=True)
+                results = MRRDao.get_pending_mrrs_for_erp(db, emp_no)
+            else:
+                print("[TOOL DEBUG] -> Manager DAO path (default)", flush=True)
+                results = MRRDao.get_pending_mrrs_for_manager(db, emp_no)
 
-  const handleFocus = (e) => {
-    setIsOpen(true);
-    const rect = e.target.getBoundingClientRect();
-    setDropdownPos({
-      top: rect.bottom + window.scrollY + 4,
-      left: rect.left + window.scrollX,
-      width: Math.max(rect.width, 240),
-    });
-  };
+            count = len(results) if results else 0
+            print(f"[TOOL DEBUG] DB fetch complete. Found {count} records.", flush=True)
 
-  const handleBlur = () => setTimeout(() => setIsOpen(false), 150);
+            if not results:
+                return "Observation: No pending approvals found for your role."
 
-  const handleSelect = (suggestion) => {
-    onItemChange(tableName, rowIndex, col.name, suggestion.item_code || suggestion.label);
-    setIsOpen(false);
-    setSuggestions([]);
-    setQuery('');
-  };
+            # --- Enrich each row with safe urgency / value flags ---
+            enriched = []
+            now = datetime.now()
 
-  const cellInputBase = [
-    'w-full px-2 py-1 text-[13px] font-medium rounded-lg border',
-    'bg-white dark:bg-slate-800/80',
-    'text-slate-800 dark:text-slate-200',
-    'border-slate-200 dark:border-slate-700',
-    'outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20',
-    'transition-colors',
-    cellError ? 'border-red-500 ring-1 ring-red-500/20' : '',
-  ].join(' ');
+            for r in results:
+                row = dict(r)
 
-  return (
-    <td className="px-2 py-1.5 align-top" style={{ position: 'relative' }}>
-      <div ref={inputRef}>
-        <div className="relative">
-          <input
-            type="text"
-            value={value || ''}
-            onChange={handleChange}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            onKeyDown={e => e.key === 'Escape' && setIsOpen(false)}
-            placeholder={col.placeholder || ''}
-            required={col.required}
-            disabled={isSubmitting}
-            autoComplete="off"
-            className={cellInputBase}
-          />
-          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none">
-            {loading
-              ? <Loader2 size={12} className="animate-spin text-slate-400" />
-              : suggestions.length > 0 && isOpen
-                ? <ChevronDown size={10} className="text-slate-400" />
-                : null}
-          </div>
-        </div>
+                # Safe date check
+                need_by = row.get("NEEDBYDATE")
+                row["is_urgent"] = False
+                row["needby_str"] = "N/A"
+                if need_by is not None:
+                    if isinstance(need_by, datetime):
+                        try:
+                            delta = need_by - now
+                            row["is_urgent"] = delta.days <= 7
+                            row["needby_str"] = need_by.strftime("%Y-%m-%d")
+                        except Exception:
+                            row["is_urgent"] = False
+                            row["needby_str"] = "N/A"
+                    else:
+                        # DB might return a string like "2025-06-20 14:30:00"
+                        parsed = None
+                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                            try:
+                                parsed = datetime.strptime(str(need_by), fmt)
+                                break
+                            except (ValueError, TypeError):
+                                continue
+                        if parsed is not None:
+                            try:
+                                delta = parsed - now
+                                row["is_urgent"] = delta.days <= 7
+                                row["needby_str"] = parsed.strftime("%Y-%m-%d")
+                            except Exception:
+                                pass
 
-        {isOpen && suggestions.length > 0 && dropdownPos && (
-          <ul
-            style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999 }}
-            className="rounded-xl shadow-xl overflow-auto max-h-48
-              bg-white dark:bg-slate-800
-              border border-slate-200 dark:border-slate-700
-              ring-1 ring-black/5 dark:ring-white/5"
-          >
-            {suggestions.map(s => (
-              <li
-                key={s.value || s.item_code}
-                onMouseDown={e => { e.preventDefault(); handleSelect(s); }}
-                className="px-3 py-2 cursor-pointer transition-colors
-                  text-[13px] text-slate-700 dark:text-slate-200
-                  hover:bg-blue-50 dark:hover:bg-blue-500/10
-                  hover:text-blue-700 dark:hover:text-blue-300
-                  first:rounded-t-xl last:rounded-b-xl"
-              >
-                <div className="font-semibold">{s.label || s.display_label}</div>
-                {(s.description || (s.item_name && s.item_name !== s.display_label)) && (
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                    {s.description || s.item_name}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                # Safe cost check
+                cost = row.get("TOTAL_COST")
+                if cost is not None:
+                    try:
+                        row["is_high_value"] = float(cost) > 2000
+                    except (ValueError, TypeError):
+                        row["is_high_value"] = False
+                else:
+                    row["is_high_value"] = False
 
-        {isOpen && !loading && suggestions.length === 0 && query.length >= 2 && dropdownPos && (
-          <div
-            style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999 }}
-            className="px-3 py-2.5 rounded-xl shadow-xl text-[12px]
-              bg-white dark:bg-slate-800
-              border border-slate-200 dark:border-slate-700
-              text-slate-500 dark:text-slate-400"
-          >
-            No results found
-          </div>
-        )}
-      </div>
+                enriched.append(row)
 
-      {cellError && (
-        <p className="mt-0.5 text-[11px] text-red-400 flex items-center gap-1 truncate">
-          <AlertCircle size={10} className="shrink-0" />
-          <span>{cellError}</span>
-        </p>
-      )}
-    </td>
-  );
-}
+            # CRITICAL: LangChain tools MUST return a string, not a list/dict
+            final_string = json.dumps(enriched, indent=2, default=str)
+            print(f"[TOOL DEBUG] Returning {len(enriched)} enriched records as JSON string.", flush=True)
+            return f"Observation: Here are the pending approvals:\n{final_string}"
+        except Exception as e:
+            print(f"[TOOL DEBUG] Error in List_Pending_Approvals: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return f"Observation: Failed to fetch pending approvals. Error: {str(e)}"
+        finally:
+            db.close()
 
-// ─── Main FormRenderer ───────────────────────────────────────────────────────
-export default function FormRenderer({
-  formSpec,
-  formErrors = null,
-  isSubmitting = false,
-  onSubmit,
-  onCancel,
-}) {
-  // ── State ──────────────────────────────────────────────────────────────────
-  const [formData, setFormData] = useState(() => {
-    const initial = {};
-    formSpec.fields?.forEach(f => {
-      if (f.type === 'items_table') {
-        const emptyRow = {};
-        f.columns.forEach(c => { emptyRow[c.name] = ''; });
-        initial[f.name] = Array.from({ length: f.min_rows || 1 }, () => ({ ...emptyRow }));
-      } else if (f.type === 'radio') {
-        initial[f.name] = f.default ?? '';
-      } else if (f.type === 'checkbox') {
-        initial[f.name] = false;
-      } else {
-        initial[f.name] = f.default ?? '';
-      }
-    });
-    return initial;
-  });
+    def approve_mrr(mrr_id: int) -> str:
+        """Approve a specific pending MRR at the current stage."""
+        db = SessionLocal()
+        try:
+            if persona == "pl_pm":
+                verify = db.execute(text("""
+                    SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader
+                    WHERE MATREQUISITIONID = :id AND PL_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id}).mappings().first()
+                if not verify:
+                    return f"MRR {mrr_id} not pending PL/PM approval."
+                db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET PL_APPROVAL_STATUS = 'APPROVED', PL_APPROVAL_DATE = NOW()
+                    WHERE MATREQUISITIONID = :id AND PL_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify["MATREQUISITIONNO"] or f"MRR/{mrr_id}"
+                return add_reasoning(
+                    f"PL/PM approved {mrr_no}. It is now being auto-verified.",
+                    context=f"PL/PM {emp_no} approved MRR {mrr_id}."
+                )
 
-  const [isExpanded, setIsExpanded] = useState(false);
+            elif persona == "erp_approver":
+                verify = db.execute(text("""
+                    SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader
+                    WHERE MATREQUISITIONID = :id AND ERP_APPROVAL_STATUS = 'PENDING' AND APPROVAL_STATUS = 'APPROVED'
+                """), {"id": mrr_id}).mappings().first()
+                if not verify:
+                    return f"MRR {mrr_id} not pending ERP approval."
+                db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET ERP_APPROVAL_STATUS = 'APPROVED', ERP_APPROVAL_DATE = NOW(), STATUS = 'RELEASED'
+                    WHERE MATREQUISITIONID = :id AND ERP_APPROVAL_STATUS = 'PENDING' AND APPROVAL_STATUS = 'APPROVED'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify["MATREQUISITIONNO"] or f"MRR/{mrr_id}"
+                return add_reasoning(
+                    f"ERP-approved {mrr_no}. Released to store for issuance.",
+                    context=f"ERP {emp_no} approved MRR {mrr_id}."
+                )
 
-  // Project autocomplete state
-  const projectInputRef = useRef(null);
-  const projectTimerRef = useRef(null);
-  const [projectQuery, setProjectQuery] = useState('');
-  const [projectSuggestions, setProjectSuggestions] = useState([]);
-  const [projectLoading, setProjectLoading] = useState(false);
-  const [isProjectOpen, setIsProjectOpen] = useState(false);
+            else:
+                # Manager stage
+                verify = db.execute(text("""
+                    SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader
+                    WHERE MATREQUISITIONID = :id AND APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id}).mappings().first()
+                if not verify:
+                    return f"MRR {mrr_id} not pending manager approval."
+                db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET APPROVAL_STATUS = 'APPROVED', APPROVAL_DATE = NOW(),
+                        ERP_APPROVAL_STATUS = 'PENDING', STATUS = 'PENDING_ERP'
+                    WHERE MATREQUISITIONID = :id AND APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify["MATREQUISITIONNO"] or f"MRR/{mrr_id}"
+                return add_reasoning(
+                    f"Approved {mrr_no}. Forwarded to ERP for final approval.",
+                    context=f"Manager {emp_no} approved MRR {mrr_id}."
+                )
+        except Exception as e:
+            db.rollback()
+            return f"Error approving MRR {mrr_id}: {e}"
+        finally:
+            db.close()
 
-  // Close project dropdown on outside click
-  useEffect(() => {
-    const handler = e => {
-      if (projectInputRef.current && !projectInputRef.current.contains(e.target)) {
-        setIsProjectOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
+    def reject_mrr(mrr_id: int) -> str:
+        """Reject a specific pending MRR at the current stage."""
+        db = SessionLocal()
+        try:
+            if persona == "pl_pm":
+                verify = db.execute(text("""
+                    SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader
+                    WHERE MATREQUISITIONID = :id AND PL_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id}).mappings().first()
+                if not verify:
+                    return f"MRR {mrr_id} not pending PL/PM approval."
+                db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET PL_APPROVAL_STATUS = 'REJECTED', PL_APPROVAL_DATE = NOW(), STATUS = 'REJECTED'
+                    WHERE MATREQUISITIONID = :id AND PL_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify["MATREQUISITIONNO"] or f"MRR/{mrr_id}"
+                return add_reasoning(
+                    f"PL/PM rejected {mrr_no}.",
+                    context=f"PL/PM {emp_no} rejected MRR {mrr_id}."
+                )
+            elif persona == "erp_approver":
+                verify = db.execute(text("""
+                    SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader
+                    WHERE MATREQUISITIONID = :id AND ERP_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id}).mappings().first()
+                if not verify:
+                    return f"MRR {mrr_id} not pending ERP approval."
+                db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET ERP_APPROVAL_STATUS = 'REJECTED', ERP_APPROVAL_DATE = NOW()
+                    WHERE MATREQUISITIONID = :id AND ERP_APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify["MATREQUISITIONNO"] or f"MRR/{mrr_id}"
+                return add_reasoning(
+                    f"ERP-rejected {mrr_no}.",
+                    context=f"ERP {emp_no} rejected MRR {mrr_id}."
+                )
+            else:
+                verify = db.execute(text("""
+                    SELECT MATREQUISITIONNO FROM mrr_matrequisitionheader
+                    WHERE MATREQUISITIONID = :id AND APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id}).mappings().first()
+                if not verify:
+                    return f"MRR {mrr_id} not pending manager approval."
+                db.execute(text("""
+                    UPDATE mrr_matrequisitionheader
+                    SET APPROVAL_STATUS = 'REJECTED', APPROVAL_DATE = NOW()
+                    WHERE MATREQUISITIONID = :id AND APPROVAL_STATUS = 'PENDING'
+                """), {"id": mrr_id})
+                db.commit()
+                mrr_no = verify["MATREQUISITIONNO"] or f"MRR/{mrr_id}"
+                return add_reasoning(
+                    f"Rejected {mrr_no}.",
+                    context=f"Manager {emp_no} rejected MRR {mrr_id}."
+                )
+        except Exception as e:
+            db.rollback()
+            return f"Error rejecting MRR {mrr_id}: {e}"
+        finally:
+            db.close()
 
-  // Project search fetch
-  useEffect(() => {
-    if (!projectQuery || projectQuery.length < 2) { setProjectSuggestions([]); return; }
-    setProjectLoading(true);
-    const controller = new AbortController();
-    fetch(`/api/v1/mrr/search/projects?q=${encodeURIComponent(projectQuery)}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
-      signal: controller.signal,
-    })
-      .then(r => r.json())
-      .then(data => setProjectSuggestions(data.status === 'success' ? data.data : []))
-      .catch(() => {})
-      .finally(() => setProjectLoading(false));
-    return () => controller.abort();
-  }, [projectQuery]);
+    return [
+        Tool(
+            name="List_Pending_Approvals",
+            func=lambda *args, **kwargs: list_pending_requests(*args, **kwargs),
+            description=(
+                "Fetch all MRRs pending your approval at this stage. "
+                "Includes MATREQUISITIONID, MATREQUISITIONNO, TOTAL_COST, "
+                "NEEDBYDATE, AI_VERIFICATION_REMARK, is_urgent, is_high_value. "
+                "Does not require any input — pass empty string or {}."
+            ),
+        ),
+        Tool(
+            name="Approve_MRR",
+            func=lambda *args, **kwargs: approve_mrr(int(args[0]) if args else 0),
+            description=(
+                "Approve a specific pending MRR by its MATREQUISITIONID "
+                "at the current approval stage."
+            ),
+        ),
+        Tool(
+            name="Reject_MRR",
+            func=lambda *args, **kwargs: reject_mrr(int(args[0]) if args else 0),
+            description=(
+                "Reject a specific pending MRR by its MATREQUISITIONID "
+                "at the current approval stage."
+            ),
+        ),
+    ]
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
-  const handleFieldChange = (name, value) =>
-    setFormData(prev => ({ ...prev, [name]: value }));
 
-  const handleItemChange = useCallback((tableName, rowIndex, colName, value) => {
-    setFormData(prev => {
-      const updated = [...prev[tableName]];
-      updated[rowIndex] = { ...updated[rowIndex], [colName]: value };
-      return { ...prev, [tableName]: updated };
-    });
-  }, []);
+def run_approver_react_agent(user_input: str, emp_no: str, persona: str = "approver") -> str:
+    """
+    Run the Modern ReAct Approver agent for any approval stage.
 
-  const addRow = (tableName, columns) => {
-    const newRow = {};
-    columns.forEach(c => { newRow[c.name] = ''; });
-    setFormData(prev => ({ ...prev, [tableName]: [...prev[tableName], newRow] }));
-  };
+    Parameters
+    ----------
+    user_input : str
+        The user's message (e.g., "Show me pending approvals").
+    emp_no : str
+        The user's employee number.
+    persona : str
+        Approval stage persona: 'pl_pm', 'approver', or 'erp_approver'.
 
-  const removeRow = (tableName, rowIndex) =>
-    setFormData(prev => ({
-      ...prev,
-      [tableName]: prev[tableName].filter((_, i) => i !== rowIndex),
-    }));
+    Returns
+    -------
+    str
+        The agent's Final Answer.
+    """
+    tools = _build_approver_tools(emp_no, persona)
 
-  const handleProjectInputChange = (e) => {
-    const val = e.target.value;
-    setFormData(prev => ({ ...prev, project_id: val }));
-    clearTimeout(projectTimerRef.current);
-    projectTimerRef.current = setTimeout(() => setProjectQuery(val), 300);
-  };
+    approver_react_template = """You are a highly intelligent SCM Assistant acting on behalf of the {persona} role.
+You have access to the following tools:
 
-  const selectProject = (project) => {
-    setFormData(prev => ({ ...prev, project_id: project.project_id || project.value }));
-    setIsProjectOpen(false);
-    setProjectSuggestions([]);
-    setProjectQuery('');
-  };
+{tools}
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const cleanedData = JSON.parse(JSON.stringify(formData));
-    formSpec.fields?.forEach(field => {
-      if (field.type === 'items_table') {
-        cleanedData[field.name] = cleanedData[field.name].map(row => {
-          const cleanRow = { ...row };
-          field.columns.forEach(col => {
-            if (col.conditional) {
-              const parentVal = formData[col.conditional.field];
-              if (parentVal !== col.conditional.value) delete cleanRow[col.name];
-            }
-          });
-          return cleanRow;
-        });
-      }
-    });
-    onSubmit(cleanedData, formSpec.form_id);
-  };
+Format strictly:
+Thought: Do I need to use a tool? Yes
+Action: the action to take, should be exactly one of [{tool_names}]. DO NOT USE PARENTHESES. (e.g. Action: List_Pending_Approvals)
+Action Input: input to the action
+Observation: the result
+... (Repeat as needed)
+Thought: I now know the final answer
+Final Answer: Your final response to the user.
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  const isColVisible = col =>
-    !col.conditional || formData[col.conditional.field] === col.conditional.value;
+CRITICAL SCM INSTRUCTIONS:
+1. When fetching pending MRRs, you MUST read the 'AI_VERIFICATION_REMARK' and explain it from the perspective of a {persona}. (e.g., if you are ERP, focus on inventory/status; if PL/PM, focus on project needs; if Manager, focus on cost).
+2. Look at the 'NEEDBYDATE'. If the date is within the next 7 days, highlight it as URGENT.
+3. Look at 'TOTAL_COST'. If it is greater than 2000, highlight it as HIGH VALUE.
+4. Present the pending items cleanly to the user and ask if they want to approve or reject them.
 
-  const getError = path => formErrors?.[path] || null;
+Begin!
+Question: {input}
+Thought: {agent_scratchpad}"""
 
-  // ── Style constants ────────────────────────────────────────────────────────
-  const sz = isExpanded ? {
-    p: 'p-5',
-    gap: 'gap-4',
-    input: 'text-sm py-2.5',
-    label: 'text-xs mb-1.5',
-    title: 'text-base',
-  } : {
-    p: 'p-4',
-    gap: 'gap-3',
-    input: 'text-[13px] py-2',
-    label: 'text-[11px] mb-1',
-    title: 'text-sm',
-  };
+    prompt = PromptTemplate.from_template(approver_react_template)
 
-  const inputBase = [
-    'w-full px-3 font-medium rounded-lg border outline-none',
-    'bg-white dark:bg-slate-800/80',
-    'text-slate-800 dark:text-slate-100',
-    'border-slate-200 dark:border-slate-700',
-    'placeholder-slate-400 dark:placeholder-slate-500',
-    'transition-all duration-150',
-    'focus:bg-white dark:focus:bg-slate-700/60',
-    'focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15',
-    sz.input,
-  ].join(' ');
+    llm = get_llm_non_streaming()
 
-  const inputError = [
-    inputBase,
-    'border-red-400 dark:border-red-500/70',
-    'focus:border-red-400 focus:ring-red-400/15',
-  ].join(' ');
+    agent = create_react_agent(llm, tools, prompt)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-  const labelBase = [
-    'block font-semibold uppercase tracking-widest',
-    'text-slate-500 dark:text-slate-400',
-    sz.label,
-  ].join(' ');
-
-  // ── Field Renderer ─────────────────────────────────────────────────────────
-  const renderField = (field) => {
-    const error = getError(field.name);
-    const cls = error ? inputError : inputBase;
-
-    // Project autocomplete
-    if (field.name === 'project_id' && field.type === 'text') {
-      return (
-        <div key={field.name}>
-          <label className={labelBase}>
-            {field.label}
-            {field.required && <span className="inline-block w-1 h-1 rounded-full bg-blue-500 ml-1 mb-0.5 align-middle" />}
-          </label>
-          <div ref={projectInputRef} className="relative" onKeyDown={e => e.key === 'Escape' && setIsProjectOpen(false)}>
-            <input
-              type="text"
-              value={formData.project_id || ''}
-              onChange={handleProjectInputChange}
-              onFocus={() => setIsProjectOpen(true)}
-              placeholder={field.placeholder}
-              required={field.required}
-              disabled={isSubmitting}
-              autoComplete="off"
-              className={cls}
-            />
-            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
-              {projectLoading
-                ? <Loader2 size={14} className="animate-spin text-slate-400" />
-                : <ChevronDown size={13} className="text-slate-400" />}
-            </div>
-            {isProjectOpen && projectSuggestions.length > 0 && (
-              <ul className="absolute z-[200] top-full mt-1 w-full max-h-56 overflow-auto
-                bg-white dark:bg-slate-800
-                border border-slate-200 dark:border-slate-700
-                rounded-xl shadow-xl ring-1 ring-black/5 dark:ring-white/5">
-                {projectSuggestions.map(s => (
-                  <li
-                    key={s.value || s.project_id}
-                    onMouseDown={e => { e.preventDefault(); selectProject(s); }}
-                    className="px-3 py-2.5 cursor-pointer transition-colors
-                      text-[13px] text-slate-700 dark:text-slate-200
-                      hover:bg-blue-50 dark:hover:bg-blue-500/10
-                      hover:text-blue-700 dark:hover:text-blue-300
-                      first:rounded-t-xl last:rounded-b-xl"
-                  >
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">
-                      {s.label || s.project_name}
-                    </div>
-                    {(s.description || s.location) && (
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        {s.description || s.location}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {isProjectOpen && !projectLoading && projectSuggestions.length === 0 && projectQuery.length >= 2 && (
-              <div className="absolute z-[200] top-full mt-1 w-full px-3 py-2.5
-                bg-white dark:bg-slate-800
-                border border-slate-200 dark:border-slate-700
-                rounded-xl shadow-xl text-[12px]
-                text-slate-500 dark:text-slate-400">
-                No results found
-              </div>
-            )}
-          </div>
-          {error && <ErrorMsg text={error} />}
-        </div>
-      );
-    }
-
-    // Text / Number / Date
-    if (['text', 'number', 'date'].includes(field.type)) {
-      return (
-        <div key={field.name}>
-          <label className={labelBase}>
-            {field.label}
-            {field.required && <RequiredDot />}
-          </label>
-          <input
-            type={field.type}
-            value={formData[field.name] || ''}
-            onChange={e => handleFieldChange(field.name,
-              field.type === 'number' ? (e.target.value ? Number(e.target.value) : '') : e.target.value)}
-            placeholder={field.placeholder}
-            required={field.required}
-            disabled={isSubmitting}
-            className={cls}
-          />
-          {error && <ErrorMsg text={error} />}
-        </div>
-      );
-    }
-
-    // Textarea
-    if (field.type === 'textarea') {
-      return (
-        <div key={field.name}>
-          <label className={labelBase}>{field.label}{field.required && <RequiredDot />}</label>
-          <textarea
-            value={formData[field.name] || ''}
-            onChange={e => handleFieldChange(field.name, e.target.value)}
-            placeholder={field.placeholder}
-            required={field.required}
-            rows={isExpanded ? 4 : 3}
-            disabled={isSubmitting}
-            className={cls}
-          />
-          {error && <ErrorMsg text={error} />}
-        </div>
-      );
-    }
-
-    // Select
-    if (field.type === 'select') {
-      return (
-        <div key={field.name}>
-          <label className={labelBase}>{field.label}{field.required && <RequiredDot />}</label>
-          <div className="relative">
-            <select
-              value={formData[field.name] || ''}
-              onChange={e => handleFieldChange(field.name, e.target.value)}
-              required={field.required}
-              disabled={isSubmitting}
-              className={`${cls} appearance-none cursor-pointer`}
-            >
-              <option value="">{field.placeholder || `Select ${field.label}`}</option>
-              {(field.options || []).map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          </div>
-          {error && <ErrorMsg text={error} />}
-        </div>
-      );
-    }
-
-    // Radio — pill segmented control
-    if (field.type === 'radio') {
-      return (
-        <div key={field.name}>
-          <label className={labelBase}>{field.label}{field.required && <RequiredDot />}</label>
-          <div className="flex flex-wrap gap-2 pt-0.5">
-            {(field.options || []).map(opt => {
-              const selected = formData[field.name] === opt.value;
-              return (
-                <label
-                  key={opt.value}
-                  className={[
-                    'flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer',
-                    'text-[12px] font-medium transition-all duration-150 select-none',
-                    selected
-                      ? 'bg-blue-600 border-blue-600 text-white shadow-sm shadow-blue-500/30'
-                      : 'bg-slate-50 dark:bg-slate-700/30 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500',
-                    error ? 'ring-1 ring-red-400' : '',
-                  ].join(' ')}
-                >
-                  <input
-                    type="radio"
-                    name={field.name}
-                    value={opt.value}
-                    checked={selected}
-                    onChange={() => handleFieldChange(field.name, opt.value)}
-                    required={field.required}
-                    disabled={isSubmitting}
-                    className="sr-only"
-                  />
-                  {selected && (
-                    <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill="none">
-                      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                  {opt.label}
-                </label>
-              );
-            })}
-          </div>
-          {error && <ErrorMsg text={error} />}
-        </div>
-      );
-    }
-
-    // Checkbox
-    if (field.type === 'checkbox') {
-      return (
-        <div key={field.name}>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData[field.name] || false}
-              onChange={e => handleFieldChange(field.name, e.target.checked)}
-              disabled={isSubmitting}
-              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500/20"
-            />
-            <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300">
-              {field.label}
-            </span>
-          </label>
-          {error && <ErrorMsg text={error} />}
-        </div>
-      );
-    }
-
-    // Fallback
-    return (
-      <div key={field.name}>
-        <label className={labelBase}>{field.label}{field.required && <RequiredDot />}</label>
-        <input
-          type="text"
-          value={formData[field.name] || ''}
-          onChange={e => handleFieldChange(field.name, e.target.value)}
-          placeholder={field.placeholder}
-          required={field.required}
-          disabled={isSubmitting}
-          className={cls}
-        />
-        {error && <ErrorMsg text={error} />}
-      </div>
-    );
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-  return (
-    <div
-      className={[
-        'w-full rounded-2xl border my-2',
-        'border-slate-200 dark:border-slate-700/80',
-        'bg-white dark:bg-slate-800/80',
-        'shadow-lg shadow-black/5 dark:shadow-black/20',
-        'backdrop-blur-sm',
-        sz.p,
-      ].join(' ')}
-      style={{ minWidth: 280, maxWidth: 560, resize: 'horizontal', overflow: 'auto' }}
-    >
-      {/* ── Title Bar ── */}
-      <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-slate-100 dark:border-slate-700/60">
-        <div className="w-1 h-5 rounded-full bg-blue-500 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <h3 className={`${sz.title} font-bold text-slate-800 dark:text-slate-100 leading-tight truncate`}>
-            {formSpec.title}
-          </h3>
-          {formSpec.description && (
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-              {formSpec.description}
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsExpanded(v => !v)}
-          className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors shrink-0"
-          title={isExpanded ? 'Compact view' : 'Expand form'}
-        >
-          {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </button>
-      </div>
-
-      {/* ── Submitted ── */}
-      {formSpec.status === 'submitted' && (
-        <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-          <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
-            <CheckCircle2 size={13} className="text-emerald-400" />
-          </div>
-          <div>
-            <p className="text-[12px] font-semibold text-emerald-400">{formSpec.title} submitted</p>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">Your request has been sent for review.</p>
-          </div>
-        </div>
-      )}
-
-      {/* ── Cancelled ── */}
-      {formSpec.status === 'cancelled' && (
-        <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">Request cancelled.</p>
-      )}
-
-      {/* ── Form ── */}
-      {!formSpec.status && (
-        <form onSubmit={handleSubmit} className={`flex flex-col ${sz.gap}`}>
-
-          {/* Global error */}
-          {formErrors && Object.keys(formErrors).length > 0 && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium
-              bg-red-50 dark:bg-red-500/10 text-red-500 dark:text-red-400
-              border border-red-200 dark:border-red-500/20">
-              <AlertCircle size={12} className="shrink-0" />
-              Please fix the highlighted fields and try again.
-            </div>
-          )}
-
-          {/* Scalar fields — skip items_table, skip second of a pair */}
-          {(() => {
-            const scalarFields = formSpec.fields?.filter(f => f.type !== 'items_table') || [];
-            const rendered = [];
-            let i = 0;
-            while (i < scalarFields.length) {
-              const field = scalarFields[i];
-              const next = scalarFields[i + 1];
-              const isFromDate = /_from_date$|_start$/.test(field.name);
-              const nextIsToDate = next && (/_to_date$|_end$/.test(next.name));
-
-              if (isFromDate && nextIsToDate) {
-                // Render as a side-by-side pair
-                rendered.push(
-                  <div key={`pair-${field.name}`} className="grid grid-cols-2 gap-2">
-                    {renderField(field)}
-                    {renderField(next)}
-                  </div>
-                );
-                i += 2; // Skip both
-              } else {
-                rendered.push(renderField(field));
-                i += 1;
-              }
-            }
-            return rendered;
-          })()}
-
-          {/* Items tables */}
-          {formSpec.fields?.filter(f => f.type === 'items_table').map(tableField => (
-            <div key={tableField.name} className="mt-1">
-              <h4 className={`${sz.label} mb-2`}>{tableField.label}</h4>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-x-auto">
-                <table
-                  className="w-full text-xs"
-                  style={{ borderCollapse: 'separate', borderSpacing: 0 }}
-                >
-                  <thead className="bg-slate-50 dark:bg-slate-800">
-                    <tr>
-                      {tableField.columns.filter(isColVisible).map(col => (
-                        <th key={col.name} className="px-2 py-2 text-left font-semibold whitespace-nowrap text-slate-600 dark:text-slate-300">
-                          {col.label}
-                          {col.required && <span className="text-red-400 ml-0.5">*</span>}
-                        </th>
-                      ))}
-                      <th className="w-8" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
-                    {formData[tableField.name]?.map((row, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {tableField.columns.filter(isColVisible).map(col => {
-                          const cellError = getError(`${tableField.name}.${rowIndex}.${col.name}`);
-
-                          // Item autocomplete — extracted component (fixes hooks-in-map crash)
-                          if (col.name === 'item_name' && col.type === 'text') {
-                            return (
-                              <ItemAutocompleteCell
-                                key={col.name}
-                                value={row[col.name]}
-                                tableName={tableField.name}
-                                rowIndex={rowIndex}
-                                col={col}
-                                isSubmitting={isSubmitting}
-                                onItemChange={handleItemChange}
-                                cellError={cellError}
-                              />
-                            );
-                          }
-
-                          // Regular table cell
-                          const cellCls = [
-                            'w-full px-2 py-1 text-[13px] font-medium rounded-lg border',
-                            'bg-white dark:bg-slate-800/80',
-                            'text-slate-800 dark:text-slate-200',
-                            'border-slate-200 dark:border-slate-700',
-                            'outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20',
-                            'transition-colors',
-                            cellError ? 'border-red-500 ring-1 ring-red-500/20' : '',
-                          ].join(' ');
-
-                          return (
-                            <td key={col.name} className="px-2 py-1.5 align-top">
-                              <input
-                                type={col.type || 'text'}
-                                value={row[col.name] || ''}
-                                onChange={e => handleItemChange(tableField.name, rowIndex, col.name, e.target.value)}
-                                required={col.required}
-                                min={col.min}
-                                disabled={isSubmitting}
-                                className={cellCls}
-                              />
-                              {cellError && <ErrorMsg text={cellError} />}
-                            </td>
-                          );
-                        })}
-                        <td className="px-2 py-1.5 text-center align-top">
-                          <button
-                            type="button"
-                            onClick={() => removeRow(tableField.name, rowIndex)}
-                            disabled={isSubmitting || (formData[tableField.name]?.length ?? 0) <= (tableField.min_rows || 1)}
-                            className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <button
-                type="button"
-                onClick={() => addRow(tableField.name, tableField.columns)}
-                disabled={isSubmitting}
-                className="w-full mt-2 py-1.5 rounded-lg border border-dashed
-                  border-slate-300 dark:border-slate-600
-                  text-[11px] font-medium text-slate-500
-                  hover:border-blue-400 hover:text-blue-400 hover:bg-blue-500/5
-                  transition-all duration-150 flex items-center justify-center gap-1.5"
-              >
-                <Plus size={12} />
-                Add Row
-              </button>
-            </div>
-          ))}
-
-          {/* Footer */}
-          <div className="flex items-center justify-between pt-3 mt-1 border-t border-slate-100 dark:border-slate-700/60">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={isSubmitting}
-              className="px-3 py-1.5 text-[12px] font-medium rounded-lg
-                text-slate-500 dark:text-slate-400
-                hover:bg-slate-100 dark:hover:bg-slate-700/40
-                hover:text-slate-700 dark:hover:text-slate-200
-                transition-all duration-150 disabled:opacity-40"
-            >
-              {formSpec.cancel_label || 'Cancel'}
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-1.5 text-[12px] font-semibold rounded-lg
-                bg-blue-600 hover:bg-blue-500 active:bg-blue-700
-                text-white shadow-sm shadow-blue-500/20
-                disabled:opacity-40 disabled:cursor-not-allowed
-                transition-all duration-150 min-w-[80px] text-center"
-            >
-              {isSubmitting ? (
-                <span className="flex items-center justify-center gap-1.5">
-                  <Loader2 size={11} className="animate-spin" />
-                  Submitting...
-                </span>
-              ) : (formSpec.submit_label || 'Submit')}
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
-  );
-}
-
-// ─── Small reusable helpers ───────────────────────────────────────────────────
-function RequiredDot() {
-  return <span className="inline-block w-1 h-1 rounded-full bg-blue-500 ml-1 mb-0.5 align-middle" />;
-}
-
-function ErrorMsg({ text }) {
-  return (
-    <p className="mt-1 text-[11px] font-medium text-red-400 flex items-center gap-1.5">
-      <AlertCircle size={10} className="shrink-0" />
-      {text}
-    </p>
-  );
-}
-
----
-
-END OF FILE. That is the complete replacement.
-
-VERIFY:
-1. Confirm the file was written completely (check line count > 400)
-2. Confirm useRef is NOT called inside any .map() or loop
-3. Confirm every <button> that is not type="submit" has type="button"
-4. Confirm overflow on outer wrapper is 'auto' not 'hidden'
-5. Confirm ItemAutocompleteCell is a separate function above the default export
-
-REPORT BACK:
-- Line count of new file
-- Result of grep: does "useRef" appear inside any .map() call? (should be NO)
-- Result of grep: any button missing type attribute? (should be NO)
-- DO NOT modify any other files
+    try:
+        response = agent_executor.invoke({
+            "input": user_input,
+            "persona": persona,
+        })
+        return response.get("output", "No response from agent.")
+    except Exception as e:
+        return f"Error running approver agent: {e}"
