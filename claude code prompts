@@ -138,5 +138,8 @@
 - `PRIMARY` on `agent_id` (Unique: No)
 - `idx_raa_agent` on `agent_id` (Unique: Yes)
 
+
+group idx of 5 is 30 ,16 is 16 only,531 is 32
+
 ---
 
