@@ -1,18 +1,29 @@
-XHRGET
-http://10.5.1.58:6108/api/v1/auth/me/access
-[HTTP/1.1 200 OK 23ms]
+-- See all rows for these two agents
+SELECT role_id, group_id, agent_id
+FROM dpah_role_agent_access
+WHERE agent_id IN (24, 27);
 
-	
-modules	[ {…} ]
-0	{ module_id: 5, module_name: "MRR", description: "Material Requisition", … }
-module_id	5
-module_name	"MRR"
-description	"Material Requisition"
-collections	[ {…} ]
-0	{ collection_id: 8, collection_name: "mrr_general", agents: (3)[…] }
-collection_id	8
-collection_name	"mrr_general"
-agents	(3)[ {…}, {…}, {…} ]
-0	{ agent_id: 24, agent_name: "MRR_GENERAL_APPROVER", persona: "APPROVER" }
-1	{ agent_id: 28, agent_name: "MRR_GENERAL_PL_APPROVER", persona: "APPROVER" }
-2	{ agent_id: 22, agent_name: "MRR_GENERAL_CREATOR", persona: "CREATOR" }
+SELECT emp_id, role_id, group_idx
+FROM dpah_user_roles
+WHERE emp_id IN ('5', '16', '531');
+
+-- Example (fill in real values from Step 2):
+DELETE FROM dpah_role_agent_access WHERE agent_id IN (24, 27);
+
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
+VALUES (<emp16_role_id>, <emp16_group_idx>, 24);  -- COO → APPROVER only
+
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
+VALUES (<emp5_role_id>, <emp5_group_idx>, 24);    -- CTO → APPROVER only
+
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
+VALUES (<emp531_role_id>, <emp531_group_idx>, 27); -- ERP HOD → ERP_APPROVER only
+
+
+
+-- Confirm only 3 rows exist
+SELECT ra.role_id, ra.group_id, ra.agent_id, a.agent_name, u.emp_id
+FROM dpah_role_agent_access ra
+JOIN dpah_agents a ON ra.agent_id = a.agent_id
+JOIN dpah_user_roles u ON u.role_id = ra.role_id AND u.group_idx = ra.group_id
+WHERE ra.agent_id IN (24, 27);
