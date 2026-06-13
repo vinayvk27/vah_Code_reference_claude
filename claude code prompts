@@ -1,8 +1,9 @@
-# role_id, role_name
-'12', 'ERP Approver'
-'11', 'Manager Approver'
-'10', 'PL/PM'
-'9', 'Senior'
-'8', 'Mid'
+-- Check how many roles emp 16 currently has
+SELECT emp_id, role_id FROM dpah_user_roles 
+WHERE emp_id = '16' AND is_active = 1;
 
-now all these db new role insertions and other things wont effect our code right or do we need to make changes in our code inauthcontrolelr or any other files
+# Find build_user_context_by_empno
+# Look for where role_ids are fetched
+# It should be something like:
+SELECT role_id FROM dpah_user_roles WHERE emp_id = :emp_id AND is_active = 1
+
