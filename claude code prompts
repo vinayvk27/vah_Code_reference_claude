@@ -1,6 +1,3 @@
-# role_id, group_id, agent_id, agent_name, emp_id
-'11', '16', '24', 'MRR_GENERAL_APPROVER', '16'
-'11', '30', '24', 'MRR_GENERAL_APPROVER', '16'
-'11', '30', '24', 'MRR_GENERAL_APPROVER', '5'
-'11', '16', '24', 'MRR_GENERAL_APPROVER', '5'
-'12', '32', '27', 'MRR_GENERAL_ERP_APPROVER', '531'
+SELECT role_id, group_id, agent_id FROM dpah_role_agent_access
+WHERE agent_id IN (24, 27)
+ORDER BY agent_id;
