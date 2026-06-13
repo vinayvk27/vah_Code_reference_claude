@@ -1,2 +1,6 @@
-SELECT emp_id, role_id FROM dpah_user_roles 
-WHERE emp_id IN ('5', '16', '531') AND is_active = 1;
+# emp_id, role_id
+'16', '9'
+'16', '10'
+'5', '9'
+'5', '10'
+'531', '9'
