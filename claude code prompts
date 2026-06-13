@@ -1,7 +1,7 @@
-# role_id, role_name, description, is_active, created_at, updated_at
-'7', 'Junior', 'Junior level', '1', '2026-05-20 11:15:14', '2026-05-20 11:15:14'
-'8', 'Mid', 'Mid level', '1', '2026-05-20 11:15:14', '2026-05-20 11:15:14'
-'9', 'Senior', 'Senior level', '1', '2026-05-20 11:15:14', '2026-05-20 11:15:14'
-'10', 'PL/PM', 'Project Leads and Project Managers with localized material requisition approval authority.', '1', '2026-06-04 10:33:56', '2026-06-04 10:33:56'
+-- Add Manager Approver role (COO/CTO)
+INSERT INTO dpah_roles (role_name, description, is_active)
+VALUES ('Manager Approver', 'COO and CTO with MRR manager approval authority.', 1);
 
-we need to add a new role right because coo/cto are seperate roles just like pl/pm so if we map them like as a senior means it will be bad i think and give me updated queries
+-- Add ERP Approver role
+INSERT INTO dpah_roles (role_name, description, is_active)
+VALUES ('ERP Approver', 'ERP HOD with ERP stage approval authority.', 1);
