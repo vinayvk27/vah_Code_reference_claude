@@ -1,6 +1,7 @@
-# emp_id, role_id
-'16', '9'
-'16', '10'
-'5', '9'
-'5', '10'
-'531', '9'
+# role_id, role_name, description, is_active, created_at, updated_at
+'7', 'Junior', 'Junior level', '1', '2026-05-20 11:15:14', '2026-05-20 11:15:14'
+'8', 'Mid', 'Mid level', '1', '2026-05-20 11:15:14', '2026-05-20 11:15:14'
+'9', 'Senior', 'Senior level', '1', '2026-05-20 11:15:14', '2026-05-20 11:15:14'
+'10', 'PL/PM', 'Project Leads and Project Managers with localized material requisition approval authority.', '1', '2026-06-04 10:33:56', '2026-06-04 10:33:56'
+
+we need to add a new role right because coo/cto are seperate roles just like pl/pm so if we map them like as a senior means it will be bad i think and give me updated queries
