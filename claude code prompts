@@ -1,76 +1,18 @@
-═══════════════════════════════════════════════════════════════════
-TASK 8.2: Tighten MRR approver access to specific employees only
-═══════════════════════════════════════════════════════════════════
+XHRGET
+http://10.5.1.58:6108/api/v1/auth/me/access
+[HTTP/1.1 200 OK 23ms]
 
-CRITICAL CONSTRAINT
-- Database changes only (SQL).
-- Do NOT modify any Python code.
-- Do NOT touch RMS, HRMS, or any workflow files.
-
-PROBLEM
-Task 8.0 seeded MRR_GENERAL_APPROVER and MRR_GENERAL_ERP_APPROVER
-to role_id=9 across all 68 group_ids. This gives access to ALL
-Senior employees, including COO seeing ERP_APPROVER and ERP HOD
-potentially seeing APPROVER. Access must be restricted to specific
-employees only:
-  - MRR_GENERAL_APPROVER: emp 16 (COO) and emp 5 (CTO) ONLY.
-  - MRR_GENERAL_ERP_APPROVER: emp 531 (ERP HOD) ONLY.
-
-STEP 1 — Remove all broad seeding for these two agents
-───────────────────────────────────────────────────────
-DELETE FROM dpah_role_agent_access
-WHERE agent_id IN (24, 27);
-
-This removes ALL rows for MRR_GENERAL_APPROVER (24) and
-MRR_GENERAL_ERP_APPROVER (27). We will re-add precise rows only.
-
-Verify:
-SELECT COUNT(*) FROM dpah_role_agent_access WHERE agent_id IN (24,27);
--- Must return 0
-
-STEP 2 — Find exact role_id and group_idx for emp 16, 5, 531
-─────────────────────────────────────────────────────────────
-SELECT emp_id, role_id, group_idx
-FROM dpah_user_roles
-WHERE emp_id IN ('5', '16', '531');
-
-Note each emp_id's role_id and group_idx. Use these exact values
-in Step 3.
-
-STEP 3 — Insert precise rows only
-──────────────────────────────────
-For MRR_GENERAL_APPROVER (agent_id=24):
-  Insert ONE row per emp (COO + CTO) using their exact
-  role_id and group_idx from Step 2.
-
-  INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
-  VALUES (<emp16_role_id>, <emp16_group_idx>, 24);
-
-  INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
-  VALUES (<emp5_role_id>, <emp5_group_idx>, 24);
-
-For MRR_GENERAL_ERP_APPROVER (agent_id=27):
-  Insert ONE row for emp 531 using their exact role_id and group_idx.
-
-  INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
-  VALUES (<emp531_role_id>, <emp531_group_idx>, 27);
-
-STEP 4 — Verify access tree is correct
-────────────────────────────────────────
-Login as emp 16 → /me/access should show:
-  MRR_GENERAL_APPROVER ✓
-  MRR_GENERAL_ERP_APPROVER ✗ (should NOT appear)
-  MRR_GENERAL_CREATOR ✓ (if emp 16 has creator access)
-  MRR_GENERAL_PL_APPROVER ✓ (if emp 16 has PL access)
-
-Login as emp 531 → /me/access should show:
-  MRR_GENERAL_ERP_APPROVER ✓
-  MRR_GENERAL_APPROVER ✗ (should NOT appear)
-
-Login as a regular Senior who is NOT emp 5/16/531 → should NOT
-see MRR_GENERAL_APPROVER or MRR_GENERAL_ERP_APPROVER.
-
-DELIVERABLE
-Paste the Step 2 query result (role_id + group_idx per emp).
-Paste the /me/access for emp 16 and emp 531 after the fix.
-═══════════════════════════════════════════════════════════════════
+	
+modules	[ {…} ]
+0	{ module_id: 5, module_name: "MRR", description: "Material Requisition", … }
+module_id	5
+module_name	"MRR"
+description	"Material Requisition"
+collections	[ {…} ]
+0	{ collection_id: 8, collection_name: "mrr_general", agents: (3)[…] }
+collection_id	8
+collection_name	"mrr_general"
+agents	(3)[ {…}, {…}, {…} ]
+0	{ agent_id: 24, agent_name: "MRR_GENERAL_APPROVER", persona: "APPROVER" }
+1	{ agent_id: 28, agent_name: "MRR_GENERAL_PL_APPROVER", persona: "APPROVER" }
+2	{ agent_id: 22, agent_name: "MRR_GENERAL_CREATOR", persona: "CREATOR" }
