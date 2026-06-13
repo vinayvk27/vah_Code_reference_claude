@@ -1,66 +1,151 @@
-Detailed Analysis: MRR Approver Nodes vs PL/PM Agent
-Here's a complete breakdown of how the 3 nodes handle permissions:
+═══════════════════════════════════════════════════════════════════
+TASK 8.0: Move MRR approver/erp_approver permissions from
+          hardcoded approvers.py to DB-driven AuthController
+═══════════════════════════════════════════════════════════════════
 
-1. mrr_approver_agent_node → approver_agent_node
-File: nodes.py:1024
+CRITICAL CONSTRAINT
+- Modify ONLY:
+    app/workflows/material_workflow/nodes.py
+      (permission_check_node — approver/erp_approver/issuer branches)
+    scripts/seed_dpah_tables.py or a new migration SQL file
+      (add agent rows + role_agent_access rows)
+- Do NOT modify AuthController, auth_controller.py, or RMS/HRMS.
+- Do NOT delete approvers.py yet — leave it as a reference.
+- Output INTENDED FOOTPRINT at start, list modified files at end.
 
-This is the Manager Approver node for COO/CTO approvals.
+PART A — INVESTIGATION (report only, no code change)
+─────────────────────────────────────────────────────
+1. Run:
+   SELECT agent_id, agent_name, is_active
+   FROM dpah_agents WHERE agent_name LIKE 'MRR%';
 
-Permission check — hardcoded in approvers.py:
+   Report every MRR agent row that exists. Note which of these
+   are missing:
+     MRR_GENERAL_APPROVER
+     MRR_GENERAL_ERP_APPROVER
 
-Line 1035: calls is_manager_approver(emp_no) → checks against ["16", "5"] (COO, CTO)
-This is a duplicate check — permission_check_node already does this at line 314 before routing here
-What it does:
+2. Run:
+   SELECT ra.*, a.agent_name
+   FROM dpah_role_agent_access ra
+   JOIN dpah_agents a ON ra.agent_id = a.agent_id
+   WHERE a.agent_name LIKE 'MRR%';
 
-Single approve: sets APPROVAL_STATUS = 'APPROVED', ERP_APPROVAL_STATUS = 'PENDING', STATUS = 'PENDING_ERP'
-Single reject: sets APPROVAL_STATUS = 'REJECTED'
-Bulk approve all pending MRRs
-List pending items (shows as React form payload with "stage": "MANAGER")
-2. mrr_erp_approver_agent_node → erp_approver_agent_node
-File: nodes.py:1228
+   Report current role-agent mappings for MRR agents.
 
-This is the ERP Approver node for ERP HOD approvals.
+3. Read permission_check_node (nodes.py). Quote the exact
+   approver/erp_approver/issuer branches as they exist today.
 
-Permission check — hardcoded in approvers.py:
+4. Read approvers.py. Quote MANAGER_APPROVERS and ERP_APPROVERS
+   lists — these give us the emp_no values to seed.
 
-Line 1242: calls is_erp_approver(emp_no) → checks against ["531"] (ERP HOD)
-Also a duplicate check — permission_check_node already validates this at line 336
-What it does:
+PART B — SEED DB (SQL statements)
+──────────────────────────────────
+Based on Part A findings:
 
-Single approve: sets ERP_APPROVAL_STATUS = 'APPROVED', STATUS = 'RELEASED'
-Single reject: sets ERP_APPROVAL_STATUS = 'REJECTED'
-Bulk approve all pending ERP approvals
-List pending items
-3. pl_pm_agent_node — Database-Driven
-File: nodes.py:785
+1. If MRR_GENERAL_APPROVER agent row is missing, insert it:
+   INSERT INTO dpah_agents (agent_name, module_id, is_active, ...)
+   VALUES ('MRR_GENERAL_APPROVER', 5, 1, ...);
+   Use module_id=5 (MRR). Match the column structure of existing
+   MRR agent rows.
 
-This is the PL/PM (Project Lead / Project Manager) node.
+2. If MRR_GENERAL_ERP_APPROVER agent row is missing, insert it:
+   Same pattern.
 
-Permission check — queries the database directly:
+3. For each emp_no in MANAGER_APPROVERS (e.g., "16", "5"):
+   Find their role_id and group_idx from dpah_user_roles.
+   Insert into dpah_role_agent_access:
+   INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id)
+   SELECT ur.role_id, ur.group_idx, a.agent_id
+   FROM dpah_user_roles ur, dpah_agents a
+   WHERE ur.emp_id IN ('16', '5')
+     AND a.agent_name = 'MRR_GENERAL_APPROVER'
+   ON DUPLICATE KEY UPDATE agent_id = agent_id;
 
-Lines 803-826: Joins mrr_matrequisitionheader → posproject → projlist
-Checks if emp_no matches PM_No or PL_No for the specific project
-Lines 882-891: Queries WHERE (:emp_no = p2.PM_No OR :emp_no = p2.PL_No) for pending list
-What it does:
+4. Same for ERP_APPROVERS ("531") → MRR_GENERAL_ERP_APPROVER.
 
-Validates the user is actually the PL or PM assigned to that project
-Routes to auto_verifier_node if the 2000 INR threshold is met
-No hardcoded lists at all — fully dynamic based on project assignments
-Comparison Table
-Aspect	approver_agent_node (COO/CTO)	erp_approver_agent_node (ERP HOD)	pl_pm_agent_node (PL/PM)
-Permission source	Hardcoded approvers.py	Hardcoded approvers.py	Database projlist table
-Hardcoded list	["16", "5"]	["531"]	None
-Permission location	2 places (redundant)	2 places (redundant)	1 place (inside node)
-Scope	Any user in list can approve ANY MRR	Any user in list can approve ANY MRR	Only PL/PM of that specific project
-Maintainability	Low — edit approvers.py to add users	Low — edit approvers.py to add users	High — controlled via projlist data
-Follows other workflows?	No	No	Yes — same pattern as RMS/HRMS
-Uses AuthController	No	No	No (but same pattern)
-The Problem
-The MRR workflow has two different permission strategies coexisting:
+Run all SQL against the live DB and confirm row counts.
 
-permission_check_node (lines 247-421) uses AuthController.check_agent_access for creator/pl_approver — the correct, DB-driven approach
-But for approver/erp_approver/issuer, it falls back to hardcoded approvers.py lists
-Then the nodes re-check the same hardcoded lists again (redundant)
-Meanwhile, pl_pm_agent_node does it the right way — querying the database at runtime for project-specific assignments. This is the pattern used by RMS and HRMS workflows throughout the codebase.
+PART C — MODIFY permission_check_node
+──────────────────────────────────────
+In nodes.py, find the approver/erp_approver/issuer branches in
+permission_check_node. They currently call:
+    is_manager_approver(emp_no)
+    is_erp_approver(emp_no)
+    is_issuer(emp_no)
 
-The fix would be to move the approver/erp_approver/issuer checks to use AuthController.check_agent_access (or a similar DB-driven approach) instead of approvers.py, aligning MRR with the rest of the codebase.
+Replace ALL THREE with the same Gate 2 DB check used for creator:
+
+    # For approver, erp_approver, issuer:
+    # Build expected agent name same as creator pattern
+    collection_suffix = selected_collection.upper().replace("MRR_", "")
+    expected_agent_name = f"MRR_{collection_suffix}_{selected_agent_role.upper()}"
+
+    db = SessionLocal()
+    try:
+        agent_row = db.query(Agent).filter(
+            Agent.agent_name == expected_agent_name,
+            Agent.is_active == 1
+        ).first()
+
+        if not agent_row:
+            return {"has_permission": False, "denial_message": "..."}
+
+        agent_or_none = AuthController.check_agent_access(
+            emp_no=emp_no,
+            group_idx=group_idx,
+            role_ids=role_ids,
+            agent_id=agent_row.agent_id,
+            db=db
+        )
+        if agent_or_none is None:
+            return {"has_permission": False, "denial_message": "..."}
+
+        return {"has_permission": True, "denial_message": None, ...}
+    finally:
+        db.close()
+
+Replace each of the three separate if-blocks with this unified
+pattern. Use appropriate denial messages per role.
+
+PART D — REMOVE redundant node-level checks
+────────────────────────────────────────────
+In approver_agent_node (nodes.py ~line 1035):
+    Remove the call to is_manager_approver(emp_no) and its
+    associated denial return. Permission is already guaranteed
+    by permission_check_node.
+
+In erp_approver_agent_node (nodes.py ~line 1242):
+    Remove the call to is_erp_approver(emp_no) and its
+    associated denial return. Same reason.
+
+Do NOT remove from issuer_agent_node if it exists — check
+whether it has a similar redundant check and remove if present.
+
+PART E — VERIFY
+───────────────
+After changes, run:
+    SELECT u.emp_id, a.agent_name
+    FROM dpah_user_roles u
+    JOIN dpah_role_agent_access ra ON u.role_id = ra.role_id
+      AND u.group_idx = ra.group_id
+    JOIN dpah_agents a ON ra.agent_id = a.agent_id
+    WHERE u.emp_id IN ('5', '16', '531')
+      AND a.agent_name LIKE 'MRR%';
+
+This should show emp 16 and 5 mapped to MRR_GENERAL_APPROVER,
+and emp 531 mapped to MRR_GENERAL_ERP_APPROVER.
+
+Also verify the login /me/access response for emp 16 now shows
+MRR_GENERAL_APPROVER in their agents list (meaning the frontend
+will display approver keywords for them automatically).
+
+DELIVERABLE
+Create TASK_8_0_REPORT.md with:
+- Part A findings (existing agents + mappings).
+- Part B SQL statements run + row counts confirmed.
+- Part C: before/after of permission_check_node for all three roles.
+- Part D: confirmation redundant checks removed from both nodes.
+- Part E: verification query result.
+- Confirmation: approvers.py NOT deleted (kept for reference).
+- Confirmation: no changes to AuthController, RMS, HRMS.
+═══════════════════════════════════════════════════════════════════
