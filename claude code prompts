@@ -1,33 +1,6 @@
--- 1. Assign new roles to employees
-INSERT INTO dpah_user_roles (emp_id, role_id, assigned_by, is_active)
-VALUES ('16', 11, 'system', 1);
-
-INSERT INTO dpah_user_roles (emp_id, role_id, assigned_by, is_active)
-VALUES ('5', 11, 'system', 1);
-
-INSERT INTO dpah_user_roles (emp_id, role_id, assigned_by, is_active)
-VALUES ('531', 12, 'system', 1);
-
--- 2. Wipe all broad seeding for agents 24 and 27
-DELETE FROM dpah_role_agent_access WHERE agent_id IN (24, 27);
-
--- 3. Insert precise access rows using new roles
--- COO (emp 16, group_idx=16) → APPROVER only
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES (11, 16, 24, 'system');
-
--- CTO (emp 5, group_idx=30) → APPROVER only
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES (11, 30, 24, 'system');
-
--- ERP HOD (emp 531, group_idx=32) → ERP APPROVER only
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES (12, 32, 27, 'system');
-
--- 4. Verify — must return exactly 3 rows
-SELECT ra.role_id, ra.group_id, ra.agent_id, a.agent_name, u.emp_id
-FROM dpah_role_agent_access ra
-JOIN dpah_agents a ON ra.agent_id = a.agent_id
-JOIN dpah_user_roles u ON u.role_id = ra.role_id AND u.emp_id IN ('5','16','531')
-WHERE ra.agent_id IN (24, 27)
-ORDER BY ra.agent_id, u.emp_id;
+# role_id, group_id, agent_id, agent_name, emp_id
+'11', '16', '24', 'MRR_GENERAL_APPROVER', '16'
+'11', '30', '24', 'MRR_GENERAL_APPROVER', '16'
+'11', '30', '24', 'MRR_GENERAL_APPROVER', '5'
+'11', '16', '24', 'MRR_GENERAL_APPROVER', '5'
+'12', '32', '27', 'MRR_GENERAL_ERP_APPROVER', '531'
