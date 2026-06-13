@@ -1,9 +1,8 @@
--- Add Manager Approver role (COO/CTO)
-INSERT INTO dpah_roles (role_name, description, is_active)
-VALUES ('Manager Approver', 'COO and CTO with MRR manager approval authority.', 1);
+# role_id, role_name
+'12', 'ERP Approver'
+'11', 'Manager Approver'
+'10', 'PL/PM'
+'9', 'Senior'
+'8', 'Mid'
 
--- Add ERP Approver role
-INSERT INTO dpah_roles (role_name, description, is_active)
-VALUES ('ERP Approver', 'ERP HOD with ERP stage approval authority.', 1);
-
-SELECT role_id, role_name FROM dpah_roles ORDER BY role_id DESC LIMIT 5;
+now all these db new role insertions and other things wont effect our code right or do we need to make changes in our code inauthcontrolelr or any other files
