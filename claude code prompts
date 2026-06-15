@@ -1,12 +1,6 @@
-# role_id, group_id, agent_id
-'11', '16', '24'
-'11', '30', '24'
-'12', '32', '27'
-
-
 XHRGET
-http://10.5.1.58:6108/api/v1/auth/me/access
-[HTTP/1.1 200 OK 36ms]
+http://10.5.1.58:6106/api/v1/auth/me/access
+[HTTP/1.1 200 OK nullms]
 
 	
 modules	[ {…} ]
@@ -23,3 +17,23 @@ agents	(3)[ {…}, {…}, {…} ]
 1	{ agent_id: 28, agent_name: "MRR_GENERAL_PL_APPROVER", persona: "APPROVER" }
 2	{ agent_id: 22, agent_name: "MRR_GENERAL_CREATOR", persona: "CREATOR" }
 
+
+
+XHRGET
+http://10.5.1.58:6108/api/v1/auth/me/access
+[HTTP/1.1 200 OK 81ms]
+
+	
+modules	[ {…} ]
+0	{ module_id: 5, module_name: "MRR", description: "Material Requisition", … }
+module_id	5
+module_name	"MRR"
+description	"Material Requisition"
+collections	[ {…} ]
+0	{ collection_id: 8, collection_name: "mrr_general", agents: (3)[…] }
+collection_id	8
+collection_name	"mrr_general"
+agents	(3)[ {…}, {…}, {…} ]
+0	{ agent_id: 24, agent_name: "MRR_GENERAL_APPROVER", persona: "APPROVER" }
+1	{ agent_id: 28, agent_name: "MRR_GENERAL_PL_APPROVER", persona: "APPROVER" }
+2	{ agent_id: 22, agent_name: "MRR_GENERAL_CREATOR", persona: "CREATOR" }
