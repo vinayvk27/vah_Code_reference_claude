@@ -1,39 +1,344 @@
-XHRGET
-http://10.5.1.58:6106/api/v1/auth/me/access
-[HTTP/1.1 200 OK nullms]
+═══════════════════════════════════════════════════════════════════
+TASK: Build Streamlit sandbox for multi-model RMS tool-calling test
+File: rms_sandbox_test.py (project root)
+═══════════════════════════════════════════════════════════════════
 
-	
-modules	[ {…} ]
-0	{ module_id: 5, module_name: "MRR", description: "Material Requisition", … }
-module_id	5
-module_name	"MRR"
-description	"Material Requisition"
-collections	[ {…} ]
-0	{ collection_id: 8, collection_name: "mrr_general", agents: (3)[…] }
-collection_id	8
-collection_name	"mrr_general"
-agents	(3)[ {…}, {…}, {…} ]
-0	{ agent_id: 24, agent_name: "MRR_GENERAL_APPROVER", persona: "APPROVER" }
-1	{ agent_id: 28, agent_name: "MRR_GENERAL_PL_APPROVER", persona: "APPROVER" }
-2	{ agent_id: 22, agent_name: "MRR_GENERAL_CREATOR", persona: "CREATOR" }
+CREATE a single self-contained Streamlit app at rms_sandbox_test.py.
 
+CRITICAL CONSTRAINT
+- Create only rms_sandbox_test.py
+- Do NOT modify any existing app code
+- Use the app's existing LLM infrastructure (app.core.config.settings)
+  to read base_url and api_key
+- Install streamlit if needed: pip install streamlit
 
+═══════════════════════════════════════════════════════
+PART 1 — MODELS CONFIGURATION
+═══════════════════════════════════════════════════════
 
-XHRGET
-http://10.5.1.58:6108/api/v1/auth/me/access
-[HTTP/1.1 200 OK 81ms]
+At the top of the file, define the three models:
 
-	
-modules	[ {…} ]
-0	{ module_id: 5, module_name: "MRR", description: "Material Requisition", … }
-module_id	5
-module_name	"MRR"
-description	"Material Requisition"
-collections	[ {…} ]
-0	{ collection_id: 8, collection_name: "mrr_general", agents: (3)[…] }
-collection_id	8
-collection_name	"mrr_general"
-agents	(3)[ {…}, {…}, {…} ]
-0	{ agent_id: 24, agent_name: "MRR_GENERAL_APPROVER", persona: "APPROVER" }
-1	{ agent_id: 28, agent_name: "MRR_GENERAL_PL_APPROVER", persona: "APPROVER" }
-2	{ agent_id: 22, agent_name: "MRR_GENERAL_CREATOR", persona: "CREATOR" }
+MODELS = [
+    {"id": "claude-opus-4-6",   "label": "Opus"},
+    {"id": "claude-haiku-4-5-20251001",  "label": "Haiku"},
+    {"id": "claude-sonnet-4-6", "label": "Sonnet"},
+]
+
+Read base_url and api_key from settings:
+    from app.core.config import settings
+    BASE_URL = settings.AI_API_URL
+    API_KEY  = settings.AI_API_KEY
+
+Use langchain_openai.ChatOpenAI(
+    model=model_id,
+    base_url=BASE_URL,
+    api_key=API_KEY,
+    temperature=0,
+    streaming=False,
+)
+
+═══════════════════════════════════════════════════════
+PART 2 — RMS PERSONAS AND TOOLS (mirrors your app)
+═══════════════════════════════════════════════════════
+
+Define these EXACTLY matching your application's intent:
+
+PERSONAS = {
+    "creator":  "Creates new task assignments for employees",
+    "reviewer": "Views own tasks and logs hours worked",
+    "approver": "Approves or rejects submitted worklogs",
+}
+
+Define fake in-memory tools (no real DB, same as investigate script):
+
+from langchain_core.tools import tool
+from typing import Optional
+
+@tool
+def create_task(resource_id: int, project_id: str, product_id: str,
+                task_idx: int, activity_idx: int,
+                start_date: str, end_date: str, plan_hrs: float) -> str:
+    """Create a task assignment. Requires all 8 fields."""
+    return (f"[TOOL EXECUTED] Task created: employee={resource_id}, "
+            f"project={project_id}, product={product_id}, "
+            f"task_idx={task_idx}, activity_idx={activity_idx}, "
+            f"start={start_date}, end={end_date}, hours={plan_hrs}")
+
+@tool
+def list_my_tasks(resource_id: int) -> str:
+    """List tasks assigned to an employee."""
+    return (f"[TOOL EXECUTED] Tasks for employee {resource_id}: "
+            f"Task#1 (project=100, 8hrs), Task#2 (project=200, 4hrs)")
+
+@tool
+def log_hours(worklog_idx: int, hours: float,
+              task_date: str, remarks: str) -> str:
+    """Log hours against a task worklog."""
+    return (f"[TOOL EXECUTED] Logged {hours}hrs on worklog {worklog_idx} "
+            f"for {task_date}. Remark: {remarks}")
+
+@tool
+def list_pending_worklogs() -> str:
+    """List worklogs pending approval."""
+    return ("[TOOL EXECUTED] Pending worklogs: "
+            "Worklog#5 (emp=3010, 8hrs, 2026-05-26), "
+            "Worklog#6 (emp=2633, 6hrs, 2026-05-27)")
+
+@tool
+def approve_worklog(worklog_id: int, decision: str) -> str:
+    """Approve or reject a worklog. decision must be APPROVED or REJECTED."""
+    return f"[TOOL EXECUTED] Worklog {worklog_id} -> {decision}"
+
+PERSONA_TOOLS = {
+    "creator":  [create_task, list_my_tasks],
+    "reviewer": [list_my_tasks, log_hours],
+    "approver": [list_pending_worklogs, approve_worklog],
+}
+
+═══════════════════════════════════════════════════════
+PART 3 — STEP 1: INTENT CLASSIFICATION
+═══════════════════════════════════════════════════════
+
+For each test, first call the LLM to classify the persona.
+Use a STRUCTURED prompt asking for JSON output:
+
+CLASSIFICATION_PROMPT = """You are an intent classifier for an RMS system.
+
+Given a user message, classify which persona is being invoked:
+- creator: user wants to create a task assignment
+- reviewer: user wants to view their tasks or log hours
+- approver: user wants to approve/reject worklogs
+
+Respond ONLY with valid JSON, nothing else:
+{"persona": "<creator|reviewer|approver>", "confidence": "<HIGH|MEDIUM|LOW>", "reasoning": "<one line>"}
+
+User message: {message}"""
+
+Call the LLM with this prompt. Capture:
+- raw_response: exactly what the LLM returned
+- parsed_persona: the extracted persona (or ERROR if JSON parse failed)
+- expected_persona: what was expected (set per test case)
+- classification_correct: bool
+
+═══════════════════════════════════════════════════════
+PART 4 — STEP 2: TOOL CALLING
+═══════════════════════════════════════════════════════
+
+After classification, use create_react_agent + AgentExecutor
+with the tools for the detected persona:
+
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain_core.prompts import PromptTemplate
+
+REACT_PROMPT = PromptTemplate.from_template("""You are an RMS assistant for the {persona} persona.
+
+Available tools:
+{tools}
+
+Use the following format:
+Question: the input question
+Thought: think about what to do
+Action: the action to take (must be one of [{tool_names}])
+Action Input: the input to the action as JSON
+Observation: result of the action
+Thought: I now know the final answer
+Final Answer: your response to the user
+
+Begin!
+Question: {input}
+Thought:{agent_scratchpad}""")
+
+executor = AgentExecutor(
+    agent=create_react_agent(llm, tools, REACT_PROMPT),
+    tools=tools,
+    verbose=False,          # we capture manually
+    handle_parsing_errors=True,
+    max_iterations=3,
+    return_intermediate_steps=True,  # CRITICAL: captures tool calls
+)
+
+result = executor.invoke({
+    "input": user_message,
+    "persona": detected_persona,
+})
+
+From result["intermediate_steps"] extract:
+- tools_called: list of (tool_name, tool_input, tool_output)
+- tool_actually_executed: True if any tool in tools_called matches expected_tool
+- parse_errors: count how many steps had parse failures
+  (detect by checking if tool_name contains "parse error" or
+   if tool_input is a raw string not a dict)
+
+═══════════════════════════════════════════════════════
+PART 5 — TEST CASES
+═══════════════════════════════════════════════════════
+
+Define these 6 test cases:
+
+TEST_CASES = [
+    {
+        "id": "T1",
+        "message": "create a task for emp 3010, project 100, product 10, task index 1, activity 1, from 2026-06-01 to 2026-06-10, planned 8 hours",
+        "expected_persona": "creator",
+        "expected_tool": "create_task",
+        "description": "Full creator request with all fields",
+    },
+    {
+        "id": "T2",
+        "message": "show my tasks",
+        "expected_persona": "reviewer",
+        "expected_tool": "list_my_tasks",
+        "description": "Reviewer listing own tasks",
+    },
+    {
+        "id": "T3",
+        "message": "log 8 hours on worklog 22 for 2026-05-26 with remark design work",
+        "expected_persona": "reviewer",
+        "expected_tool": "log_hours",
+        "description": "Reviewer logging hours",
+    },
+    {
+        "id": "T4",
+        "message": "show pending approvals",
+        "expected_persona": "approver",
+        "expected_tool": "list_pending_worklogs",
+        "description": "Approver listing pending worklogs",
+    },
+    {
+        "id": "T5",
+        "message": "approve worklog 5",
+        "expected_persona": "approver",
+        "expected_tool": "approve_worklog",
+        "description": "Approver approving a worklog",
+    },
+    {
+        "id": "T6",
+        "message": "create a task for emp 3010, project 100",
+        "expected_persona": "creator",
+        "expected_tool": "create_task",
+        "description": "Incomplete creator — missing 6 fields (tests error handling)",
+    },
+]
+
+═══════════════════════════════════════════════════════
+PART 6 — STREAMLIT UI
+═══════════════════════════════════════════════════════
+
+Layout:
+
+Title: "RMS Multi-Model Tool Calling Sandbox"
+
+Sidebar:
+  - Model selector (multiselect, default all 3)
+  - "Run All Tests" button
+  - "Add Custom Test" expander with text_input + expected persona dropdown
+
+Main area tabs: one tab per model ("Opus", "Haiku", "Sonnet")
+
+Inside each model tab:
+  - A results table with columns:
+    Test | Description | Classification | Correct? | Tool Called | Tool Match? | Parse Errors | Raw LLM (expand)
+  - Summary row at bottom:
+    "N/6 classified correctly | N/6 tools matched | N total parse errors"
+  - Color coding:
+    Green = correct, Red = wrong/failed, Yellow = partial
+
+Detail expander per test row (click to expand):
+  Shows 4 sections:
+  1. CLASSIFICATION
+     Expected persona: creator
+     LLM raw response: {"persona": "creator", ...}
+     Parsed persona: creator
+     Status: ✅ CORRECT / ❌ WRONG
+
+  2. TOOL CALLING
+     Expected tool: create_task
+     LLM intermediate steps: [list each step]
+       Step 1: Action=create_task, Input={...}
+               Output=[TOOL EXECUTED] Task created...
+     Parse errors: 0
+     Tool match: ✅ YES / ❌ NO / ⚠️ TOOL NOT CALLED
+
+  3. WHAT LLM SHOULD HAVE DONE vs WHAT IT DID
+     Should have called: create_task with {resource_id:3010, ...}
+     Actually called: [what it did or "nothing"]
+     Difference: [if mismatch, highlight what's wrong]
+
+  4. FINAL ANSWER
+     [What the LLM gave as final answer to the user]
+
+Bottom section: "Comparison Table" (all models side by side)
+  | Test | Opus Classification | Haiku Classification | Sonnet Classification |
+  |      | Opus Tool Match     | Haiku Tool Match     | Sonnet Tool Match     |
+  Shows at a glance which model performs better
+
+Export button: Download full results as JSON for management report.
+
+═══════════════════════════════════════════════════════
+PART 7 — RESULT DATA STRUCTURE
+═══════════════════════════════════════════════════════
+
+Per test per model, store:
+
+{
+  "model": "claude-opus-4-6",
+  "model_label": "Opus",
+  "test_id": "T1",
+  "message": "...",
+  "expected_persona": "creator",
+  "expected_tool": "create_task",
+
+  "classification": {
+    "raw_llm_response": "...",
+    "parsed_persona": "creator",
+    "correct": True,
+    "error": None,
+  },
+
+  "tool_calling": {
+    "steps": [
+      {"action": "create_task", "action_input": {...}, "observation": "..."}
+    ],
+    "tools_called": ["create_task"],
+    "expected_tool_called": True,
+    "parse_error_count": 0,
+    "final_answer": "...",
+    "error": None,
+  },
+
+  "verdict": "PASS" | "PARTIAL" | "FAIL",
+  "verdict_reason": "...",
+}
+
+Verdict logic:
+- PASS: classification correct AND expected tool called AND 0 parse errors
+- PARTIAL: classification correct BUT tool not called OR wrong tool OR parse errors
+- FAIL: classification wrong OR exception
+
+═══════════════════════════════════════════════════════
+PART 8 — ERROR HANDLING
+═══════════════════════════════════════════════════════
+
+Wrap each test step in try/except:
+- If classification JSON parse fails → parsed_persona = "PARSE_ERROR", correct = False
+- If AgentExecutor crashes → record the exception, tools_called = [], verdict = FAIL
+- If model API call fails → show error message in the test row
+- Never let one test failure stop the others
+
+Show a spinner/progress bar while tests run:
+  "Running T1 on Opus... (1/18)"
+
+═══════════════════════════════════════════════════════
+DELIVERABLE
+═══════════════════════════════════════════════════════
+Single file: rms_sandbox_test.py at project root.
+Runnable with: streamlit run rms_sandbox_test.py
+
+Confirm:
+- All 3 models wired correctly
+- All 6 test cases defined
+- Both steps (classification + tool calling) captured
+- intermediate_steps used to capture actual tool calls
+- Export to JSON works
+- No modification to existing app files
+═══════════════════════════════════════════════════════
