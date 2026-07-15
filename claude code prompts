@@ -1,74 +1,188 @@
-** Here is the status report .
-
-Current Situation:
-, I proceeded with 'Option A' that you suggested. However, I have now encountered an issue/stuck point during that process.
-
-Your Task:
-
-     Review the Report: First, analyze the attached status report to understand the full context and history.
-     Advise Next Steps: Based on the report and the current issue with Option A, tell me exactly what I should do next.
-     Debugging Plan (if applicable): If multiple debugging tasks need to be done, please provide a clear breakdown:
-        Where specifically we need to add debug logs or checkpoints.
-        What the possible reasons for the failure might be.
+Clear picture. The code is fine. This is a pure environment/network problem, not a logic problem. Let me break down exactly what's happening and what to fix.
 
 ---
 
-# Status Report: DPAH & Agentic AI Dashboard Integration
+## What's Actually Happening
 
-## 1. Executive Summary
+Three separate issues, all environment-level:
 
-Following the approved architectural approach, we are implementing a seamless Single Sign-On (SSO) integration between two distinct internal platforms: **Project 1 (DPAH)** and **Project 2 (Agentic AI Dashboard)**.
+**Issue 1 — Port 5060 is browser-blocked**
+Port 5060 is on the browser's "bad port" list (reserved for SIP telephony). Chrome, Firefox, and Edge refuse to make HTTP requests to it regardless of CORS settings. This is a hardcoded browser security restriction, not something you can configure around.
 
-To maintain the architectural integrity of both applications—keeping DPAH's strict workflow engine separate from the Agentic Dashboard's dynamic analytics environment—we elected to use a **JWT Handoff Protocol**. This allows users to navigate seamlessly from DPAH to the Agentic Dashboard without logging in twice, creating the user experience of a single unified platform without the risks of merging incompatible codebases or using iframe wrappers.
+**Issue 2 — Cross-origin requests between two different IPs**
+DPAH frontend is on `10.5.1.58`. Agentic dashboard backend is on `10.5.1.24`. Even on the same physical server, different IPs/ports = different origins = CORS must be configured correctly on the backend.
 
-## 2. End-to-End Summary of Changes
-
-The underlying integration logic is fully implemented across both platforms. The system uses a shared cryptographic secret to securely pass identity and department data from DPAH to the Agentic Dashboard via a self-destructing, 60-second token.
-
-### 2.1. DPAH Modifications (The Identity Provider)
-
-* **Backend Handoff Generation:** Engineered a secure endpoint that reads the currently logged-in user's session, extracts their `emp_no` and `dept`, and generates a short-lived (60-second) JWT handoff token.
-* **Frontend Routing Bridge:** Added a dedicated "Analytics" entry point in the DPAH sidebar. Clicking this requests the secure token and redirects the user to the Agentic platform.
-
-### 2.2. Agentic Dashboard Modifications (The Service Provider)
-
-* **Frontend Interceptor:** Modified the React routing layer to detect incoming handoff tokens immediately upon application load. It intercepts the redirect, pauses the UI, and sends the token to the backend for validation before allowing access to the application.
-* **Backend Validation & Session Translation:** Engineered a specialized authentication controller that decodes the raw PyJWT token from DPAH, verifies its cryptographic signature, checks for expiration, and issues a standard, long-lived Flask-JWT session for the Agentic ecosystem.
-* **CORS Preflight Handling:** Implemented explicit HTTP `OPTIONS` handling to accommodate browser security checks during the cross-origin handoff.
-
-### 2.3. File Modification Manifest
-
-**DPAH (Project 1)**
-
-* `app/core/config.py` *(Backend)*: Added `ANALYTICS_APP_URL` environment configuration.
-* `app/core/security.py` *(Backend)*: Updated token generation logic to support custom expirations (60 seconds).
-* `app/routes/auth_route.py` *(Backend)*: Created the `GET /api/v1/auth/handoff-token` endpoint.
-* `src/components/Sidebar.jsx` *(Frontend)*: Integrated the Analytics navigation button and redirect logic.
-
-**Agentic AI Dashboard (Project 2)**
-
-* `.env` *(Global)*: Synchronized the `JWT_SECRET_KEY` with DPAH and updated the `VITE_API_BASE_URL`.
-* `routes/AppRoutes.jsx` *(Frontend)*: Built the token detection, backend fetch logic, and loading state management.
-* `main.py` *(Backend)*: Attempted various CORS (Cross-Origin Resource Sharing) configurations and port migrations.
-* `routes/auth_routes.py` *(Backend)*: Registered the new validation route.
-* `controllers/auth_controller.py` *(Backend)*: Implemented the `validate_handoff()` logic and manual CORS preflight overrides.
+**Issue 3 — CORS preflight is probably not configured correctly on the Flask side**
+The `OPTIONS` handling was added but Flask's CORS setup has specific requirements. If even one header is missing from the preflight response, the browser blocks the actual request before it leaves.
 
 ---
 
-## 3. Current Blockers & Status
+## Fix Sequence — In This Order
 
-**Current Status:** The core integration logic is code-complete, but testing is currently **Blocked** due to strict environment-level network and browser security constraints.
+### Fix 1: Change the Flask backend port (5 minutes)
 
-**The Blocker:**
-The React frontend (hosted on `10.5.1.58`) is entirely unable to communicate with the Flask API backend (hosted on `10.5.1.24`). The browser is forcefully terminating all outbound API requests before they leave the client machine. Consequently, the backend terminal receives zero incoming traffic.
+Move the agentic dashboard backend off port 5060 to something safe. Use any port above 1024 that isn't on the blocked list.
 
-This global block is currently preventing both the new SSO handoff and the legacy standard login from functioning.
+Safe ports to use: `5001`, `5002`, `5050`, `5100`, `7000`, `8001`, `8080`, `9000`
 
-**Specific Errors Logged:**
+Blocked ports to avoid: `5060` (SIP), `5061` (SIP-TLS), `6000` (X11), `3000` (sometimes), `6666`, `6667`.
 
-1. **Frontend Console:** `AxiosError: Network Error` and `TypeError: NetworkError when attempting to fetch resource`.
-2. **Frontend Network Tab:** API calls (both `POST /auth/login` and `POST /auth/validate-handoff`) are immediately marked as **Blocked** without returning an HTTP status code.
-3. **Browser Security Warning:** The browser initially flagged the backend port (5060) as a restricted port (reserved for SIP telephony) and blocked it for security reasons.
+In your Flask `main.py`, change:
+```python
+app.run(host='0.0.0.0', port=5060)
+```
+to:
+```python
+app.run(host='0.0.0.0', port=5001)
+```
 
-**Next Steps (Pending Restart):**
-While the application code for the merger is sound, we are currently auditing the environment configuration to restore connectivity. This involves resolving the browser-level CORS policy conflicts and ensuring the new backend port is completely unblocked by local firewalls on the `10.5.1.24` host.
+Update the `.env` in the agentic React frontend:
+```
+VITE_API_BASE_URL=http://10.5.1.24:5001
+```
+
+---
+
+### Fix 2: Replace manual CORS with flask-cors (10 minutes)
+
+Manual `OPTIONS` handling is fragile. Use the `flask-cors` library which handles everything correctly.
+
+Install if not already installed:
+```bash
+pip install flask-cors
+```
+
+In `main.py`, replace whatever CORS setup exists with:
+```python
+from flask import Flask
+from flask_cors import CORS
+
+app = Flask(__name__)
+
+CORS(app, 
+    resources={r"/api/*": {"origins": [
+        "http://10.5.1.58",
+        "http://10.5.1.58:5173",
+        "http://10.5.1.58:3000",
+        "http://10.5.1.24",
+        "http://10.5.1.24:5969",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ]}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
+```
+
+Remove any manual `@app.after_request` CORS header additions or manual `OPTIONS` route handlers — they conflict with flask-cors and cause duplicate headers.
+
+---
+
+### Fix 3: Verify the DPAH Vite proxy covers the agentic dashboard
+
+Your DPAH React frontend (`10.5.1.58`) talks to DPAH's FastAPI backend via a Vite proxy. That works fine.
+
+But when DPAH's sidebar calls `/api/v1/auth/handoff-token`, that goes to DPAH's backend — correct.
+
+The redirect then sends the user to `http://10.5.1.24:5001` (agentic dashboard frontend). At that point the BROWSER is making requests directly to `10.5.1.24:5001` (agentic backend). This is where CORS matters.
+
+Check your agentic dashboard's `vite.config.js`. It should proxy `/api` to its own backend:
+```javascript
+export default {
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://10.5.1.24:5001',  // update to new port
+        changeOrigin: true,
+      }
+    }
+  }
+}
+```
+
+If this proxy exists and the agentic frontend is accessed via `http://10.5.1.24:5173` (or whatever port Vite runs on), then the React app talks to `/api/...` which proxies to `localhost:5001` — no CORS at all because it's same-origin. This is the cleanest setup.
+
+---
+
+### Fix 4: Verify JWT secrets actually match
+
+This is the most common silent failure in JWT handoff flows. The handoff token validates correctly in testing but fails in production because the secrets differ.
+
+Run this quick check — on the DPAH server:
+```cmd
+python -c "import os; print('DPAH secret:', repr(os.getenv('JWT_SECRET', 'NOT SET')))"
+```
+
+On the agentic dashboard server:
+```cmd
+python -c "import os; print('Agentic secret:', repr(os.getenv('JWT_SECRET_KEY', 'NOT SET')))"
+```
+
+**Note the different env var names** — DPAH uses `JWT_SECRET`, agentic dashboard uses `JWT_SECRET_KEY`. Both must have the same value. Also verify both use the same algorithm (`HS256`).
+
+---
+
+## Debugging Checkpoints
+
+Once you fix ports and CORS, verify each layer independently:
+
+**Checkpoint 1 — Is the Flask backend reachable at all?**
+From the `10.5.1.58` machine, open a browser and go to:
+```
+http://10.5.1.24:5001/api/v1/health
+```
+If you get any response (even 404), the backend is reachable and port is open. If you get "connection refused" or timeout, the port is blocked by a firewall on `10.5.1.24`.
+
+**Checkpoint 2 — Is the firewall open on 10.5.1.24?**
+On the `10.5.1.24` machine (Windows):
+```cmd
+netsh advfirewall firewall add rule name="Agentic Dashboard" dir=in action=allow protocol=TCP localport=5001
+```
+On Linux:
+```bash
+sudo ufw allow 5001/tcp
+```
+
+**Checkpoint 3 — Test CORS directly**
+From your browser console on `http://10.5.1.58`, run:
+```javascript
+fetch('http://10.5.1.24:5001/api/v1/auth/validate-handoff', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ token: 'test' })
+}).then(r => r.json()).then(console.log).catch(console.error)
+```
+
+If you see a CORS error: flask-cors isn't installed correctly.
+If you see `{"valid": false, "reason": "Invalid token"}`: CORS works, JWT validation works, only the token is wrong (expected).
+If you see a network error: firewall or port issue.
+
+**Checkpoint 4 — Test the handoff flow end-to-end**
+Once Checkpoint 3 passes with the invalid token response, test the full flow:
+1. Login to DPAH as any user
+2. Click Analytics in DPAH sidebar
+3. Check browser Network tab in DPAH — does `GET /api/v1/auth/handoff-token` return a token?
+4. Does the redirect happen to the agentic dashboard URL?
+5. In the agentic dashboard tab, check browser console — does `validate-handoff` get called?
+6. Does it return `{ valid: true }`?
+
+---
+
+## Summary of Actions in Order
+
+| Step | Action | Time |
+|---|---|---|
+| 1 | Change Flask port from 5060 to 5001 | 2 min |
+| 2 | Update `VITE_API_BASE_URL` in agentic `.env` to new port | 1 min |
+| 3 | Update agentic `vite.config.js` proxy target to new port | 1 min |
+| 4 | Replace manual CORS with `flask-cors` | 5 min |
+| 5 | Open firewall port 5001 on 10.5.1.24 | 2 min |
+| 6 | Restart both Flask and Vite on agentic dashboard | 1 min |
+| 7 | Run Checkpoint 1 (browser health check) | 1 min |
+| 8 | Run Checkpoint 3 (CORS test from console) | 2 min |
+| 9 | Run Checkpoint 4 (full end-to-end test) | 5 min |
+
+Do these in order. Don't skip to Step 9 without verifying Step 7 first. Each checkpoint tells you exactly which layer to fix if something is still broken.
+
+Send me the result of Checkpoint 3 specifically — that single test tells me 80% of what I need to know.
