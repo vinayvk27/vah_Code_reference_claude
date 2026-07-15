@@ -1,22 +1,498 @@
-Here's the cleanest approach:
+Clear enough to give you the solution. No need for the readme.
 
-**1. Decouple the refresh cycles**
+Key facts I now have:
+- Same server → no CORS, no domain issues
+- Both apps have their own sidebar → iframe won't work (nested sidebars = terrible UX)
+- Collection access is department-based, not individual → RBAC bridge is simple
+- You want Option A → minimal changes, fast delivery
 
-Don't drive all widgets off one shared timer. Give each widget its own independent polling lifecycle:
+---
 
-- Create a reusable `usePolling(fetchFn, intervalMs)` hook that each widget calls with its own interval — other widgets pass `10000`, the live widget passes `5000`.
-- Inside the hook, use `setInterval`/`useEffect` scoped to that component only, with cleanup on unmount.
-- Use an `AbortController` per fetch cycle so a slow request doesn't overlap with the next tick (important at 5s frequency).
-- Optionally pause polling when `document.visibilityState !== 'visible'` (Page Visibility API) to avoid wasted calls on inactive tabs — do this for both widgets, but it matters more at 5s.
+## The Right Approach: Full Redirect with JWT Handoff
 
-This way the two intervals are structurally independent, not just different numbers on the same timer.
+Not an iframe. Full page navigation to the agentic dashboard, user lands already authenticated. Feels like one platform because the navigation is seamless. Each app keeps its own sidebar and layout.
 
-**2. Filters on the live widget — disable them**
+The flow:
 
-"Live" and "historical filtered view" are conceptually conflicting. Best practice used in most monitoring dashboards: the live widget ignores Year/Month/Day filters entirely.
+```
+User in DPAH sidebar clicks "Analytics"
+        ↓
+DPAH calls GET /api/v1/auth/handoff-token
+        ↓
+Backend issues a short-lived token (60 seconds)
+        ↓
+Browser redirects to agentic dashboard URL with token in query param
+        ↓
+Agentic dashboard reads token, validates it, extracts emp_no + dept
+        ↓
+User sees agentic dashboard already logged in, correct department pre-selected
+        ↓
+Agentic dashboard has a "Back to DPAH" link in its sidebar
+```
 
-- **Frontend**: grey out / disable the filter controls for that specific widget card, with a small "LIVE" badge and a tooltip like "Live view always shows real-time data." Don't let it read from the shared filter context at all.
-- **Backend**: give it a dedicated endpoint (e.g. `/api/widgets/live-power`) that takes no year/month/day params — it always returns the latest reading per asset.
-- **Query**: don't reuse the heavy joined query used by filtered widgets. Use something cheap like Postgres `DISTINCT ON (asset_id) ... ORDER BY asset_id, timestamp DESC`, or a window function (`ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY timestamp DESC)`), backed by an index on `(asset_id, timestamp)`. This keeps it fast even polled every 5s across multiple users.
+Total feeling: click Analytics → land in dashboard → click Back → return to DPAH. One platform.
 
-That's the full spec: independent hook-based polling + a separate filter-less endpoint/query for the live widget. This should be directly implementable without back-and-forth.
+---
+
+## What Needs to Change — Both Sides
+
+### DPAH Side (3 small changes)
+
+**Change 1 — New endpoint in `app/routes/auth_route.py`:**
+
+```python
+GET /api/v1/auth/handoff-token
+
+- Requires valid Bearer token (existing user must be logged in)
+- Reads emp_no and dept from current_user JWT
+- Issues a new JWT signed with the same secret
+- Expiry: 60 seconds (enough to complete the redirect, useless if stolen)
+- Payload includes: emp_no, name, dept, roles, collection_agents
+- Returns: { "handoff_token": "...", "target_url": "<agentic dashboard base URL>" }
+```
+
+Target URL should be in an environment variable `ANALYTICS_APP_URL` so it's configurable without code changes.
+
+**Change 2 — New sidebar item in React:**
+
+Add "Analytics" nav item to `src/components/Sidebar.jsx`. On click:
+- Call `GET /api/v1/auth/handoff-token`
+- Get back `{ handoff_token, target_url }`
+- Do `window.open(target_url + '?handoff=' + handoff_token, '_blank')` (new tab) OR `window.location.href = target_url + '?handoff=' + handoff_token` (same tab)
+
+New tab is better UX — user can switch between DPAH and Analytics without losing their DPAH state.
+
+**Change 3 — Environment variable:**
+Add to your `.env` or server config:
+```
+ANALYTICS_APP_URL=http://10.5.1.xx:PORT  (whatever the agentic dashboard runs on)
+```
+
+---
+
+### Agentic Dashboard Side (2 small changes)
+
+**Change 1 — Token reader on app load:**
+
+In the agentic dashboard's entry point (likely `App.jsx` or `main.jsx` or the login page), on mount:
+
+```javascript
+// Check if landing with a handoff token
+const params = new URLSearchParams(window.location.search);
+const handoffToken = params.get('handoff');
+
+if (handoffToken) {
+  // Validate by calling our own backend
+  const res = await fetch('/api/v1/auth/validate-handoff', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: handoffToken })
+  });
+  const data = await res.json();
+  
+  if (data.valid) {
+    // Store as if user logged in normally
+    localStorage.setItem('access_token', data.access_token);  // new full-duration token
+    localStorage.setItem('user_profile', JSON.stringify(data.user_profile));
+    // Clean the URL (remove ?handoff=... from browser bar)
+    window.history.replaceState({}, '', window.location.pathname);
+    // Proceed to dashboard — skip login page
+  }
+}
+```
+
+**Change 2 — New endpoint in agentic dashboard's Python backend:**
+
+```python
+POST /api/v1/auth/validate-handoff
+Body: { "token": "<60-second JWT>" }
+
+- Validates the token against the shared JWT secret
+- Checks it hasn't expired (60s window)
+- If valid: issues a NEW full-duration token (8 hours) and returns it
+- If invalid/expired: returns { "valid": false }
+
+This is important: the 60-second handoff token is NEVER stored.
+It's exchanged immediately for a proper session token.
+```
+
+Also add a "Back to DPAH" link in the agentic dashboard sidebar. Just a plain link:
+```javascript
+<a href="http://dpah-url" className="...">← Back to DPAH</a>
+```
+Or make it configurable via an env variable `DPAH_APP_URL`.
+
+---
+
+## Department → Collection Mapping (The RBAC Bridge)
+
+You said collections are mapped to departments. So when the agentic dashboard gets the user's `dept` from the JWT, it already knows which collections to show. No extra RBAC work needed for Option A.
+
+Example: User is in `EAG` department → agentic dashboard shows only `EAG` collections → same restriction that exists today, but now enforced using the authenticated user's dept rather than a manual login.
+
+This is actually **more secure than the current state** of the agentic dashboard, because now the collection is auto-selected from their authenticated identity instead of being chosen freely.
+
+---
+
+## The Shared JWT Secret — Critical Detail
+
+Both backends must use the **same JWT secret** to sign and verify tokens. Check both backends:
+
+DPAH: wherever `JWT_SECRET` or `SECRET_KEY` is defined (likely `app/core/config.py` or an env variable).
+
+Agentic dashboard: same check.
+
+If they currently use different secrets, you have two options:
+- **A) Set them to the same value** in environment variables. Simplest.
+- **B) DPAH signs with its own secret, agentic dashboard calls DPAH to verify.** More secure but adds an API call. Overkill for Option A.
+
+Go with A. Same secret, same algorithm (HS256), done.
+
+---
+
+## Sequence Diagram
+
+```
+DPAH Browser          DPAH Backend       Agentic Backend    Agentic Browser
+     |                     |                    |                  |
+     |-- click Analytics -->|                    |                  |
+     |                     |                    |                  |
+     |<- handoff_token ----|                    |                  |
+     |   (60s expiry)      |                    |                  |
+     |                     |                    |                  |
+     |-- redirect to Agentic Dashboard with ?handoff=TOKEN ------->|
+     |                     |                    |                  |
+     |                     |         POST /validate-handoff <------|
+     |                     |                    |                  |
+     |                     |       validate token (same secret)    |
+     |                     |                    |                  |
+     |                     |         { valid: true,               |
+     |                     |           access_token: NEW_TOKEN } ->|
+     |                     |                    |                  |
+     |                     |                    |  store token     |
+     |                     |                    |  show dashboard  |
+     |                     |                    |  dept pre-selected
+```
+
+---
+
+## Task Breakdown
+
+Two task prompts — one for each codebase. You can run them in parallel since they're independent.
+
+---
+
+## 📋 Task INTEGRATE-1 — DPAH Backend + Frontend
+
+```
+ENVIRONMENT: FastAPI backend at D:\Sakthi\Gen AI\dpah_backend\
+Do NOT run verification commands. User verifies manually.
+
+TASK: Add handoff token endpoint and Analytics sidebar item to DPAH.
+
+==============================================================================
+STEP 1 — New endpoint in app/routes/auth_route.py
+==============================================================================
+Add after the existing login endpoint:
+
+  import os
+  from datetime import datetime, timedelta
+
+  @router.get("/handoff-token", summary="Issue short-lived handoff token for Analytics app")
+  def get_handoff_token(current_user: dict = Depends(get_current_user)):
+      """
+      Issues a 60-second JWT for seamless redirect to the Analytics dashboard.
+      The receiving app exchanges this for a full-duration session token.
+      """
+      # Build handoff payload from current user
+      payload = {
+          "sub": current_user.get("sub"),
+          "name": current_user.get("name", ""),
+          "email": current_user.get("email", ""),
+          "dept": current_user.get("dept", ""),
+          "roles": current_user.get("roles", []),
+          "collection_agents": current_user.get("collection_agents", {}),
+          "type": "handoff",                          # marker so we can reject if used as regular auth
+          "iat": datetime.utcnow(),
+          "exp": datetime.utcnow() + timedelta(seconds=60),
+      }
+      
+      # Sign with the same secret used for regular JWTs
+      # Find where JWT_SECRET is defined in this project and use the same value/import
+      # Common locations: app/core/config.py, app/core/security.py, or env var JWT_SECRET
+      handoff_token = create_access_token(payload)  # reuse existing token-creation function
+      
+      analytics_url = os.getenv("ANALYTICS_APP_URL", "http://localhost:5173")
+      
+      return {
+          "handoff_token": handoff_token,
+          "target_url": analytics_url,
+          "expires_in": 60,
+      }
+
+  IMPORTANT: Find the existing create_access_token or jwt.encode call in the
+  project and reuse it. Do not invent a new signing method.
+  If the existing function forces a fixed expiry, override the exp in the payload
+  before signing, or pass timedelta(seconds=60) as the parameter if supported.
+
+==============================================================================
+STEP 2 — Add ANALYTICS_APP_URL to environment
+==============================================================================
+Find where other environment variables are read (app/core/config.py or .env).
+Add: ANALYTICS_APP_URL=http://10.5.1.24:5173  (adjust port to match actual agentic dashboard)
+Document that this must be set before deployment.
+
+==============================================================================
+STEP 3 — Add Analytics nav item to DPAH React sidebar
+==============================================================================
+File: src/components/Sidebar.jsx (or frontend/views/index.html if vanilla JS)
+
+A. Add an "Analytics" nav item below the existing nav items.
+   Icon: BarChart2 from lucide-react (or equivalent).
+   Label: "Analytics"
+
+B. On click, call the handoff endpoint then redirect:
+
+   async function openAnalytics() {
+     try {
+       const token = localStorage.getItem('access_token');
+       const res = await fetch('/api/v1/auth/handoff-token', {
+         headers: { 'Authorization': `Bearer ${token}` }
+       });
+       if (!res.ok) throw new Error('Failed to get handoff token');
+       const data = await res.json();
+       // Open in new tab so user keeps DPAH open
+       window.open(`${data.target_url}?handoff=${data.handoff_token}`, '_blank');
+     } catch (err) {
+       // Show error toast
+       console.error('Analytics redirect failed:', err);
+       // If using sonner: toast.error('Could not open Analytics. Try again.')
+     }
+   }
+
+C. Apply same nav-link styling as existing sidebar items.
+   Mark as external link with a small ExternalLink icon (size 11) next to label.
+
+==============================================================================
+REPORT BACK
+==============================================================================
+- Confirm endpoint added (show the route decorator line)
+- Confirm create_access_token reused (show which import/function was used)
+- Confirm ANALYTICS_APP_URL env var documented
+- Confirm sidebar item added with openAnalytics handler
+- DO NOT run verification commands
+```
+
+---
+
+## 📋 Task INTEGRATE-2 — Agentic Dashboard Backend + Frontend
+
+```
+ENVIRONMENT: Agentic dashboard Python backend + React frontend.
+Do NOT run verification commands. User verifies manually.
+
+TASK: Add handoff token validation endpoint and "Back to DPAH" link.
+Also add token reader on app load so users landing from DPAH are 
+auto-authenticated.
+
+==============================================================================
+STEP 1 — New endpoint: validate-handoff
+==============================================================================
+In the agentic dashboard's Python backend, add a new route:
+
+  POST /api/v1/auth/validate-handoff
+  Body: { "token": str }
+
+  Implementation:
+  
+  import jwt  # same library DPAH uses
+  import os
+  from datetime import datetime, timedelta
+  
+  SHARED_JWT_SECRET = os.getenv("JWT_SECRET")  # MUST match DPAH's secret
+  JWT_ALGORITHM = "HS256"                        # MUST match DPAH's algorithm
+  
+  @router.post("/validate-handoff")
+  def validate_handoff(payload: HandoffRequest):
+      try:
+          # Decode and verify the 60-second handoff token
+          decoded = jwt.decode(
+              payload.token,
+              SHARED_JWT_SECRET,
+              algorithms=[JWT_ALGORITHM]
+          )
+          
+          # Reject if it's not a handoff token
+          if decoded.get("type") != "handoff":
+              return {"valid": False, "reason": "Not a handoff token"}
+          
+          # Issue a new full-duration token for this session
+          new_payload = {
+              "sub": decoded["sub"],
+              "name": decoded.get("name", ""),
+              "email": decoded.get("email", ""),
+              "dept": decoded.get("dept", ""),
+              "roles": decoded.get("roles", []),
+              "collection_agents": decoded.get("collection_agents", {}),
+              "exp": datetime.utcnow() + timedelta(hours=8),
+              "iat": datetime.utcnow(),
+          }
+          
+          new_token = jwt.encode(new_payload, SHARED_JWT_SECRET, algorithm=JWT_ALGORITHM)
+          
+          # Build user_profile shape that the frontend expects
+          user_profile = {
+              "emp_no": decoded["sub"],
+              "name": decoded.get("name", ""),
+              "email": decoded.get("email", ""),
+              "dept": decoded.get("dept", ""),
+              "roles": decoded.get("roles", []),
+          }
+          
+          return {
+              "valid": True,
+              "access_token": new_token,
+              "user_profile": user_profile,
+          }
+      
+      except jwt.ExpiredSignatureError:
+          return {"valid": False, "reason": "Handoff token expired"}
+      except jwt.InvalidTokenError:
+          return {"valid": False, "reason": "Invalid token"}
+
+  Create a Pydantic model for the request body:
+  class HandoffRequest(BaseModel):
+      token: str
+
+==============================================================================
+STEP 2 — Token reader on app load (React frontend)
+==============================================================================
+Find the app entry point. Most likely one of:
+  - src/App.jsx (inside the top-level component)
+  - src/main.jsx
+  - The login page component that checks auth on mount
+
+Add this logic to run BEFORE the normal auth check:
+
+  useEffect(() => {
+    const tryHandoff = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const handoffToken = params.get('handoff');
+      
+      if (!handoffToken) return; // Normal load, no handoff
+      
+      try {
+        const res = await fetch('/api/v1/auth/validate-handoff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: handoffToken }),
+        });
+        const data = await res.json();
+        
+        if (data.valid) {
+          // Store credentials exactly as a normal login would
+          localStorage.setItem('access_token', data.access_token);
+          localStorage.setItem('user_profile', JSON.stringify(data.user_profile));
+          
+          // Clean the URL — remove ?handoff= from browser bar
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+          // If the app uses React Router, navigate to dashboard
+          // navigate('/dashboard');  // uncomment if using useNavigate
+          // If the app checks auth state via a flag, trigger re-check here
+        } else {
+          console.warn('Handoff failed:', data.reason);
+          // Let normal auth flow handle it (will redirect to login)
+        }
+      } catch (err) {
+        console.error('Handoff error:', err);
+      }
+    };
+    
+    tryHandoff();
+  }, []); // Run once on mount
+
+  IMPORTANT: This useEffect must run BEFORE the auth guard check.
+  If the app checks localStorage.access_token to decide whether to show
+  login page, the handoff effect must set the token before that check runs.
+  Place it at the top level of the App component or in a custom useHandoff hook
+  called before useAuthGuard.
+
+==============================================================================
+STEP 3 — Department pre-selection after handoff
+==============================================================================
+After successful handoff, the user's dept is in localStorage.user_profile.dept.
+The agentic dashboard already uses department to filter collections.
+
+If the dashboard currently requires user to manually select their department
+on first load, update that logic to:
+  - Read dept from localStorage.user_profile (if present)
+  - Auto-select the matching collection
+  - Skip the department selection step
+
+This makes the redirect feel truly seamless.
+
+==============================================================================
+STEP 4 — Add "Back to DPAH" in sidebar
+==============================================================================
+In the agentic dashboard's sidebar component, add a nav item at the bottom:
+
+  const dpahUrl = import.meta.env.VITE_DPAH_URL || 'http://10.5.1.24:5969';
+  
+  
+    href={dpahUrl}
+    target="_self"
+    className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400
+      hover:text-slate-200 hover:bg-slate-800/40 rounded-lg transition-colors"
+  >
+    <ArrowLeft size={14} />
+    Back to DPAH
+  </a>
+
+Add to .env or vite.config: VITE_DPAH_URL=http://10.5.1.24:5969
+
+==============================================================================
+STEP 5 — Environment variable: shared JWT secret
+==============================================================================
+The agentic dashboard's backend must use the SAME JWT_SECRET as DPAH.
+Add to the agentic dashboard's environment:
+  JWT_SECRET=<same value as DPAH's JWT_SECRET>
+
+Document this dependency clearly — if DPAH rotates its JWT secret,
+the agentic dashboard's secret must be updated at the same time.
+
+==============================================================================
+REPORT BACK
+==============================================================================
+- Confirm validate-handoff endpoint added (show the route decorator)
+- Confirm JWT_SECRET env var is read from environment (not hardcoded)
+- Confirm handoff useEffect placement (show which file and component)
+- Confirm "Back to DPAH" link added to sidebar
+- Confirm VITE_DPAH_URL env var added
+- DO NOT run verification commands
+```
+
+---
+
+## After Both Tasks Run — Test Sequence
+
+1. Set `ANALYTICS_APP_URL` in DPAH env to point to your agentic dashboard
+2. Set `JWT_SECRET` in agentic dashboard env to match DPAH's secret
+3. Restart both servers
+4. Login to DPAH as any user
+5. Click "Analytics" in DPAH sidebar
+6. Agentic dashboard opens in new tab — user should already be logged in, no login page
+7. Verify user's department matches their DPAH department (collections auto-filtered)
+8. Click "Back to DPAH" → returns to DPAH
+
+If step 6 shows a login page instead of the dashboard, the handoff token validation failed. Check that JWT secrets match between both backends.
+
+---
+
+## One Thing to Confirm Before Running
+
+What is the actual URL and port the agentic dashboard runs on? You said both are on the same server. Is it something like `http://10.5.1.24:5174` or a different port from DPAH's `5969`?
+
+Also — does your agentic dashboard currently have a login page with username/password, or does it open directly? That affects exactly where to place the handoff `useEffect`.
+
+Reply with those two details and the tasks above will work without any adjustments.
