@@ -142,6 +142,33 @@
 
 
 
-==============================
+=========================================================
+
+"I have reviewed your previous answers and I am satisfied with the weekly plan. Now, I need you to consolidate everything into a comprehensive, detailed project blueprint.
+
+Please generate a document formatted like a Business Requirements Document (BRD) or a technical specification report that includes the following sections:
+
+     
+
+    Current State Analysis:
+        Clearly define the current status of the DPAH project.
+        List exactly what we are planning to add or modify.
+     
+
+    New Analytics Approach:
+        Detail the proposed new analytics strategy.
+     
+
+    Final Conclusions & Decisions:
+        Summarize the final conclusions reached after our recent discussions and Q&A sessions.
+        Explicitly outline the architectural plan for:
+            Backend: Specific logic, endpoints, and data flow.
+            Frontend: UI/UX structure and component interactions.
+            Database: Schema changes and data modeling.
+
+Why this is needed:
+I intend to feed this document into my company’s internal AI coding assistant to automate the development process. Therefore, the document must be extremely precise, complete, and structured so that the AI can understand the requirements perfectly and generate clean, functional code without ambiguity.
+
+Please ensure the level of detail is sufficient for an AI agent to execute the task from scratch."
 
 
