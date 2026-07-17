@@ -1,188 +1,147 @@
-Clear picture. The code is fine. This is a pure environment/network problem, not a logic problem. Let me break down exactly what's happening and what to fix.
+# Database Schema Documentation
+
+## Table: `dpah_roles`
+
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| role_id | int | NO | PK | None | auto_increment |
+| role_name | varchar | NO | UNQ | None |  |
+| description | varchar | YES |  | None |  |
+| is_active | tinyint | NO | IDX | 1 |  |
+| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
+
+**Indexes:**
+- `PRIMARY` on `role_id` (Unique: No)
+- `uk_role_name` on `role_name` (Unique: No)
+- `idx_roles_active` on `is_active` (Unique: Yes)
 
 ---
 
-## What's Actually Happening
+## Table: `dpah_user_roles`
 
-Three separate issues, all environment-level:
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| user_role_id | bigint | NO | PK | None | auto_increment |
+| emp_id | varchar | NO | IDX | None |  |
+| role_id | int | NO | IDX | None |  |
+| assigned_by | varchar | YES |  | None |  |
+| assigned_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+| valid_until | timestamp | YES |  | None |  |
+| is_active | tinyint | NO |  | 1 |  |
 
-**Issue 1 — Port 5060 is browser-blocked**
-Port 5060 is on the browser's "bad port" list (reserved for SIP telephony). Chrome, Firefox, and Edge refuse to make HTTP requests to it regardless of CORS settings. This is a hardcoded browser security restriction, not something you can configure around.
-
-**Issue 2 — Cross-origin requests between two different IPs**
-DPAH frontend is on `10.5.1.58`. Agentic dashboard backend is on `10.5.1.24`. Even on the same physical server, different IPs/ports = different origins = CORS must be configured correctly on the backend.
-
-**Issue 3 — CORS preflight is probably not configured correctly on the Flask side**
-The `OPTIONS` handling was added but Flask's CORS setup has specific requirements. If even one header is missing from the preflight response, the browser blocks the actual request before it leaves.
-
----
-
-## Fix Sequence — In This Order
-
-### Fix 1: Change the Flask backend port (5 minutes)
-
-Move the agentic dashboard backend off port 5060 to something safe. Use any port above 1024 that isn't on the blocked list.
-
-Safe ports to use: `5001`, `5002`, `5050`, `5100`, `7000`, `8001`, `8080`, `9000`
-
-Blocked ports to avoid: `5060` (SIP), `5061` (SIP-TLS), `6000` (X11), `3000` (sometimes), `6666`, `6667`.
-
-In your Flask `main.py`, change:
-```python
-app.run(host='0.0.0.0', port=5060)
-```
-to:
-```python
-app.run(host='0.0.0.0', port=5001)
-```
-
-Update the `.env` in the agentic React frontend:
-```
-VITE_API_BASE_URL=http://10.5.1.24:5001
-```
+**Indexes:**
+- `PRIMARY` on `user_role_id` (Unique: No)
+- `uk_user_role_active` on `emp_id` (Unique: No)
+- `uk_user_role_active` on `role_id` (Unique: No)
+- `uk_user_role_active` on `is_active` (Unique: No)
+- `idx_user_roles_emp` on `emp_id` (Unique: Yes)
+- `idx_user_roles_emp` on `is_active` (Unique: Yes)
+- `idx_user_roles_role` on `role_id` (Unique: Yes)
 
 ---
 
-### Fix 2: Replace manual CORS with flask-cors (10 minutes)
+## Table: `dpah_collections`
 
-Manual `OPTIONS` handling is fragile. Use the `flask-cors` library which handles everything correctly.
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| collection_id | int | NO | PK | None | auto_increment |
+| collection_name | varchar | NO | UNQ | None |  |
+| module_id | int | NO | IDX | None |  |
+| description | varchar | YES |  | None |  |
+| data_source | varchar | YES |  | None |  |
+| is_sensitive | tinyint | NO |  | 0 |  |
+| is_active | tinyint | NO | IDX | 1 |  |
+| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
 
-Install if not already installed:
-```bash
-pip install flask-cors
-```
-
-In `main.py`, replace whatever CORS setup exists with:
-```python
-from flask import Flask
-from flask_cors import CORS
-
-app = Flask(__name__)
-
-CORS(app, 
-    resources={r"/api/*": {"origins": [
-        "http://10.5.1.58",
-        "http://10.5.1.58:5173",
-        "http://10.5.1.58:3000",
-        "http://10.5.1.24",
-        "http://10.5.1.24:5969",
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ]}},
-    supports_credentials=True,
-    allow_headers=["Content-Type", "Authorization"],
-    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-)
-```
-
-Remove any manual `@app.after_request` CORS header additions or manual `OPTIONS` route handlers — they conflict with flask-cors and cause duplicate headers.
+**Indexes:**
+- `PRIMARY` on `collection_id` (Unique: No)
+- `uk_collection_name` on `collection_name` (Unique: No)
+- `idx_collections_active` on `is_active` (Unique: Yes)
+- `idx_module_id` on `module_id` (Unique: Yes)
 
 ---
 
-### Fix 3: Verify the DPAH Vite proxy covers the agentic dashboard
+## Table: `dpah_modules`
 
-Your DPAH React frontend (`10.5.1.58`) talks to DPAH's FastAPI backend via a Vite proxy. That works fine.
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| module_id | int | NO | PK | None | auto_increment |
+| module_name | varchar | NO |  | None |  |
+| module_description | varchar | NO |  | None |  |
+| created_by | varchar | NO |  | None |  |
+| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+| updated_by | varchar | NO |  | None |  |
+| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
 
-But when DPAH's sidebar calls `/api/v1/auth/handoff-token`, that goes to DPAH's backend — correct.
-
-The redirect then sends the user to `http://10.5.1.24:5001` (agentic dashboard frontend). At that point the BROWSER is making requests directly to `10.5.1.24:5001` (agentic backend). This is where CORS matters.
-
-Check your agentic dashboard's `vite.config.js`. It should proxy `/api` to its own backend:
-```javascript
-export default {
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://10.5.1.24:5001',  // update to new port
-        changeOrigin: true,
-      }
-    }
-  }
-}
-```
-
-If this proxy exists and the agentic frontend is accessed via `http://10.5.1.24:5173` (or whatever port Vite runs on), then the React app talks to `/api/...` which proxies to `localhost:5001` — no CORS at all because it's same-origin. This is the cleanest setup.
+**Indexes:**
+- `PRIMARY` on `module_id` (Unique: No)
 
 ---
 
-### Fix 4: Verify JWT secrets actually match
+## Table: `dpah_module_usergroups`
 
-This is the most common silent failure in JWT handoff flows. The handoff token validates correctly in testing but fails in production because the secrets differ.
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| module_group_id | int | NO | PK | None | auto_increment |
+| module_id | int | NO | IDX | None |  |
+| group_idx | int | NO |  | None |  |
+| is_active | tinyint | NO |  | 1 |  |
+| assigned_by | varchar | NO |  | None |  |
+| assigned_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
 
-Run this quick check — on the DPAH server:
-```cmd
-python -c "import os; print('DPAH secret:', repr(os.getenv('JWT_SECRET', 'NOT SET')))"
-```
-
-On the agentic dashboard server:
-```cmd
-python -c "import os; print('Agentic secret:', repr(os.getenv('JWT_SECRET_KEY', 'NOT SET')))"
-```
-
-**Note the different env var names** — DPAH uses `JWT_SECRET`, agentic dashboard uses `JWT_SECRET_KEY`. Both must have the same value. Also verify both use the same algorithm (`HS256`).
-
----
-
-## Debugging Checkpoints
-
-Once you fix ports and CORS, verify each layer independently:
-
-**Checkpoint 1 — Is the Flask backend reachable at all?**
-From the `10.5.1.58` machine, open a browser and go to:
-```
-http://10.5.1.24:5001/api/v1/health
-```
-If you get any response (even 404), the backend is reachable and port is open. If you get "connection refused" or timeout, the port is blocked by a firewall on `10.5.1.24`.
-
-**Checkpoint 2 — Is the firewall open on 10.5.1.24?**
-On the `10.5.1.24` machine (Windows):
-```cmd
-netsh advfirewall firewall add rule name="Agentic Dashboard" dir=in action=allow protocol=TCP localport=5001
-```
-On Linux:
-```bash
-sudo ufw allow 5001/tcp
-```
-
-**Checkpoint 3 — Test CORS directly**
-From your browser console on `http://10.5.1.58`, run:
-```javascript
-fetch('http://10.5.1.24:5001/api/v1/auth/validate-handoff', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ token: 'test' })
-}).then(r => r.json()).then(console.log).catch(console.error)
-```
-
-If you see a CORS error: flask-cors isn't installed correctly.
-If you see `{"valid": false, "reason": "Invalid token"}`: CORS works, JWT validation works, only the token is wrong (expected).
-If you see a network error: firewall or port issue.
-
-**Checkpoint 4 — Test the handoff flow end-to-end**
-Once Checkpoint 3 passes with the invalid token response, test the full flow:
-1. Login to DPAH as any user
-2. Click Analytics in DPAH sidebar
-3. Check browser Network tab in DPAH — does `GET /api/v1/auth/handoff-token` return a token?
-4. Does the redirect happen to the agentic dashboard URL?
-5. In the agentic dashboard tab, check browser console — does `validate-handoff` get called?
-6. Does it return `{ valid: true }`?
+**Indexes:**
+- `PRIMARY` on `module_group_id` (Unique: No)
+- `fk_mug_moduleid` on `module_id` (Unique: Yes)
 
 ---
 
-## Summary of Actions in Order
+## Table: `dpah_agents`
 
-| Step | Action | Time |
-|---|---|---|
-| 1 | Change Flask port from 5060 to 5001 | 2 min |
-| 2 | Update `VITE_API_BASE_URL` in agentic `.env` to new port | 1 min |
-| 3 | Update agentic `vite.config.js` proxy target to new port | 1 min |
-| 4 | Replace manual CORS with `flask-cors` | 5 min |
-| 5 | Open firewall port 5001 on 10.5.1.24 | 2 min |
-| 6 | Restart both Flask and Vite on agentic dashboard | 1 min |
-| 7 | Run Checkpoint 1 (browser health check) | 1 min |
-| 8 | Run Checkpoint 3 (CORS test from console) | 2 min |
-| 9 | Run Checkpoint 4 (full end-to-end test) | 5 min |
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| agent_id | int | NO | PK | None | auto_increment |
+| agent_name | varchar | NO | UNQ | None |  |
+| collection_id | int | NO | IDX | None |  |
+| department | varchar | YES | IDX | None |  |
+| description | text | YES |  | None |  |
+| system_prompt | text | YES |  | None |  |
+| allowed_tools | longtext | YES |  | None |  |
+| model_name | varchar | YES |  | None |  |
+| is_active | tinyint | NO |  | 1 |  |
+| created_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+| updated_at | timestamp | NO |  | CURRENT_TIMESTAMP | on update CURRENT_TIMESTAMP |
 
-Do these in order. Don't skip to Step 9 without verifying Step 7 first. Each checkpoint tells you exactly which layer to fix if something is still broken.
+**Indexes:**
+- `PRIMARY` on `agent_id` (Unique: No)
+- `uk_agent_name` on `agent_name` (Unique: No)
+- `idx_agents_dept` on `department` (Unique: Yes)
+- `idx_agents_dept` on `is_active` (Unique: Yes)
+- `fk_agent_collectionid_new` on `collection_id` (Unique: Yes)
 
-Send me the result of Checkpoint 3 specifically — that single test tells me 80% of what I need to know.
+---
+
+## Table: `dpah_role_agent_access`
+
+| Column Name | Data Type | Nullable | Key | Default | Extra |
+|-------------|-----------|----------|-----|---------|-------|
+| role_id | int | NO | PK | None |  |
+| group_id | int | NO | PK | None |  |
+| agent_id | int | NO | PK | None |  |
+| granted_by | varchar | YES |  | None |  |
+| granted_at | timestamp | NO |  | CURRENT_TIMESTAMP |  |
+
+**Indexes:**
+- `PRIMARY` on `role_id` (Unique: No)
+- `PRIMARY` on `group_id` (Unique: No)
+- `PRIMARY` on `agent_id` (Unique: No)
+- `idx_raa_agent` on `agent_id` (Unique: Yes)
+
+---
+
+
+
+==============================
+
+
