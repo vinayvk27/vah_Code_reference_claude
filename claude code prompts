@@ -1077,7 +1077,7 @@ Deviations require discussion before implementation.
 
 
 
-1Good questions from your AI. Answer them directly so it can proceed without ambiguity.
+1Good questions from you. Answer them directly so it can proceed without ambiguity.
 
 ---
 
@@ -1188,9 +1188,9 @@ No chart type decisions on the frontend. No data arrays for the frontend to inte
 
 ---
 
-## One Note for Your AI
+## One Note for You
 
-Since this is a new chat and your AI doesn't have the full context, make sure it knows these specific things before it writes any code:
+Since this is a new chat and you don't have the full context, make sure to  knows these specific things before writes any code:
 
 1. Analytics is ONE shared LangGraph graph — not one per module. The `selected_collection` field in state (e.g., `"RMS_ANALYTICS"`) tells it which tables to use.
 
@@ -1202,4 +1202,37 @@ Since this is a new chat and your AI doesn't have the full context, make sure it
 
 5. The analytics workflow folder structure and all imports must follow the exact same pattern as `rms_workflow` and `hrms_workflow` — same `__init__.py` export pattern, same `config.py` wrapper for `get_llm()`.
 
-Send these four answers to your AI along with Parts 4-8 of the BRD. It should be able to proceed cleanly from there.
+
+** i have all the codes also available with me which i will send it to you whenever you ask me but we need to follow a very good flow so that i should be doing many iterations regarding . we need 
+to test everything whatever we built and also you have to tel me what to do next where i need ot go either to my route file or controller file or any other file so that everything will be clean.
+guide me from start to end . i have a week wise plan also but it is a sample pan there is no necessity that particularly in that day we need to follow but we need to complete all the tasks
+
+IMPLEMENTATION SEQUENCE
+Week 1 — Backend
+Day	Task	Done When
+Mon	Create analytics_workflow/ folder. Copy schema_registry.py, sql_validator.py, state.py, config.py exactly as written in this document. Fill MRR section of schema_registry. Seed DB (new analytics agents, role grants).	python -c "from app.workflows.analytics_workflow import get_analytics_graph; print('OK')" passes
+Tue	Implement nodes.py — all 8 node functions.	Each node can be imported without error
+Wed	Implement graph.py. Wire into chat_controller.py (import, class method, routing).	Server starts cleanly. Postman POST /api/v1/chat/stream with collection_name: "RMS_ANALYTICS" returns a response (even if just permission denied)
+Thu	End-to-end backend test via Postman. Test all 4 intent types (SQL_DATA, SQL_INSIGHT, RAG, DENY). Test all 3 personas (reviewer, creator, approver) for RMS. Verify reviewer cannot see other users' data.	All 12 test cases pass (4 intents × 3 personas)
+Fri	HRMS analytics backend test. Fix any bugs found Thu/Fri.	HRMS analytics returns correct data per persona
+Week 2 — Frontend
+Day	Task	Done When
+Mon	Add sidebar Analytics nav item. Create Analytics.jsx page with module dropdown and basic chat UI. Wire route in App.jsx.	User can navigate to /dashboard/analytics and see the page
+Tue	Add chart and table SSE event handlers in useChatStream.js.	Console shows correct event types being received
+Wed	Build AnalyticsChartRenderer.jsx. Integrate into Analytics page message renderer.	Bar chart renders correctly for "show hours by task as bar chart"
+Thu	Build AnalyticsTableRenderer.jsx with AG-Grid and CSV export.	Table renders, CSV downloads correctly
+Fri	Add quick prompts. Full browser test across all modules and personas. Light/dark mode check.	All personas work, charts/tables render in both themes
+PART 7 — SECURITY RULES (NON-NEGOTIABLE)
+The following tables are NEVER referenced in any LLM prompt, ever: dpah_roles, dpah_user_roles, dpah_role_agent_access, dpah_collections, dpah_agents, dpah_modules, dpah_module_usergroups
+Every LLM-generated SQL string must pass through sql_validator.py before db.execute() is called. No exceptions.
+The database user executing analytics queries must have SELECT-only permissions. If a read-only DB user does not exist, create one before Week 1 Day 1: GRANT SELECT ON dpintranet.* TO 'analytics_reader'@'%' IDENTIFIED BY 'password';
+Never return raw database error messages to the user. Catch all exceptions, log the full error server-side, return a safe generic message.
+Row cap: never return more than 10,000 rows. result.fetchmany(10000).
+Query timeout: configure at the MariaDB session level or use a 30-second application-level timeout.
+PART 8 — OPEN ITEMS (Developer to complete before Day 1)
+Item	Who	Details
+MRR table schema	Developer	Fill MRR_ANALYTICS section in schema_registry.py — table names, column descriptions, and per-persona filter columns
+group_idx values	Developer	Query dpah_module_usergroups and use correct group_idx values in DB seed SQL
+Read-only DB user	DBA/Developer	Create MariaDB analytics reader user with SELECT-only grants
+ECharts import path	Developer	Confirm whether to use echarts directly or echarts-for-react wrapper
+Existing POC code	Developer	Review SQL generation POC before implementing analytics_sql_generator_node — extract reusable patterns
