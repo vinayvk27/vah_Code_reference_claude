@@ -1,118 +1,1075 @@
-DPAH Analytics — Consolidated BRD v2.0
+4.1 State (analytics_workflow/state.py)
+python
+from typing import TypedDict, Optional, List, Dict, Any
+from langchain_core.messages import BaseMessage
 
-For: AI coding assistant (Chatbot 2 implementation)
-Date: July 2026
-Status: Final — approved for development Monday
+class AnalyticsState(TypedDict):
+    # User identity (from JWT, injected by controller)
+    user_id: str          # emp_id as string e.g. "3428"
+    user_name: str
+    user_dept: str
+
+    # RBAC (from JWT)
+    collection_agents: dict   # e.g. {"RMS_ANALYTICS": ["reviewer"]}
+    selected_collection: str  # e.g. "RMS_ANALYTICS"
+    selected_agent_role: str  # "reviewer" / "creator" / "approver"
+
+    # Permission result
+    has_permission: bool
+    denial_message: Optional[str]
+
+    # Conversation history
+    messages: List[BaseMessage]
+
+    # Intent classification result
+    intent_type: Optional[str]  # "SQL_DATA" / "SQL_INSIGHT" / "RAG" / "DENY"
+
+    # SQL execution
+    generated_sql: Optional[str]
+    sql_result: Optional[List[Dict]]
+    sql_error: Optional[str]
+
+    # Output
+    output_type: Optional[str]    # "chart" / "table" / "text"
+    chart_spec: Optional[Dict]    # ECharts option object
+    table_data: Optional[Dict]    # {columns: [...], rows: [...]}
+    text_response: Optional[str]
+4.2 Schema Registry (analytics_workflow/schema_registry.py)
+
+This file is the single source of truth for:
+
+Which tables each analytics collection can query
+Column descriptions (so LLM knows what data is available)
+Per-persona, per-table row-level filter rules
+
+The filter strings use Python .format() placeholders: {emp_id} and {dept}. These are resolved at runtime with the authenticated user's actual values.
+
+python
+COLLECTION_TABLE_MAP = {
+    "RMS_ANALYTICS": {
+        "module_display_name": "Resource Management System",
+        "tables": {
+            "pp_project_task_assigment_demo": {
+                "purpose": "Task assignments. Each row is one task assigned to an employee.",
+                "columns": {
+                    "WorkLogIdx": "INT — Unique task ID (primary key)",
+                    "Resource": "INT — Employee number of the assigned employee",
+                    "ProjectIdx": "INT — Project identifier",
+                    "ProductIdx": "INT — Product identifier",
+                    "TaskIdx": "INT — Task type identifier",
+                    "ActivityIdx": "INT — Activity type identifier",
+                    "StartDate": "DATE — Task start date (YYYY-MM-DD)",
+                    "EndDate": "DATE — Task end date (YYYY-MM-DD)",
+                    "PlanHrs": "FLOAT — Planned hours for this task",
+                    "IsCompleted": "TINYINT — 0=not completed, 1=completed",
+                    "created_by": "VARCHAR — emp_id of person who created the task",
+                    "created_date": "DATE — Date task was created",
+                },
+            },
+            "pp_worklogs_demo": {
+                "purpose": "Actual time logged by employees against tasks.",
+                "columns": {
+                    "Idx": "INT — Unique worklog ID (primary key)",
+                    "WorkLogIdx": "INT — FK to pp_project_task_assigment_demo.WorkLogIdx",
+                    "TaskDate": "DATE — Date work was performed",
+                    "TimeSpentInSec": "INT — Time spent in seconds. Divide by 3600 for hours.",
+                    "IsApproved": "INT — NULL=pending, 1=approved, 0=rejected",
+                    "ApprovedBy": "INT — emp_id of the person who approved/rejected",
+                    "UserRemarks": "TEXT — Employee note about the work done",
+                    "Resource": "INT — emp_id of the employee who logged this time",
+                },
+            },
+        },
+        "persona_filters": {
+            "reviewer": {
+                "pp_project_task_assigment_demo": "Resource = {emp_id}",
+                "pp_worklogs_demo": "Resource = {emp_id}",
+            },
+            "creator": {
+                "pp_project_task_assigment_demo": "created_by = '{emp_id}'",
+                "pp_worklogs_demo": None,
+            },
+            "approver": {
+                "pp_project_task_assigment_demo": None,
+                "pp_worklogs_demo": None,
+            },
+        },
+    },
+
+    "HRMS_ANALYTICS": {
+        "module_display_name": "Human Resource Management System",
+        "tables": {
+            "hr_leave_types_demo": {
+                "purpose": "Company leave type definitions.",
+                "columns": {
+                    "LeaveTypeIdx": "INT — Leave type ID (primary key)",
+                    "Name": "VARCHAR — Leave type name (e.g. Casual Leave, Sick Leave)",
+                    "MaxDays": "INT — Maximum days allowed per year",
+                    "CreatedBy": "VARCHAR — emp_id who defined this leave type",
+                    "CreatedDate": "DATE — When defined",
+                },
+            },
+            "hr_leave_requests_demo": {
+                "purpose": "Leave requests submitted by employees.",
+                "columns": {
+                    "RequestIdx": "INT — Unique request ID (primary key)",
+                    "Resource": "INT — emp_id of the employee requesting leave",
+                    "LeaveTypeIdx": "INT — FK to hr_leave_types_demo",
+                    "FromDate": "DATE — First day of leave",
+                    "ToDate": "DATE — Last day of leave",
+                    "NumDays": "INT — Total calendar days",
+                    "Reason": "VARCHAR — Employee reason",
+                    "IsApproved": "INT — NULL=pending, 1=approved, 0=rejected",
+                    "ApprovedBy": "INT — emp_id of approver",
+                    "ApprovedDate": "DATE — When decision was made",
+                    "ApproverRemarks": "VARCHAR — Approver comment",
+                    "CreatedDate": "DATE — When submitted",
+                },
+            },
+            "hr_payslips_demo": {
+                "purpose": "Monthly payslips. SENSITIVE — reviewer can only see own payslip.",
+                "columns": {
+                    "PayslipIdx": "INT — Unique payslip ID (primary key)",
+                    "Resource": "INT — emp_id of the employee",
+                    "PayMonth": "VARCHAR — Month in YYYY-MM format (e.g. 2026-04)",
+                    "Basic": "FLOAT — Basic salary",
+                    "Allowances": "FLOAT — Total allowances",
+                    "Deductions": "FLOAT — Total deductions",
+                    "NetPay": "FLOAT — Final take-home pay",
+                },
+            },
+        },
+        "persona_filters": {
+            "reviewer": {
+                "hr_leave_requests_demo": "Resource = {emp_id}",
+                "hr_payslips_demo": "Resource = {emp_id}",
+                "hr_leave_types_demo": None,
+            },
+            "creator": {
+                "hr_leave_requests_demo": None,
+                "hr_payslips_demo": None,
+                "hr_leave_types_demo": None,
+            },
+            "approver": {
+                "hr_leave_requests_demo": None,
+                "hr_payslips_demo": None,
+                "hr_leave_types_demo": None,
+            },
+        },
+    },
+
+    "MRR_ANALYTICS": {
+        # Developer to fill in table names, column descriptions, and persona filters
+        # based on actual MRR table schema.
+        # Follow exact same structure as RMS_ANALYTICS and HRMS_ANALYTICS above.
+        # Key questions to answer before filling:
+        #   - What is the "owner" column per table? (equivalent of Resource in RMS)
+        #   - What is the "approver" column per table? (equivalent of ApprovedBy)
+        #   - Which tables should reviewer persona see only their own rows?
+        "module_display_name": "Material Requisition Request",
+        "tables": {},          # TO BE FILLED BY DEVELOPER
+        "persona_filters": {
+            "reviewer": {},    # TO BE FILLED BY DEVELOPER
+            "creator": {},
+            "approver": {},
+        },
+    },
+}
 
 
-PART 1 — SCOPE AND CONSTRAINTS
-What We Are Building
+def build_schema_description(collection: str, persona: str, emp_id: str, dept: str) -> str:
+    """
+    Build the schema description string to inject into the LLM prompt.
+    Resolves persona filters with actual user emp_id and dept at runtime.
+    Never called with RBAC system tables.
+    """
+    if collection not in COLLECTION_TABLE_MAP:
+        return f"No schema available for collection: {collection}"
 
-A new Analytics capability inside the existing DPAH Chatbot 2 application. Users access it via a dedicated Analytics sidebar button. They select a module (RMS / HRMS / MRR), type a natural language question, and receive a chart, table, or text insight drawn from that module's operational database tables.
+    config = COLLECTION_TABLE_MAP[collection]
+    filters = config["persona_filters"].get(persona, {})
+    blocks = []
 
-Hard Constraints
-Work only on Chatbot 2. Do not touch Chatbot 1.
-Do not modify existing workflow graphs (RMS, HRMS, MRR). They are untouched.
-Do not introduce new database roles. Reuse JUNIOR/MID/SENIOR with existing RBAC.
-Do not expose RBAC system tables to the LLM under any circumstances.
-All SQL generated by LLM must be SELECT only and validated before execution.
-Phase 1: SQL_DATA and SQL_INSIGHT routing only. RAG returns "not available" message.
-One analytics LangGraph — not one per module. Module context is passed as a parameter.
+    for table_name, table_info in config["tables"].items():
+        raw_filter = filters.get(table_name)
 
-What Is Out of Scope (Phase 1)
-RAG-based analytics answers
-Hybrid SQL + RAG answers
-Cross-module queries (cannot join RMS and MRR tables in one query)
-Write operations of any kind
-Scheduled reports or exports
-Chatbot 1 changes
+        if raw_filter:
+            resolved = raw_filter.format(emp_id=emp_id, dept=dept)
+            access_rule = f"ACCESS RULE: You MUST include WHERE {resolved} in every query on this table."
+        else:
+            access_rule = "ACCESS RULE: No row restriction. You may query all rows in this table."
 
-PART 2 — CURRENT STATE
-Chatbot 2 Intent Flow Today
-User types message
-        ↓
-Intent classifier (keywords + vector similarity)
-        ↓
-Identifies module: RMS / HRMS / MRR / UNKNOWN
-        ↓
-chat_controller.py imports and invokes compiled graph:
-  - RMS → get_rms_graph()
-  - HRMS → get_hrms_graph()
-  - MRR → get_mrr_graph()
-        ↓
-Graph runs: parse_intent → permission_check → persona_agent → response
+        col_lines = "\n".join(
+            f"    {col}: {desc}"
+            for col, desc in table_info["columns"].items()
+        )
+
+        blocks.append(
+            f"TABLE: {table_name}\n"
+            f"Purpose: {table_info['purpose']}\n"
+            f"Columns:\n{col_lines}\n"
+            f"{access_rule}"
+        )
+
+    return "\n\n---\n\n".join(blocks)
+4.3 SQL Validator (analytics_workflow/sql_validator.py)
+python
+import re
+from typing import Tuple
+from app.workflows.analytics_workflow.schema_registry import COLLECTION_TABLE_MAP
+
+FORBIDDEN_KEYWORDS = {
+    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
+    "TRUNCATE", "EXEC", "EXECUTE", "CALL", "CREATE",
+    "GRANT", "REVOKE", "REPLACE", "MERGE",
+}
+
+def validate_sql(
+    sql: str,
+    collection: str,
+    persona: str,
+    emp_id: str,
+) -> Tuple[bool, str]:
+    """
+    Validate LLM-generated SQL before execution.
+    Returns (is_valid: bool, error_message: str).
+    Empty error_message means valid.
+    """
+    if not sql or not sql.strip():
+        return False, "Empty SQL generated."
+
+    sql_upper = sql.upper().strip()
+
+    # Rule 1: Must start with SELECT
+    if not sql_upper.startswith("SELECT"):
+        return False, "Only SELECT queries are permitted."
+
+    # Rule 2: No forbidden keywords anywhere in the query
+    for keyword in FORBIDDEN_KEYWORDS:
+        pattern = r'\b' + keyword + r'\b'
+        if re.search(pattern, sql_upper):
+            return False, f"Forbidden keyword detected: {keyword}"
+
+    # Rule 3: Only allowed tables referenced
+    allowed_tables = set(
+        COLLECTION_TABLE_MAP.get(collection, {}).get("tables", {}).keys()
+    )
+    # Extract table names from FROM and JOIN clauses (simple regex approach)
+    table_references = re.findall(
+        r'\bFROM\s+(\w+)|\bJOIN\s+(\w+)', sql_upper
+    )
+    referenced = {t for pair in table_references for t in pair if t}
+    disallowed = referenced - {t.upper() for t in allowed_tables}
+    if disallowed:
+        return False, f"Query references unauthorized tables: {disallowed}"
+
+    # Rule 4: Reviewer persona must have filter for restricted tables
+    if persona == "reviewer":
+        filters = COLLECTION_TABLE_MAP.get(collection, {}).get(
+            "persona_filters", {}
+        ).get("reviewer", {})
+        for table, filter_rule in filters.items():
+            if filter_rule and table.upper() in referenced:
+                # Check emp_id appears in the SQL (simple presence check)
+                if emp_id not in sql:
+                    return False, (
+                        f"Query on {table} must include the user access filter. "
+                        f"Expected filter contains emp_id={emp_id}."
+                    )
+
+    return True, ""
+4.4 Node Implementations (analytics_workflow/nodes.py)
+python
+"""
+Analytics Workflow Nodes
+All node functions for the analytics LangGraph.
+Each function takes AnalyticsState and returns updated AnalyticsState.
+"""
+
+import json
+import re
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from sqlalchemy import text
+
+from app.dao.database import SessionLocal
+from app.workflows.analytics_workflow.state import AnalyticsState
+from app.workflows.analytics_workflow.config import get_llm
+from app.workflows.analytics_workflow.schema_registry import (
+    COLLECTION_TABLE_MAP,
+    build_schema_description,
+)
+from app.workflows.analytics_workflow.sql_validator import validate_sql
 
 
-Existing Folder Structure (relevant parts)
-app/
-├── controllers/
-│   └── chat_controller.py        ← routing logic lives here
-├── workflows/
-│   ├── rms_workflow/             ← unchanged
-│   ├── hrms_workflow/            ← unchanged
-│   └── mrr_workflow/             ← unchanged (developer built this)
-└── forms/
-    └── registry.py
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
-PART 3 — NEW ANALYTICS ARCHITECTURE
-3.1 Extended Intent Flow
-User types message in Analytics page
-        ↓
-Module selector (frontend dropdown): RMS / HRMS / MRR
-        ↓
-chat_controller receives: message + collection_context (e.g., "RMS_ANALYTICS")
-        ↓
-Controller sees collection_context ends with "_ANALYTICS"
-        ↓
-Invokes: get_analytics_graph() with collection_context passed in state
-        ↓
-Analytics graph runs (see section 3.3)
-        ↓
-Returns: chart / table / text via SSE
-
-The existing module intent classifier is NOT used for analytics. The module is determined by the frontend dropdown selection, not LLM guessing. This removes all ambiguity.
-
-3.2 New Folder Structure
-app/
-├── controllers/
-│   └── chat_controller.py        ← small addition: route *_ANALYTICS collections
-├── workflows/
-│   ├── rms_workflow/             ← UNCHANGED
-│   ├── hrms_workflow/            ← UNCHANGED
-│   ├── mrr_workflow/             ← UNCHANGED
-│   └── analytics_workflow/       ← NEW (described below)
-│       ├── __init__.py
-│       ├── state.py
-│       ├── config.py
-│       ├── graph.py
-│       ├── nodes.py
-│       ├── schema_registry.py
-│       └── sql_validator.py
+def _get_last_user_message(state: AnalyticsState) -> str:
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage):
+            return msg.content or ""
+    return ""
 
 
-3.3 Analytics LangGraph — Node Flow
+# ─── Node 1: Permission Check ─────────────────────────────────────────────────
 
-START
-  ↓
-permission_check_node
-  ↓ (has permission)          ↓ (no permission)
-intent_classifier_node     permission_blocked_node → END
-  ↓                          (returns helpful denial)
-  ├── SQL_DATA ──────────┐
-  ├── SQL_INSIGHT ────────┤
-  │                      ↓
-  │               sql_generator_node
-  │                      ↓
-  │               sql_validator_node
-  │                      ↓ (valid)     ↓ (invalid)
-  │               sql_executor_node  error_node → END
-  │                      ↓
-  │               output_formatter_node
-  │                      ↓
-  │    (chart SSE event / table SSE event / text chunks)
-  │                      ↓
-  │                     END
-  │
-  └── RAG ────────────────────────────────────────────→ static_response_node → END
-  └── DENY ──────────────────────────────────────────→ permission_blocked_node → END
+def analytics_permission_check_node(state: AnalyticsState) -> AnalyticsState:
+    """
+    Verify the user has a valid persona for the requested analytics collection.
+    Sets has_permission and selected_agent_role.
+    """
+    collection = state.get("selected_collection", "")
+    collection_agents = state.get("collection_agents", {})
+    user_personas = collection_agents.get(collection, [])
+
+    if not user_personas:
+        state["has_permission"] = False
+        state["denial_message"] = (
+            f"You don't have access to {collection} analytics. "
+            f"Your current analytics access: "
+            f"{[k for k in collection_agents if k.endswith('_ANALYTICS')]}"
+        )
+        return state
+
+    # Use the first available persona if not explicitly set
+    if not state.get("selected_agent_role") or state["selected_agent_role"] not in user_personas:
+        state["selected_agent_role"] = user_personas[0]
+
+    state["has_permission"] = True
+    return state
+
+
+# ─── Node 2: Permission Blocked ───────────────────────────────────────────────
+
+def analytics_permission_blocked_node(state: AnalyticsState) -> AnalyticsState:
+    """Emit the denial message as an AIMessage."""
+    denial = state.get("denial_message") or "You don't have permission for this analytics query."
+    msgs = list(state.get("messages", []))
+    msgs.append(AIMessage(content=denial))
+    state["messages"] = msgs
+    return state
+
+
+# ─── Node 3: Intent Classifier ────────────────────────────────────────────────
+
+def analytics_intent_classifier_node(state: AnalyticsState) -> AnalyticsState:
+    """
+    Classify the user's question into SQL_DATA, SQL_INSIGHT, RAG, or DENY.
+    Single LLM call. Returns one word only.
+    """
+    user_question = _get_last_user_message(state)
+    persona = state.get("selected_agent_role", "reviewer")
+    collection = state.get("selected_collection", "")
+
+    prompt = f"""Classify this analytics question from a user with persona='{persona}' in module='{collection}'.
+
+User question: "{user_question}"
+
+Classification rules:
+- SQL_DATA: Needs numbers, counts, sums, aggregations, or comparison data to display as chart or table.
+  Examples: "how many hours did I log", "show bar chart of tasks", "list all pending worklogs"
+- SQL_INSIGHT: Needs trend analysis, explanation, or text insight derived from database data.
+  Examples: "what is the trend in my approvals", "why are there so many rejections", "summarize my worklog activity"
+- RAG: Needs policy documents, company procedures, or static knowledge not in the database.
+  Examples: "what is the leave policy", "how do I submit a timesheet"
+- DENY: The question is clearly outside the user's permitted data scope or is a harmful/write operation.
+  Examples: "delete all records", "show me everyone's salary" (for reviewer persona)
+
+Return exactly one word: SQL_DATA, SQL_INSIGHT, RAG, or DENY"""
+
+    llm = get_llm()
+    response = llm.invoke([SystemMessage(content=prompt)])
+    intent = (response.content or "").strip().upper()
+
+    # Normalize to valid values
+    if intent not in {"SQL_DATA", "SQL_INSIGHT", "RAG", "DENY"}:
+        intent = "SQL_DATA"  # Default to SQL_DATA if LLM returns unexpected value
+
+    state["intent_type"] = intent
+    return state
+
+
+# ─── Node 4: SQL Generator ────────────────────────────────────────────────────
+
+def analytics_sql_generator_node(state: AnalyticsState) -> AnalyticsState:
+    """
+    Generate MariaDB SELECT SQL from the user's question and schema description.
+    Schema description already encodes persona-level row filters.
+    """
+    user_question = _get_last_user_message(state)
+    collection = state["selected_collection"]
+    persona = state["selected_agent_role"]
+    emp_id = state["user_id"]
+    dept = state.get("user_dept", "")
+
+    schema_block = build_schema_description(collection, persona, emp_id, dept)
+    module_name = COLLECTION_TABLE_MAP.get(collection, {}).get(
+        "module_display_name", collection
+    )
+
+    prompt = f"""You are a SQL analyst for {module_name}.
+User: {state.get('user_name', 'Employee')} (emp_id: {emp_id}, role: {persona})
+
+Available database tables (MariaDB):
+{schema_block}
+
+STRICT RULES:
+1. Write ONLY a SELECT statement. No INSERT, UPDATE, DELETE, DROP, ALTER, or TRUNCATE.
+2. Always apply the ACCESS RULE shown for each table in your WHERE clause.
+3. Use ONLY the table names and column names listed above. No other tables exist.
+4. For time calculations: TimeSpentInSec / 3600.0 = hours. Round to 2 decimal places.
+5. Use standard MariaDB syntax. DATE_SUB(NOW(), INTERVAL N DAY/MONTH/YEAR) for date ranges.
+6. If the question cannot be answered with the available tables, return exactly: CANNOT_ANSWER
+7. Return ONLY the SQL query. No explanation, no markdown, no backticks.
+
+User question: "{user_question}"
+
+SQL:"""
+
+    llm = get_llm()
+    response = llm.invoke([SystemMessage(content=prompt)])
+    generated = (response.content or "").strip()
+
+    # Remove markdown code fences if LLM added them
+    generated = re.sub(r'^```sql\s*', '', generated, flags=re.IGNORECASE)
+    generated = re.sub(r'^```\s*', '', generated)
+    generated = re.sub(r'\s*```$', '', generated)
+    generated = generated.strip()
+
+    if generated.upper() == "CANNOT_ANSWER" or not generated:
+        state["sql_error"] = (
+            "I cannot answer this question with the available data. "
+            "Try asking about specific fields like hours logged, task counts, "
+            "approval status, or leave balances."
+        )
+        state["generated_sql"] = None
+    else:
+        state["generated_sql"] = generated
+
+    return state
+
+
+# ─── Node 5: SQL Validator ────────────────────────────────────────────────────
+
+def analytics_sql_validator_node(state: AnalyticsState) -> AnalyticsState:
+    """Validate generated SQL for safety before execution."""
+    if state.get("sql_error") or not state.get("generated_sql"):
+        return state  # Already errored in generator
+
+    is_valid, error_msg = validate_sql(
+        sql=state["generated_sql"],
+        collection=state["selected_collection"],
+        persona=state["selected_agent_role"],
+        emp_id=state["user_id"],
+    )
+
+    if not is_valid:
+        state["sql_error"] = f"Query could not be executed: {error_msg}"
+        state["generated_sql"] = None
+
+    return state
+
+
+# ─── Node 6: SQL Executor ─────────────────────────────────────────────────────
+
+def analytics_sql_executor_node(state: AnalyticsState) -> AnalyticsState:
+    """Execute validated SQL against MariaDB. Read-only."""
+    if state.get("sql_error") or not state.get("generated_sql"):
+        return state
+
+    sql = state["generated_sql"]
+    db = SessionLocal()
+    try:
+        result = db.execute(text(sql))
+        columns = list(result.keys())
+        rows = [dict(zip(columns, row)) for row in result.fetchmany(10000)]
+        state["sql_result"] = rows
+        if not rows:
+            state["sql_error"] = "The query returned no results for your question."
+    except Exception as e:
+        # Never expose raw DB errors — log them, return safe message
+        import logging
+        logging.getLogger(__name__).error(f"Analytics SQL execution error: {e}")
+        state["sql_error"] = (
+            "There was a problem running your query. "
+            "Try rephrasing your question or being more specific."
+        )
+    finally:
+        db.close()
+
+    return state
+
+
+# ─── Node 7: Output Formatter ─────────────────────────────────────────────────
+
+def analytics_output_formatter_node(state: AnalyticsState) -> AnalyticsState:
+    """
+    Format results as chart spec, table data, or text insight.
+    Decision based on intent_type and keywords in user question.
+    """
+    intent = state.get("intent_type", "SQL_DATA")
+
+    # Handle RAG path
+    if intent == "RAG":
+        state["output_type"] = "text"
+        state["text_response"] = (
+            "Document-based insights are not available in the current version. "
+            "I can help you analyze your operational data — try asking for counts, "
+            "trends, summaries, or specific metrics from your records."
+        )
+        return state
+
+    # Handle SQL errors
+    if state.get("sql_error"):
+        state["output_type"] = "text"
+        state["text_response"] = state["sql_error"]
+        return state
+
+    sql_result = state.get("sql_result", [])
+    user_question = _get_last_user_message(state)
+    llm = get_llm()
+
+    # Detect chart intent from user question
+    chart_keywords = {
+        "bar", "pie", "line", "chart", "graph", "plot",
+        "visualize", "visualization", "show me", "display"
+    }
+    question_lower = user_question.lower()
+    wants_chart = any(kw in question_lower for kw in chart_keywords)
+
+    # SQL_INSIGHT path — always text
+    if intent == "SQL_INSIGHT":
+        data_sample = json.dumps(sql_result[:200], default=str)
+        insight_prompt = f"""The user asked: "{user_question}"
+
+Here is the data retrieved from the database:
+{data_sample}
+
+Provide a clear, concise analysis based on this data.
+Focus on trends, patterns, and meaningful observations.
+Write in plain English. Maximum 3 paragraphs.
+Do not mention SQL or database internals."""
+
+        response = llm.invoke([SystemMessage(content=insight_prompt)])
+        state["output_type"] = "text"
+        state["text_response"] = response.content or ""
+        return state
+
+    # SQL_DATA path — chart or table
+    if wants_chart:
+        data_sample = json.dumps(sql_result[:100], default=str)
+        chart_prompt = f"""The user asked: "{user_question}"
+
+SQL query returned this data:
+{data_sample}
+
+Generate a valid ECharts option object (JSON) that best visualizes this data.
+Choose the most appropriate chart type: bar, line, or pie based on the data structure.
+Include proper titles, axis labels, and legends.
+
+REQUIREMENTS:
+- Return ONLY the JSON object. No explanation, no markdown, no backticks.
+- The JSON must be valid and parseable by JavaScript JSON.parse().
+- Use ECharts v5 syntax.
+- Keep it simple and readable.
+
+ECharts option JSON:"""
+
+        response = llm.invoke([SystemMessage(content=chart_prompt)])
+        raw = (response.content or "").strip()
+        raw = re.sub(r'^```json\s*', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'^```\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+
+        try:
+            chart_spec = json.loads(raw.strip())
+            state["output_type"] = "chart"
+            state["chart_spec"] = chart_spec
+        except json.JSONDecodeError:
+            # Fallback to table if chart JSON is malformed
+            state["output_type"] = "table"
+            state["table_data"] = _rows_to_table(sql_result)
+    else:
+        state["output_type"] = "table"
+        state["table_data"] = _rows_to_table(sql_result)
+
+    return state
+
+
+# ─── Node 8: Error Handler ────────────────────────────────────────────────────
+
+def analytics_error_node(state: AnalyticsState) -> AnalyticsState:
+    """Emit error as an AIMessage."""
+    error = state.get("sql_error") or "Something went wrong. Please try again."
+    msgs = list(state.get("messages", []))
+    msgs.append(AIMessage(content=error))
+    state["messages"] = msgs
+    state["output_type"] = "text"
+    state["text_response"] = error
+    return state
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _rows_to_table(rows: list) -> dict:
+    """Convert list of dicts to {columns, rows} format for frontend."""
+    if not rows:
+        return {"columns": [], "rows": []}
+    columns = list(rows[0].keys())
+    table_rows = [[str(row.get(col, "")) for col in columns] for row in rows]
+    return {"columns": columns, "rows": table_rows}
+
+
+# ─── Router Functions (used by graph conditional edges) ───────────────────────
+
+def permission_router(state: AnalyticsState) -> Literal["proceed", "blocked"]:
+    return "proceed" if state.get("has_permission") else "blocked"
+
+def intent_router(state: AnalyticsState) -> Literal["SQL_DATA", "SQL_INSIGHT", "RAG", "DENY"]:
+    return state.get("intent_type", "SQL_DATA")
+
+def validation_router(state: AnalyticsState) -> Literal["valid", "invalid"]:
+    return "invalid" if state.get("sql_error") else "valid"
+
+def execution_router(state: AnalyticsState) -> Literal["success", "error"]:
+    return "error" if state.get("sql_error") else "success"
+4.5 Graph (analytics_workflow/graph.py)
+python
+from langgraph.graph import StateGraph, END
+from app.workflows.analytics_workflow.state import AnalyticsState
+from app.workflows.analytics_workflow.nodes import (
+    analytics_permission_check_node,
+    analytics_permission_blocked_node,
+    analytics_intent_classifier_node,
+    analytics_sql_generator_node,
+    analytics_sql_validator_node,
+    analytics_sql_executor_node,
+    analytics_output_formatter_node,
+    analytics_error_node,
+    permission_router,
+    intent_router,
+    validation_router,
+    execution_router,
+)
+
+_analytics_graph = None
+
+def build_analytics_graph():
+    g = StateGraph(AnalyticsState)
+
+    g.add_node("permission_check", analytics_permission_check_node)
+    g.add_node("permission_blocked", analytics_permission_blocked_node)
+    g.add_node("intent_classifier", analytics_intent_classifier_node)
+    g.add_node("sql_generator", analytics_sql_generator_node)
+    g.add_node("sql_validator", analytics_sql_validator_node)
+    g.add_node("sql_executor", analytics_sql_executor_node)
+    g.add_node("output_formatter", analytics_output_formatter_node)
+    g.add_node("error_handler", analytics_error_node)
+
+    g.set_entry_point("permission_check")
+
+    g.add_conditional_edges("permission_check", permission_router, {
+        "proceed": "intent_classifier",
+        "blocked": "permission_blocked",
+    })
+
+    g.add_conditional_edges("intent_classifier", intent_router, {
+        "SQL_DATA": "sql_generator",
+        "SQL_INSIGHT": "sql_generator",
+        "RAG": "output_formatter",
+        "DENY": "permission_blocked",
+    })
+
+    g.add_edge("sql_generator", "sql_validator")
+
+    g.add_conditional_edges("sql_validator", validation_router, {
+        "valid": "sql_executor",
+        "invalid": "error_handler",
+    })
+
+    g.add_conditional_edges("sql_executor", execution_router, {
+        "success": "output_formatter",
+        "error": "error_handler",
+    })
+
+    g.add_edge("output_formatter", END)
+    g.add_edge("permission_blocked", END)
+    g.add_edge("error_handler", END)
+
+    return g.compile()
+
+def get_analytics_graph():
+    global _analytics_graph
+    if _analytics_graph is None:
+        _analytics_graph = build_analytics_graph()
+    return _analytics_graph
+4.6 Chat Controller Changes
+
+Add import at top of chat_controller.py:
+
+python
+from app.workflows.analytics_workflow import get_analytics_graph
+
+Add class attribute:
+
+python
+_analytics_graph = None
+
+@classmethod
+def get_analytics_graph(cls):
+    if cls._analytics_graph is None:
+        cls._analytics_graph = get_analytics_graph()
+    return cls._analytics_graph
+
+Update collection routing:
+
+python
+collection = (request_data.get("collection_name") or "").upper()
+
+if collection.endswith("_ANALYTICS"):
+    graph = ChatController.get_analytics_graph()
+elif collection == "HRMS":
+    graph = ChatController.get_hrms_graph()
+elif collection == "MRR":
+    graph = ChatController.get_mrr_graph()
+else:
+    graph = ChatController.get_rms_graph()
+
+Update initial_state construction for analytics:
+
+python
+if collection.endswith("_ANALYTICS"):
+    initial_state = {
+        "user_id": user.get("sub", ""),
+        "user_name": user.get("name", ""),
+        "user_dept": user.get("dept", ""),
+        "collection_agents": user.get("collection_agents", {}),
+        "selected_collection": collection,
+        "selected_agent_role": request_data.get("agent_role") or None,
+        "has_permission": False,
+        "denial_message": None,
+        "messages": [],       # history injected below
+        "intent_type": None,
+        "generated_sql": None,
+        "sql_result": None,
+        "sql_error": None,
+        "output_type": None,
+        "chart_spec": None,
+        "table_data": None,
+        "text_response": None,
+    }
+    # Inject conversation history
+    for msg in (request_data.get("chat_history") or []):
+        role = (msg.get("role") or "").lower()
+        content = msg.get("content") or ""
+        if role == "user":
+            initial_state["messages"].append(HumanMessage(content=content))
+        elif role == "assistant":
+            initial_state["messages"].append(AIMessage(content=content))
+    initial_state["messages"].append(HumanMessage(content=user_msg_text))
+
+Add analytics SSE event handling in the streaming loop:
+
+In the astream_events loop, after the existing on_chat_model_stream handler, add:
+
+python
+elif event_kind == "on_chain_end":
+    node_name = event.get("name", "")
+    output = event.get("data", {}).get("output", {})
+
+    if node_name == "output_formatter":
+        output_type = output.get("output_type")
+
+        if output_type == "chart":
+            chart_spec = output.get("chart_spec")
+            if chart_spec:
+                yield json.dumps({"type": "chart", "chart_spec": chart_spec})
+
+        elif output_type == "table":
+            table_data = output.get("table_data")
+            if table_data:
+                yield json.dumps({
+                    "type": "table",
+                    "columns": table_data.get("columns", []),
+                    "rows": table_data.get("rows", []),
+                })
+
+        elif output_type == "text":
+            text = output.get("text_response", "")
+            if text:
+                yield json.dumps({"type": "chunk", "text": text})
+
+    elif node_name in ("permission_blocked", "error_handler"):
+        msgs = output.get("messages", [])
+        if msgs:
+            last_msg = msgs[-1]
+            content = getattr(last_msg, "content", "") or ""
+            if content:
+                yield json.dumps({"type": "chunk", "text": content})
+4.7 Database Seed
+sql
+-- Run once. Adjust group_idx values to match actual dpah_module_usergroups entries.
+
+-- 1. Add analytics agents to existing collections
+-- (No new module needed — analytics agents are added to existing module collections)
+
+-- For RMS module: find the collection_id for the RMS collection
+-- Add RMS analytics agents
+INSERT INTO dpah_agents 
+  (agent_name, collection_id, department, description, model_name, is_active)
+SELECT 
+  'RMS_ANALYTICS_REVIEWER',
+  (SELECT collection_id FROM dpah_collections WHERE collection_name = 'RMS' LIMIT 1),
+  'RMS',
+  'Analytics agent for reviewer persona in RMS',
+  'default',
+  1;
+
+INSERT INTO dpah_agents 
+  (agent_name, collection_id, department, description, model_name, is_active)
+SELECT 
+  'RMS_ANALYTICS_APPROVER',
+  (SELECT collection_id FROM dpah_collections WHERE collection_name = 'RMS' LIMIT 1),
+  'RMS',
+  'Analytics agent for approver persona in RMS',
+  'default',
+  1;
+
+-- Repeat for HRMS and MRR collections.
+
+-- 2. Grant role access to analytics agents
+-- JUNIOR gets reviewer analytics
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT 
+  (SELECT role_id FROM dpah_roles WHERE role_name = 'JUNIOR'),
+  <group_idx_value>,   -- Developer: replace with actual group_idx
+  agent_id,
+  'system'
+FROM dpah_agents 
+WHERE agent_name IN ('RMS_ANALYTICS_REVIEWER', 'HRMS_ANALYTICS_REVIEWER');
+
+-- SENIOR gets all analytics
+INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
+SELECT 
+  (SELECT role_id FROM dpah_roles WHERE role_name = 'SENIOR'),
+  <group_idx_value>,
+  agent_id,
+  'system'
+FROM dpah_agents 
+WHERE agent_name LIKE '%_ANALYTICS%';
+PART 5 — FRONTEND SPECIFICATION
+5.1 New Page: Analytics (src/pages/Analytics.jsx)
+Route: /dashboard/analytics
+Access: All authenticated users (RBAC enforced server-side)
+
+Layout:
+┌─────────────────────────────────────────────────────┐
+│  Analytics                              [Module ▼]   │  ← header with module dropdown
+├─────────────────────────────────────────────────────┤
+│                                                      │
+│  [Quick prompt pills]                                │  ← shortcut questions
+│                                                      │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  Chat messages area (scrollable)              │   │
+│  │                                              │   │
+│  │  [AI message — text]                         │   │
+│  │  [AI message — chart (ECharts)]              │   │
+│  │  [AI message — table (AG-Grid)]              │   │
+│  │  [User message]                              │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                      │
+│  [Chat input] [Send]                                 │
+└─────────────────────────────────────────────────────┘
+
+Module dropdown options: RMS, HRMS, MRR
+Default: RMS (or first accessible module from user's collection_agents)
+
+When module changes: clear chat history, reset conversation
+5.2 Module Selector Logic
+javascript
+// Derive accessible analytics modules from JWT
+const userProfile = JSON.parse(localStorage.getItem('user_profile') || '{}');
+const collectionAgents = userProfile.collection_agents || {};
+
+const analyticsModules = Object.keys(collectionAgents)
+  .filter(k => k.endsWith('_ANALYTICS'))
+  .map(k => ({
+    value: k,                                    // "RMS_ANALYTICS"
+    label: k.replace('_ANALYTICS', ''),         // "RMS"
+  }));
+
+// If user has no analytics access, show empty state
+// collection_name sent to backend = selectedModule (e.g., "RMS_ANALYTICS")
+5.3 New SSE Event Handlers in useChatStream.js
+
+Add to the existing SSE event type switch:
+
+javascript
+case 'chart':
+  // parsed.chart_spec is an ECharts option object
+  setMessages(prev => {
+    const updated = [...prev];
+    const lastIdx = updated.length - 1;
+    updated[lastIdx] = {
+      ...updated[lastIdx],
+      type: 'chart',
+      chartSpec: parsed.chart_spec,
+      content: '',
+      isTyping: false,
+    };
+    return updated;
+  });
+  break;
+
+case 'table':
+  setMessages(prev => {
+    const updated = [...prev];
+    const lastIdx = updated.length - 1;
+    updated[lastIdx] = {
+      ...updated[lastIdx],
+      type: 'table',
+      tableData: { columns: parsed.columns, rows: parsed.rows },
+      content: '',
+      isTyping: false,
+    };
+    return updated;
+  });
+  break;
+5.4 New Component: AnalyticsChartRenderer.jsx
+Location: src/components/AnalyticsChartRenderer.jsx
+
+Props:
+  chartSpec: object    — ECharts option object from backend
+
+Behavior:
+  - Initialize ECharts on a div ref using useEffect
+  - Container: width=100%, height=350px
+  - Apply ECharts 'dark' theme when body does NOT have .light-mode class
+  - Apply default ECharts theme when body HAS .light-mode class
+  - Re-render when chartSpec changes (call chart.setOption(chartSpec))
+  - Include download button: chart.getDataURL() → create <a> and click
+  - If chartSpec is null/undefined: show placeholder "Chart data unavailable"
+  - Cleanup: chart.dispose() on component unmount
+
+Implementation note: Import echarts from 'echarts/core' with required components,
+or use 'echarts-for-react' wrapper if installed.
+5.5 New Component: AnalyticsTableRenderer.jsx
+Location: src/components/AnalyticsTableRenderer.jsx
+
+Props:
+  columns: string[]    — column header names
+  rows: string[][]     — row data (all values as strings)
+
+Behavior:
+  - If rows.length <= 20: render plain HTML table with existing .ts-table CSS class
+  - If rows.length > 20: render AG-Grid with pagination (pageSize=20)
+  - Always show row count: "Showing {rows.length} rows"
+  - Include CSV export button (build CSV string from columns + rows, trigger download)
+  - Horizontal scroll wrapper for wide tables
+  - Apply existing dark/light theme classes
+5.6 Message Rendering in ChatOverlay or Analytics Page
+javascript
+// In the message renderer, add chart and table branches:
+
+function renderMessageContent(message) {
+  if (message.type === 'chart') {
+    return <AnalyticsChartRenderer chartSpec={message.chartSpec} />;
+  }
+  if (message.type === 'table') {
+    return (
+      <AnalyticsTableRenderer 
+        columns={message.tableData.columns} 
+        rows={message.tableData.rows} 
+      />
+    );
+  }
+  // existing text/form/etc rendering
+  return <MarkdownMessage content={message.content} />;
+}
+5.7 Sidebar Addition
+
+Add "Analytics" nav item to src/components/Sidebar.jsx:
+
+javascript
+import { BarChart2 } from 'lucide-react';
+
+// In nav items list:
+<NavLink
+  to="/dashboard/analytics"
+  className={({ isActive }) =>
+    isActive ? 'nav-link active-link' : 'nav-link'
+  }
+>
+  <BarChart2 size={18} className="nav-icon" />
+  {!isCollapsed && <span>Analytics</span>}
+</NavLink>
+5.8 Quick Prompts for Analytics
+
+Add to src/utils/quickPrompts.js:
+
+javascript
+"RMS_ANALYTICS": {
+  "reviewer": [
+    "How many hours did I log this week? Show as bar chart.",
+    "Show my task completion status for this month.",
+    "What is my average daily hours logged over the past 30 days?",
+  ],
+  "creator": [
+    "Show all tasks I created and their completion status.",
+    "Which tasks have the most hours logged against them?",
+  ],
+  "approver": [
+    "Pie chart: approved vs rejected timesheets this month.",
+    "Which employees have the most pending approvals?",
+    "Show total hours logged per employee this week.",
+  ],
+},
+"HRMS_ANALYTICS": {
+  "reviewer": [
+    "How many leave days have I used this year?",
+    "Show my payslip for last month.",
+    "What is my leave balance across all leave types?",
+  ],
+  "approver": [
+    "How many leave requests are pending approval?",
+    "Show leave requests by type this month as a pie chart.",
+    "Which employees have taken the most leaves this year?",
+  ],
+},
+"MRR_ANALYTICS": {
+  // Developer to add based on MRR workflow context
+},
+PART 6 — IMPLEMENTATION SEQUENCE
+Week 1 — Backend
+Day	Task	Done When
+Mon	Create analytics_workflow/ folder. Copy schema_registry.py, sql_validator.py, state.py, config.py exactly as written in this document. Fill MRR section of schema_registry. Seed DB (new analytics agents, role grants).	python -c "from app.workflows.analytics_workflow import get_analytics_graph; print('OK')" passes
+Tue	Implement nodes.py — all 8 node functions.	Each node can be imported without error
+Wed	Implement graph.py. Wire into chat_controller.py (import, class method, routing).	Server starts cleanly. Postman POST /api/v1/chat/stream with collection_name: "RMS_ANALYTICS" returns a response (even if just permission denied)
+Thu	End-to-end backend test via Postman. Test all 4 intent types (SQL_DATA, SQL_INSIGHT, RAG, DENY). Test all 3 personas (reviewer, creator, approver) for RMS. Verify reviewer cannot see other users' data.	All 12 test cases pass (4 intents × 3 personas)
+Fri	HRMS analytics backend test. Fix any bugs found Thu/Fri.	HRMS analytics returns correct data per persona
+Week 2 — Frontend
+Day	Task	Done When
+Mon	Add sidebar Analytics nav item. Create Analytics.jsx page with module dropdown and basic chat UI. Wire route in App.jsx.	User can navigate to /dashboard/analytics and see the page
+Tue	Add chart and table SSE event handlers in useChatStream.js.	Console shows correct event types being received
+Wed	Build AnalyticsChartRenderer.jsx. Integrate into Analytics page message renderer.	Bar chart renders correctly for "show hours by task as bar chart"
+Thu	Build AnalyticsTableRenderer.jsx with AG-Grid and CSV export.	Table renders, CSV downloads correctly
+Fri	Add quick prompts. Full browser test across all modules and personas. Light/dark mode check.	All personas work, charts/tables render in both themes
+PART 7 — SECURITY RULES (NON-NEGOTIABLE)
+The following tables are NEVER referenced in any LLM prompt, ever: dpah_roles, dpah_user_roles, dpah_role_agent_access, dpah_collections, dpah_agents, dpah_modules, dpah_module_usergroups
+Every LLM-generated SQL string must pass through sql_validator.py before db.execute() is called. No exceptions.
+The database user executing analytics queries must have SELECT-only permissions. If a read-only DB user does not exist, create one before Week 1 Day 1: GRANT SELECT ON dpintranet.* TO 'analytics_reader'@'%' IDENTIFIED BY 'password';
+Never return raw database error messages to the user. Catch all exceptions, log the full error server-side, return a safe generic message.
+Row cap: never return more than 10,000 rows. result.fetchmany(10000).
+Query timeout: configure at the MariaDB session level or use a 30-second application-level timeout.
+PART 8 — OPEN ITEMS (Developer to complete before Day 1)
+Item	Who	Details
+MRR table schema	Developer	Fill MRR_ANALYTICS section in schema_registry.py — table names, column descriptions, and per-persona filter columns
+group_idx values	Developer	Query dpah_module_usergroups and use correct group_idx values in DB seed SQL
+Read-only DB user	DBA/Developer	Create MariaDB analytics reader user with SELECT-only grants
+ECharts import path	Developer	Confirm whether to use echarts directly or echarts-for-react wrapper
+Existing POC code	Developer	Review SQL generation POC before implementing analytics_sql_generator_node — extract reusable patterns
+
+End of document. All architectural decisions are final for Phase 1.
+Deviations require discussion before implementation.
 
