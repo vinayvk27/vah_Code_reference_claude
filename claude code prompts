@@ -1073,3 +1073,34 @@ Existing POC code	Developer	Review SQL generation POC before implementing analyt
 End of document. All architectural decisions are final for Phase 1.
 Deviations require discussion before implementation.
 
+
+
+
+
+1. SQL Error Recovery
+
+Your node flow shows sql_validator_node routing invalid queries directly to error_node and ending the execution.
+
+    Do you want to keep this as a strict fail-fast mechanism for Phase 1, or should we implement a self-correction loop? (e.g., routing the syntax error back to sql_generator_node for a maximum of 1-2 retry attempts before failing).
+
+2. RBAC Enforcement Mechanism
+
+You noted that we must reuse the JUNIOR/MID/SENIOR roles and absolutely cannot expose the RBAC system tables to the LLM.
+
+    How is role enforcement happening at execution? Are we dynamically filtering the database schemas passed to the LLM in schema_registry.py based on the user's role, or will sql_executor_node execute the queries using a database-level user role (e.g., row-level security) to prevent unauthorized data access if the LLM hallucinates a restricted table?
+
+3. SQL_DATA vs. SQL_INSIGHT Execution
+
+The graph splits these into two branches before converging.
+
+    What is the functional difference downstream? Does SQL_INSIGHT trigger a secondary LLM call in output_formatter_node to generate a synthesized text narrative about the data, while SQL_DATA simply passes the raw query results back as a table/chart SSE event?
+
+4. Chart Generation
+
+For SSE chart events, is the frontend expecting the output_formatter_node to determine the chart type and return a specific UI configuration (like a Chart.js/Recharts JSON payload), or will we just return standard JSON data arrays and let the frontend decide how to plot it?
+
+
+
+** since you have given so many things i didnt given complete thing . i have given till part 3 completely because from part 4 you have given so much coding. so till part 3 i have given 
+to AI and it is asking some questions. please answer in order to proceed. and also since it is a new chat it think i want to provide my cuurent architecture md file which i will do on my own.but
+need to complete evrything with out making it too confused 
