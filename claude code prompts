@@ -1,485 +1,409 @@
-Good timing to pause and understand this properly before touching the database. Let me walk through the full flow from DB to JWT to workflow, specific to your actual schema.
+"""
+Analytics Workflow Nodes
+All node functions for the analytics LangGraph.
+Each function takes AnalyticsState and returns updated AnalyticsState.
+"""
 
----
+import json
+import re
+import logging
+from typing import Literal
 
-## Your RBAC Schema (What You Actually Have)
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from sqlalchemy import text
 
-From your schema documentation:
+# --- Ensure these import paths match your actual project structure ---
+from app.dao.database import SessionLocal
+from app.workflows.analytics_workflow.state import AnalyticsState
+from app.core.llm import get_llm, get_llm_non_streaming
+from app.workflows.analytics_workflow.schema_registry import (
+    COLLECTION_TABLE_MAP,
+    build_schema_description,
+)
+from app.workflows.analytics_workflow.sql_validator import validate_generated_sql
 
-```
-dpah_modules          → top level (RMS, HRMS, MRR, ANALYTICS...)
-dpah_collections      → belongs to a module via module_id
-dpah_agents           → belongs to a collection via collection_id
-dpah_roles            → JUNIOR, MID, SENIOR
-dpah_user_roles       → emp_id → role_id mapping
-dpah_module_usergroups → module_id → group_idx mapping
-dpah_role_agent_access → role_id + group_id + agent_id (three-way mapping)
-```
+logger = logging.getLogger(__name__)
 
-The permission resolution is: **who is this user → what role do they have → what group are they in → what agents can that role+group access → which collection does each agent belong to → which module is that collection in**
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
----
+def _get_last_user_message(state: AnalyticsState) -> str:
+    for msg in reversed(state.get("messages", [])):
+        if isinstance(msg, HumanMessage):
+            return msg.content or ""
+    return ""
 
-## Step 1 — Understand What Needs to Exist in DB for Analytics
+def _rows_to_table(rows: list) -> dict:
+    """Convert list of dicts to {columns, rows} format for frontend."""
+    if not rows:
+        return {"columns": [], "rows": []}
+    columns = list(rows[0].keys())
+    table_rows = [[str(row.get(col, "")) for col in columns] for row in rows]
+    return {"columns": columns, "rows": table_rows}
 
-For analytics to work, you need rows in these tables:
 
-### 1a. A new module row
+# ─── Node 1: Permission Check ─────────────────────────────────────────────────
 
-```sql
-INSERT INTO dpah_modules 
-  (module_name, module_description, created_by, updated_by)
-VALUES 
-  ('ANALYTICS', 'Natural language analytics over operational data', 'system', 'system');
-```
+def analytics_permission_check_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] permission_check_node entered. user_id={state.get('user_id')}, collection={state.get('selected_collection')}, available_agents={state.get('collection_agents')}", flush=True)
+    
+    collection = state.get("selected_collection", "")
+    collection_agents = state.get("collection_agents", {})
+    user_personas = collection_agents.get(collection, [])
 
-Check what module_id it gets:
-```sql
-SELECT module_id, module_name FROM dpah_modules;
-```
+    if not user_personas:
+        state["has_permission"] = False
+        state["denial_message"] = (
+            f"You don't have access to {collection} analytics. "
+            f"Your current analytics access: "
+            f"{[k for k in collection_agents if k.endswith('_ANALYTICS')]}"
+        )
+        print(f"[DIAG-ANALYTICS] permission_check_node -> BLOCKED (No personas found for {collection})", flush=True)
+        return state
 
-### 1b. New collection rows (one per module you want analytics for)
+    # Use the first available persona if not explicitly set
+    if not state.get("selected_agent_role") or state.get("selected_agent_role") not in user_personas:
+        state["selected_agent_role"] = user_personas[0]
 
-```sql
--- Assuming ANALYTICS module_id is, say, 5
-INSERT INTO dpah_collections 
-  (collection_name, module_id, description, is_sensitive, is_active)
-VALUES
-  ('RMS_ANALYTICS', 5, 'Analytics over RMS data', 0, 1),
-  ('HRMS_ANALYTICS', 5, 'Analytics over HRMS data', 1, 1),
-  ('MRR_ANALYTICS', 5, 'Analytics over MRR data', 0, 1);
-```
-
-Check collection_ids:
-```sql
-SELECT collection_id, collection_name FROM dpah_collections WHERE module_id = 5;
-```
-
-### 1c. New agent rows (one per persona per collection)
-
-```sql
--- Assuming RMS_ANALYTICS collection_id = 10, HRMS_ANALYTICS = 11, MRR_ANALYTICS = 12
--- (replace with actual IDs from your query above)
-
-INSERT INTO dpah_agents 
-  (agent_name, collection_id, department, description, model_name, is_active)
-VALUES
-  ('RMS_ANALYTICS_REVIEWER', 10, 'RMS', 'RMS analytics for reviewer/filler', 'default', 1),
-  ('RMS_ANALYTICS_APPROVER', 10, 'RMS', 'RMS analytics for approver', 'default', 1),
-  ('HRMS_ANALYTICS_REVIEWER', 11, 'HRMS', 'HRMS analytics for reviewer/filler', 'default', 1),
-  ('HRMS_ANALYTICS_APPROVER', 11, 'HRMS', 'HRMS analytics for approver', 'default', 1),
-  ('MRR_ANALYTICS_REVIEWER', 12, 'MRR', 'MRR analytics for reviewer/filler', 'default', 1),
-  ('MRR_ANALYTICS_APPROVER', 12, 'MRR', 'MRR analytics for approver', 'default', 1);
-```
-
-Check agent_ids:
-```sql
-SELECT agent_id, agent_name FROM dpah_agents WHERE agent_name LIKE '%ANALYTICS%';
-```
-
----
-
-## Step 2 — Understand group_idx Before Inserting Access
-
-This is the part that confuses most people. Look at your existing `dpah_module_usergroups` data first:
-
-```sql
-SELECT * FROM dpah_module_usergroups;
-```
-
-This table maps modules to user groups. The `group_idx` is a reference to a user group concept. Before inserting role_agent_access for analytics, you need to know what group_idx values exist for the ANALYTICS module.
-
-Two scenarios:
-
-**Scenario A — You already have groups for other modules and want to reuse them:**
-Check what group_idx values exist and which module they belong to. Use the same group_idx pattern you used for RMS/HRMS/MRR agents.
-
-**Scenario B — You need to create a new group for ANALYTICS module:**
-```sql
-INSERT INTO dpah_module_usergroups 
-  (module_id, group_idx, is_active, assigned_by)
-VALUES
-  (5, 1, 1, 'system');  -- module_id=5 is ANALYTICS, group_idx=1 is your first group
-```
-
-Run this query to see what your existing role_agent_access looks like for reference:
-```sql
-SELECT raa.role_id, r.role_name, raa.group_id, raa.agent_id, a.agent_name
-FROM dpah_role_agent_access raa
-JOIN dpah_roles r ON r.role_id = raa.role_id
-JOIN dpah_agents a ON a.agent_id = raa.agent_id
-LIMIT 20;
-```
-
-This shows you the exact pattern used for existing agents. Match that pattern for analytics agents.
-
-### 1d. Role-agent access grants
-
-```sql
--- Replace agent_ids with actual values from your query above
--- Replace group_id with the actual group_idx from dpah_module_usergroups
-
--- JUNIOR gets reviewer analytics (can query own data only)
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES
-  (7, <group_id>, <RMS_ANALYTICS_REVIEWER_agent_id>, 'system'),
-  (7, <group_id>, <HRMS_ANALYTICS_REVIEWER_agent_id>, 'system'),
-  (7, <group_id>, <MRR_ANALYTICS_REVIEWER_agent_id>, 'system');
-
--- SENIOR gets all analytics
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES
-  (9, <group_id>, <RMS_ANALYTICS_REVIEWER_agent_id>, 'system'),
-  (9, <group_id>, <RMS_ANALYTICS_APPROVER_agent_id>, 'system'),
-  (9, <group_id>, <HRMS_ANALYTICS_REVIEWER_agent_id>, 'system'),
-  (9, <group_id>, <HRMS_ANALYTICS_APPROVER_agent_id>, 'system'),
-  (9, <group_id>, <MRR_ANALYTICS_REVIEWER_agent_id>, 'system'),
-  (9, <group_id>, <MRR_ANALYTICS_APPROVER_agent_id>, 'system');
-```
-
----
-
-## Step 3 — How JWT Is Built (Code Level)
-
-After a user logs in, your `auth_controller.py` builds the JWT. The permission resolution happens like this:
-
-```python
-# Pseudocode of what auth_controller does today:
-
-# 1. Get user's role_ids from dpah_user_roles
-roles = db.query(UserRole).filter(UserRole.emp_id == emp_no).all()
-role_ids = [r.role_id for r in roles]
-
-# 2. Get all agents accessible to these roles via dpah_role_agent_access
-accessible_agents = db.query(Agent).join(RoleAgentAccess).filter(
-    RoleAgentAccess.role_id.in_(role_ids)
-).all()
-
-# 3. For each agent, find its collection, then find that collection's module
-# Group agents by collection_name, extract persona from agent_name suffix
-collection_agents = {}
-for agent in accessible_agents:
-    collection = agent.collection.collection_name  # e.g., "RMS_ANALYTICS"
-    persona = extract_persona(agent.agent_name)    # e.g., "reviewer" from "RMS_ANALYTICS_REVIEWER"
-    if collection not in collection_agents:
-        collection_agents[collection] = []
-    collection_agents[collection].append(persona)
-
-# 4. Pack into JWT
-payload = {
-    "sub": emp_no,
-    "name": user.name,
-    "dept": user.dept,
-    "collection_agents": collection_agents,
-    ...
-}
-```
-
-**The result for a JUNIOR user (emp_id=2633) after your DB inserts:**
-
-```json
-{
-  "sub": "2633",
-  "name": "Junior Employee",
-  "dept": "EAG",
-  "collection_agents": {
-    "RMS": ["reviewer"],
-    "HRMS": ["reviewer"],
-    "RMS_ANALYTICS": ["reviewer"],
-    "HRMS_ANALYTICS": ["reviewer"],
-    "MRR_ANALYTICS": ["reviewer"]
-  }
-}
-```
-
-**For a SENIOR user (emp_id=3117):**
-
-```json
-{
-  "sub": "3117",
-  "name": "Senior Employee",
-  "dept": "EAG",
-  "collection_agents": {
-    "RMS": ["creator", "reviewer", "approver"],
-    "HRMS": ["creator", "reviewer", "approver"],
-    "RMS_ANALYTICS": ["reviewer", "approver"],
-    "HRMS_ANALYTICS": ["reviewer", "approver"],
-    "MRR_ANALYTICS": ["reviewer", "approver"]
-  }
-}
-```
-
----
-
-## Step 4 — How the Workflow Uses the JWT
-
-When a user sends a chat message to analytics, this is what happens in sequence:
-
-```
-POST /api/v1/chat/stream
-{
-  "collection_name": "RMS_ANALYTICS",
-  "message": "Show me hours I logged this week as a bar chart"
-}
-Authorization: Bearer <JWT>
-```
-
-**In `chat_controller.py`:**
-
-```python
-# 1. Decode JWT → get current_user dict
-current_user = decode_jwt(token)
-
-# 2. Route to analytics graph because collection ends with _ANALYTICS
-collection = "RMS_ANALYTICS"
-graph = ChatController.get_analytics_graph()
-
-# 3. Build initial state
-initial_state = {
-    "user_id": current_user["sub"],          # "2633"
-    "user_name": current_user["name"],
-    "user_dept": current_user["dept"],
-    "collection_agents": current_user["collection_agents"],
-    # {"RMS_ANALYTICS": ["reviewer"], ...}
-    "selected_collection": "RMS_ANALYTICS",
-    "selected_agent_role": None,  # will be set by permission_check_node
-    ...
-}
-```
-
-**In `analytics_permission_check_node`:**
-
-```python
-collection = "RMS_ANALYTICS"
-user_personas = state["collection_agents"].get("RMS_ANALYTICS", [])
-# → ["reviewer"]
-
-if not user_personas:
-    # User has NO entry for RMS_ANALYTICS → deny access
-    state["has_permission"] = False
-    state["denial_message"] = "You don't have access to RMS Analytics."
+    state["has_permission"] = True
+    print(f"[DIAG-ANALYTICS] permission_check_node -> GRANTED as '{state['selected_agent_role']}'", flush=True)
     return state
 
-# User has ["reviewer"] → grant access
-state["selected_agent_role"] = "reviewer"
-state["has_permission"] = True
-```
 
-**In `analytics_sql_generator_node`:**
+# ─── Node 2: Permission Blocked ───────────────────────────────────────────────
 
-```python
-# build_schema_description resolves filters dynamically
-schema = build_schema_description(
-    collection="RMS_ANALYTICS",
-    persona="reviewer",
-    emp_id="2633",     # from state["user_id"]
-    dept="EAG",        # from state["user_dept"]
-)
-```
+def analytics_permission_blocked_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] permission_blocked_node entered.", flush=True)
+    denial = state.get("denial_message") or "You don't have permission for this analytics query."
+    msgs = list(state.get("messages", []))
+    msgs.append(AIMessage(content=denial))
+    state["messages"] = msgs
+    return state
 
-This produces:
 
-```
-TABLE: pp_worklogs_demo
-Purpose: Actual time logged by employees against tasks.
-Columns:
-    Idx: INT — Unique worklog ID
-    WorkLogIdx: INT — FK to task table
-    TaskDate: DATE — Date work was performed
-    TimeSpentInSec: INT — Time in seconds. Divide by 3600 for hours.
-    IsApproved: INT — NULL=pending, 1=approved, 0=rejected
-    ApprovedBy: INT — emp_id of approver
-    Resource: INT — emp_id of the employee who logged this time
-    UserRemarks: TEXT — Employee note
+# ─── Node 3: Intent Classifier ────────────────────────────────────────────────
 
-ACCESS RULE: You MUST include WHERE Resource = 2633 in every query on this table.
-```
+def analytics_intent_classifier_node(state: AnalyticsState) -> AnalyticsState:
+    msg_count = len(state.get("messages", []))
+    print(f"[DIAG-ANALYTICS] intent_classifier_node entered. message_count={msg_count}, role={state.get('selected_agent_role')}", flush=True)
+    
+    user_question = _get_last_user_message(state)
+    persona = state.get("selected_agent_role", "reviewer")
+    collection = state.get("selected_collection", "")
 
-The LLM sees this and writes:
+    prompt = f"""Classify this analytics question from a user with persona='{persona}' in module='{collection}'.
 
-```sql
-SELECT 
-    w.WorkLogIdx,
-    SUM(w.TimeSpentInSec) / 3600.0 AS total_hours,
-    t.TaskIdx
-FROM pp_worklogs_demo w
-JOIN pp_project_task_assigment_demo t ON w.WorkLogIdx = t.WorkLogIdx
-WHERE w.Resource = 2633
-AND w.TaskDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-GROUP BY w.WorkLogIdx, t.TaskIdx
-ORDER BY total_hours DESC
-```
+User question: "{user_question}"
 
-Notice `WHERE w.Resource = 2633` is there because the schema told the LLM it must be.
+Classification rules:
+- SQL_DATA: Needs numbers, counts, sums, aggregations, or comparison data to display as chart or table.
+- SQL_INSIGHT: Needs trend analysis, explanation, or text insight derived from database data.
+- RAG: Needs policy documents, company procedures, or static knowledge not in the database.
+- DENY: The question is clearly outside the user's permitted data scope or is a harmful/write operation.
 
----
+Return exactly one word: SQL_DATA, SQL_INSIGHT, RAG, or DENY"""
 
-## Step 5 — How to Test in Postman
+    try:
+        # ⚠️ Use NON-STREAMING so the classification doesn't leak to the frontend UI
+        llm = get_llm_non_streaming()
+        response = llm.invoke([HumanMessage(content=prompt)])
+        intent = (response.content or "").strip().upper()
+        print(f"[DIAG-ANALYTICS] LLM returned raw response: '{intent}'", flush=True)
+    except Exception as e:
+        print(f"[DIAG-ANALYTICS] ❌ LLM CONNECTION ERROR: {e}", flush=True)
+        intent = "ERROR"
 
-### Test 1 — Verify JWT has analytics collections
+    # ⚠️ Removed the silent fallback! If the LLM returns garbage, it will now crash gracefully 
+    # so you can actually debug your prompts and test RAG routing.
+    valid_intents = {"SQL_DATA", "SQL_INSIGHT", "RAG", "DENY"}
+    if intent not in valid_intents:
+        print(f"[DIAG-ANALYTICS] ❌ Invalid intent received: '{intent}'. Forcing ERROR route.", flush=True)
+        state["intent_type"] = "ERROR"
+        state["sql_error"] = f"Intent classifier failed. LLM responded with: {intent}"
+    else:
+        state["intent_type"] = intent
 
-```
-POST /api/v1/auth/login
-Body: { "username": "2633", "password": "<dept>" }
+    return state
 
-Expected in response.user_profile.collection_agents:
+
+# ─── Node 4: SQL Generator (With Advanced Rules) ──────────────────────────────
+
+def analytics_sql_generator_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] sql_generator_node entered.", flush=True)
+    
+    user_question = _get_last_user_message(state)
+    collection = state.get("selected_collection", "")
+    persona = state.get("selected_agent_role", "reviewer")
+    emp_id = state.get("user_id", "")
+
+    schema_block = build_schema_description(collection, persona, emp_id)
+    module_name = COLLECTION_TABLE_MAP.get(collection, {}).get("module_display_name", collection)
+
+    prompt = f"""You are an Expert SQL Data Analyst for {module_name}.
+User: {state.get('user_name', 'Employee')} (emp_id: {emp_id}, role: {persona})
+
+Available database tables (MariaDB):
+{schema_block}
+
+STRICT SQL GENERATION RULES:
+1. Write ONLY a SELECT statement. No INSERT, UPDATE, DELETE, DROP, or ALTER.
+2. ACCESS RULES: You MUST apply the ACCESS RULE shown for each table in your WHERE clause exactly as written.
+3. ALIASING: ALWAYS prefix EVERY column name with its table alias (e.g., w.Resource, t.TaskIdx) to prevent ambiguous column errors.
+4. DATE FILTERS: DO NOT filter by current month/year (like MONTH(NOW())) UNLESS the user explicitly asks for a timeframe ("this month", "today", "2026"). If no timeframe is requested, query all historical data.
+5. JOINS: Use INNER JOIN when data must exist in both tables, and LEFT JOIN if you need to retain records that might be missing relational data.
+6. AGGREGATIONS: If you use SUM() or COUNT(), ensure all non-aggregated columns are in the GROUP BY clause.
+7. TIME MATH: For worklogs, TimeSpentInSec / 3600.0 = hours. Round to 2 decimal places using ROUND().
+8. SEARCH: Use LOWER() and LIKE '%term%' for case-insensitive text searching.
+9. CANNOT ANSWER: If the question absolutely cannot be answered using the tables provided, return exactly: CANNOT_ANSWER
+10. OUTPUT: Return ONLY the raw SQL query string. No explanation, no markdown blocks, no backticks.
+
+User question: "{user_question}"
+"""
+    if state.get("sql_error") and state.get("retry_count", 0) > 0:
+        prompt += f"\nPREVIOUS ATTEMPT FAILED VALIDATION:\n{state['sql_error']}\n\nPlease fix the SQL query and return ONLY the corrected SQL.\n"
+
+    prompt += "\nSQL:"
+
+    # ⚠️ Use NON-STREAMING so the raw SQL string doesn't leak into the frontend UI stream
+    llm = get_llm_non_streaming()
+    response = llm.invoke([HumanMessage(content=prompt)])
+    generated = (response.content or "").strip()
+
+    generated = re.sub(r'^```sql\s*', '', generated, flags=re.IGNORECASE)
+    generated = re.sub(r'^```\s*', '', generated)
+    generated = re.sub(r'\s*```$', '', generated)
+    generated = generated.strip()
+
+    if generated.upper() == "CANNOT_ANSWER" or not generated:
+        state["sql_error"] = "I cannot answer this question with the available data."
+        state["generated_sql"] = None
+    else:
+        print(f"[DIAG-ANALYTICS] sql_generator_node -> Generated SQL: {generated}", flush=True)
+        state["generated_sql"] = generated
+
+    return state
+
+
+# ─── Node 5: SQL Validator ────────────────────────────────────────────────────
+
+def analytics_sql_validator_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] sql_validator_node entered.", flush=True)
+    if state.get("sql_error") and not state.get("generated_sql"):
+        return state  # Errored out in generator (CANNOT_ANSWER)
+
+    collection = state.get("selected_collection", "")
+    allowed_tables = list(COLLECTION_TABLE_MAP.get(collection, {}).get("tables", {}).keys())
+
+    is_valid, error_msg = validate_generated_sql(
+        sql=state["generated_sql"],
+        allowed_tables=allowed_tables
+    )
+
+    if not is_valid:
+        print(f"[DIAG-ANALYTICS] sql_validator_node -> FAILED: {error_msg}", flush=True)
+        state["sql_error"] = f"Query validation failed: {error_msg}"
+        state["retry_count"] = state.get("retry_count", 0) + 1
+    else:
+        print(f"[DIAG-ANALYTICS] sql_validator_node -> PASSED", flush=True)
+        state["sql_error"] = None # Clear errors on success
+
+    return state
+
+
+# ─── Node 6: SQL Executor ─────────────────────────────────────────────────────
+
+def analytics_sql_executor_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] sql_executor_node entered.", flush=True)
+    if state.get("sql_error") or not state.get("generated_sql"):
+        return state
+
+    sql = state["generated_sql"]
+    db = SessionLocal()
+    try:
+        result = db.execute(text(sql))
+        columns = list(result.keys())
+        rows = [dict(zip(columns, row)) for row in result.fetchmany(10000)]
+        state["sql_result"] = rows
+        print(f"[DIAG-ANALYTICS] sql_executor_node -> Executed successfully, {len(rows)} rows returned.", flush=True)
+        if not rows:
+            state["sql_error"] = "The query returned no results for your question."
+    except Exception as e:
+        logger.error(f"Analytics SQL execution error: {e}")
+        print(f"[DIAG-ANALYTICS] sql_executor_node -> DB EXECUTION ERROR: {e}", flush=True)
+        state["sql_error"] = (
+            "There was a problem running your query. "
+            "Try rephrasing your question or being more specific."
+        )
+    finally:
+        db.close()
+
+    return state
+
+
+# ─── Node 7: Output Formatter ─────────────────────────────────────────────────
+
+def analytics_output_formatter_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] output_formatter_node entered. intent={state.get('intent_type')}", flush=True)
+    intent = state.get("intent_type", "SQL_DATA")
+
+    # Handle RAG path
+    if intent == "RAG":
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Formatting RAG fallback response.", flush=True)
+        state["output_type"] = "text"
+        state["text_response"] = (
+            "Document-based insights are not available in the current version. "
+            "I can help you analyze your operational data — try asking for counts, "
+            "trends, summaries, or specific metrics from your records."
+        )
+        return state
+
+    # Handle SQL errors
+    if state.get("sql_error"):
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Formatting SQL Error message.", flush=True)
+        state["output_type"] = "text"
+        state["text_response"] = state["sql_error"]
+        return state
+
+    sql_result = state.get("sql_result", [])
+    user_question = _get_last_user_message(state)
+    llm = get_llm_non_streaming()
+
+    # Detect chart intent
+    chart_keywords = {
+        "bar", "pie", "line", "chart", "graph", "plot",
+        "visualize", "visualization", "show me", "display"
+    }
+    question_lower = user_question.lower()
+    wants_chart = any(kw in question_lower for kw in chart_keywords)
+
+    # SQL_INSIGHT path — always text
+    if intent == "SQL_INSIGHT":
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Generating Insight Text...", flush=True)
+        data_sample = json.dumps(sql_result[:200], default=str)
+        insight_prompt = f"""The user asked: "{user_question}"
+
+Here is the data retrieved from the database:
+{data_sample}
+
+Provide a clear, concise analysis based on this data.
+Focus on trends, patterns, and meaningful observations.
+Write in plain English. Maximum 3 paragraphs.
+Do not mention SQL or database internals."""
+
+        response = llm.invoke([HumanMessage(content=insight_prompt)])
+        state["output_type"] = "text"
+        state["text_response"] = response.content or ""
+        return state
+
+    # SQL_DATA path — chart or table
+    if wants_chart:
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Generating ECharts JSON...", flush=True)
+        data_sample = json.dumps(sql_result[:100], default=str)
+        chart_prompt = f"""The user asked: "{user_question}"
+
+SQL query returned this data:
+{data_sample}
+
+Generate a valid ECharts option object (JSON) that best visualizes this data.
+Choose the most appropriate chart type: bar, line, or pie based on the data structure.
+Include proper titles, axis labels, and legends.
+
+REQUIREMENTS:
+- Return ONLY the JSON object. No explanation, no markdown, no backticks.
+- The JSON must be valid and parseable by JavaScript JSON.parse().
+- Use ECharts v5 syntax.
+- Keep it simple and readable.
+
+ECharts option JSON:"""
+
+        llm_json = get_llm_non_streaming() 
+        response = llm_json.invoke([HumanMessage(content=chart_prompt)])
+        raw = (response.content or "").strip()
+        raw = re.sub(r'^```json\s*', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'^```\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+
+        try:
+            chart_spec = json.loads(raw.strip())
+            state["output_type"] = "chart"
+            state["chart_spec"] = chart_spec
+            print(f"[DIAG-ANALYTICS] output_formatter_node -> Chart JSON parsed successfully.", flush=True)
+        except json.JSONDecodeError:
+            print(f"[DIAG-ANALYTICS] output_formatter_node -> Failed to parse Chart JSON. Falling back to table.", flush=True)
+            state["output_type"] = "table"
+            state["table_data"] = _rows_to_table(sql_result)
+    else:
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Outputting Table Data.", flush=True)
+        state["output_type"] = "table"
+        state["table_data"] = _rows_to_table(sql_result)
+
+    return state
+
+
+# ─── Node 8: Error Handler ────────────────────────────────────────────────────
+
+def analytics_error_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] error_node entered. error={state.get('sql_error')}", flush=True)
+    error = state.get("sql_error") or "Something went wrong. Please try again."
+    msgs = list(state.get("messages", []))
+    msgs.append(AIMessage(content=error))
+    state["messages"] = msgs
+    state["output_type"] = "text"
+    state["text_response"] = error
+    return state
+
+
+# ─── Router Functions (used by graph conditional edges) ───────────────────────
+
+def permission_router(state: AnalyticsState) -> Literal["proceed", "blocked"]:
+    return "proceed" if state.get("has_permission") else "blocked"
+
+def intent_router(state: AnalyticsState) -> Literal["SQL_DATA", "SQL_INSIGHT", "RAG", "DENY"]:
+    return state.get("intent_type", "SQL_DATA")
+
+def validation_router(state: AnalyticsState) -> Literal["valid", "error", "retry"]:
+    if state.get("sql_error"):
+        # If we failed validation but haven't maxed out retries, try again
+        if state.get("retry_count", 0) <= 1:
+            return "retry"
+        return "error"
+    return "valid"
+
+def execution_router(state: AnalyticsState) -> Literal["success", "error"]:
+    return "error" if state.get("sql_error") else "success"
+
+==========================================
+sample test done:
+
+http://10.5.1.24:5122/api/v1/chat/stream
+
 {
-  "RMS_ANALYTICS": ["reviewer"],
-  "HRMS_ANALYTICS": ["reviewer"],
-  ...
-}
-```
-
-If `collection_agents` does NOT contain `RMS_ANALYTICS`, your DB inserts in Step 1 didn't work. Go back and check each step.
-
-### Test 2 — Verify permission check for reviewer
-
-```
-POST /api/v1/chat/stream
-Authorization: Bearer <2633 token>
-Body: {
   "collection_name": "RMS_ANALYTICS",
-  "message": "show me my hours this week"
+  "message": "Show me a bar chart of the hours for resource 3010 logged on each task.",
+  "chat_history": []
 }
 
-Expected SSE: data with chunk type text or chart/table
-```
+INFO:     10.5.1.51:56368 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+D:\vinay\VAH_dashboard\dpah_backend_cb2_v2.2_analytics\app\routes\chat_route.py:51: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-ANALYTICS] permission_check_node entered. user_id=3428, collection=RMS_ANALYTICS, available_agents={'RMS_ANALYTICS': ['reviewer']}
+[DIAG-ANALYTICS] permission_check_node -> GRANTED as 'reviewer'
+[DIAG-ANALYTICS] intent_classifier_node entered. message_count=1, role=reviewer
+[DIAG-ANALYTICS] LLM returned raw response: 'SQL_DATA'
+[DIAG-ANALYTICS] sql_generator_node entered.
+[DIAG-ANALYTICS] sql_generator_node -> Generated SQL: SELECT t.WorkLogIdx, ROUND(SUM(w.TimeSpentInSec) / 3600.0, 2) AS TotalHours FROM pp_project_task_assigment_demo t INNER JOIN pp_worklogs_demo w ON t.WorkLogIdx = w.WorkLogIdx WHERE w.Resource = 3428 GROUP BY t.WorkLogIdx;
+[DIAG-ANALYTICS] sql_validator_node entered.
+[DIAG-ANALYTICS] sql_validator_node -> PASSED
+[DIAG-ANALYTICS] sql_executor_node entered.
+[DIAG-ANALYTICS] sql_executor_node -> Executed successfully, 0 rows returned.
+[DIAG-ANALYTICS] error_node entered. error=The query returned no results for your question.
 
-### Test 3 — Verify access denial for wrong collection
+====================================================
 
-```
-POST /api/v1/chat/stream
-Authorization: Bearer <2633 token>
-Body: {
-  "collection_name": "HRMS_ANALYTICS",
-  "message": "show all employees payslips"
-}
-
-Expected SSE: denial message because reviewer can only see own data
-```
-
-### Test 4 — Verify approver sees all data
-
-```
-POST /api/v1/chat/stream
-Authorization: Bearer <3117 SENIOR token>
-Body: {
-  "collection_name": "RMS_ANALYTICS",
-  "message": "show total hours logged by all employees this month as bar chart"
-}
-
-Expected SSE: chart event with all employees' data (no Resource filter)
-```
-
----
-
-## The Order to Execute DB Inserts
-
-Run these queries in this exact order. After each one, verify with a SELECT before moving to the next:
-
-```sql
--- Step 1: Insert module
-INSERT INTO dpah_modules (module_name, module_description, created_by, updated_by)
-VALUES ('ANALYTICS', 'Natural language analytics', 'system', 'system');
-
--- Verify
-SELECT module_id, module_name FROM dpah_modules;
--- Note the module_id for ANALYTICS
-
--- Step 2: Insert collections (replace 5 with actual module_id)
-INSERT INTO dpah_collections (collection_name, module_id, description, is_sensitive, is_active)
-VALUES
-  ('RMS_ANALYTICS', 5, 'RMS analytics', 0, 1),
-  ('HRMS_ANALYTICS', 5, 'HRMS analytics', 1, 1),
-  ('MRR_ANALYTICS', 5, 'MRR analytics', 0, 1);
-
--- Verify
-SELECT collection_id, collection_name FROM dpah_collections WHERE module_id = 5;
--- Note collection_ids
-
--- Step 3: Insert agents (replace collection_ids with actual values)
-INSERT INTO dpah_agents (agent_name, collection_id, department, description, model_name, is_active)
-VALUES
-  ('RMS_ANALYTICS_REVIEWER', 10, 'RMS', 'Reviewer analytics', 'default', 1),
-  ('RMS_ANALYTICS_APPROVER', 10, 'RMS', 'Approver analytics', 'default', 1),
-  ('HRMS_ANALYTICS_REVIEWER', 11, 'HRMS', 'Reviewer analytics', 'default', 1),
-  ('HRMS_ANALYTICS_APPROVER', 11, 'HRMS', 'Approver analytics', 'default', 1),
-  ('MRR_ANALYTICS_REVIEWER', 12, 'MRR', 'Reviewer analytics', 'default', 1),
-  ('MRR_ANALYTICS_APPROVER', 12, 'MRR', 'Approver analytics', 'default', 1);
-
--- Verify
-SELECT agent_id, agent_name FROM dpah_agents WHERE agent_name LIKE '%ANALYTICS%';
--- Note agent_ids
-
--- Step 4: Check existing group pattern
-SELECT * FROM dpah_module_usergroups;
--- Use same group_idx pattern for analytics
-
--- Step 5: Insert module-usergroup mapping
-INSERT INTO dpah_module_usergroups (module_id, group_idx, is_active, assigned_by)
-VALUES (5, 1, 1, 'system');
-
--- Step 6: Insert role-agent access (replace all IDs with actual values)
--- JUNIOR reviewer access
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES
-  (7, 1, <rms_analytics_reviewer_id>, 'system'),
-  (7, 1, <hrms_analytics_reviewer_id>, 'system'),
-  (7, 1, <mrr_analytics_reviewer_id>, 'system');
-
--- SENIOR full access
-INSERT INTO dpah_role_agent_access (role_id, group_id, agent_id, granted_by)
-VALUES
-  (9, 1, <rms_analytics_reviewer_id>, 'system'),
-  (9, 1, <rms_analytics_approver_id>, 'system'),
-  (9, 1, <hrms_analytics_reviewer_id>, 'system'),
-  (9, 1, <hrms_analytics_approver_id>, 'system'),
-  (9, 1, <mrr_analytics_reviewer_id>, 'system'),
-  (9, 1, <mrr_analytics_approver_id>, 'system');
-
--- Final verification: full permission chain for one user
-SELECT 
-  ur.emp_id,
-  r.role_name,
-  a.agent_name,
-  c.collection_name
-FROM dpah_user_roles ur
-JOIN dpah_roles r ON r.role_id = ur.role_id
-JOIN dpah_role_agent_access raa ON raa.role_id = r.role_id
-JOIN dpah_agents a ON a.agent_id = raa.agent_id
-JOIN dpah_collections c ON c.collection_id = a.collection_id
-WHERE ur.emp_id = '2633'
-AND c.collection_name LIKE '%ANALYTICS%';
-```
-
-That last query should return rows showing 2633 has access to reviewer agents in all analytics collections. If it returns rows, your RBAC is wired correctly and the JWT will contain the right data.
-
----
-
-## Summary of the Full Flow
-
-```
-DB tables (role grants)
-        ↓
-auth_controller builds collection_agents dict
-        ↓
-JWT contains {"RMS_ANALYTICS": ["reviewer"], ...}
-        ↓
-User sends chat message with collection_name="RMS_ANALYTICS"
-        ↓
-permission_check_node reads JWT → finds "reviewer" for "RMS_ANALYTICS" → grants access
-        ↓
-sql_generator_node calls build_schema_description("RMS_ANALYTICS", "reviewer", "2633", "EAG")
-        ↓
-schema description includes "WHERE Resource = 2633" for all tables
-        ↓
-LLM writes SQL with that filter naturally
-        ↓
-sql_validator_node confirms it
-        ↓
-sql_executor_node runs it → returns only emp 2633's rows
-        ↓
-output_formatter sends chart/table/text to frontend
-```
-
-Run the verification query at the end of Step 6 first. If it returns correct rows, proceed to Postman Test 1. Each test tells you exactly which layer to debug if something is wrong.
+** today i made a progress and i added most of the things including the db insertion you said and i have added only for rms and for that reviewer and approver i added.
+** so mostly it is ok but some changes are required for that i need you to sugges the changes.
+** so when ia asked for another employee also it is giving result for my emp id only.
+** second thing we need to best rules regarding the joins . because inner join is not working sometimes so llm has to be so smart regarding that.
+** also check all the nodes regarding intent classification whether it is routing correctly or not. like that one full flow you check. 
+** comeback to me with all updations and suggestions. because now we are clear and clean with all RBAC and query generation means directly we can move to frontend tommorow as currently i am
+testing in post man.
+** provide me the test cases also for postman including positive negative and RAG routing.
