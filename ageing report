@@ -1,425 +1,47 @@
-# Finance Oracle — Project Documentation
+Got it — full automation, LLM does the join, no human touching individual queries. That's a fair correction. Let me reframe: the fix isn't removing the LLM from the join — it's separating **what to join** (semantic decision, LLM is good at this) from **how to write the join syntax** (syntax hallucination, LLM is bad at this). Here's the architecture that keeps the LLM fully in charge while fixing the failure mode.
 
-> **Enterprise AI SQL Generation Platform** for the Data Patterns Supplier Ageing Reporting System.
+## 1. Enrich the runtime prompt with actual join paths, not just PK/FK flags
 
-A text-to-SQL CFO reporting engine that converts natural-language questions into read-only Oracle SQL queries, executes them against an Oracle ERP database, saves results to MariaDB, and generates executive insights 
+Right now your compact `ERD` sends types + PK/FK flags to the LLM, and the full join-path detail sits only in `ERD_RICH`, which your validator uses *after* generation. That's backwards — the LLM is inferring joins blind, then getting punished for guessing wrong.
 
----
-
-## Table of Contents
-
-1. [Architecture Overview](#architecture-overview)
-2. [Project Structure](#project-structure)
-3. [Technology Stack](#technology-stack)
-4. [Configuration](#configuration)
-5. [Two Operational Modes](#two-operational-modes)
-   - [Mode 1: Interactive Text-to-SQL API](#mode-1-interactive-text-to-sql-api)
-   - [Mode 2: Scheduled ETL Pipeline](#mode-2-scheduled-etl-pipeline)
-6. [LangGraph Workflow (Interactive Mode)](#langgraph-workflow-interactive-mode)
-7. [Agents / Pipeline Nodes](#agents--pipeline-nodes)
-8. [Metadata & Schema](#metadata--schema)
-9. [Prompts](#prompts)
-10. [API Endpoints](#api-endpoints)
-11. [Database Schemas](#database-schemas)
-12. [SQL Validation Logic](#sql-validation-logic)
-13. [Business Rules](#business-rules)
-14. [LLM Integration](#llm-integration)
-
----
-
-## Architecture Overview
+Fix: inject the **declared join edges** directly into the runtime prompt as explicit text:
 
 ```
-                    ┌──────────────────────────┐
-                    │     FastAPI (Port 8119)   │
-                    │                          │
-  POST /api/report/generate  ──►  LangGraph Workflow  ──►  JSON Response
-  POST /api/report/ageing    ──►  ETL Pipeline          ──►  Status Dict
-  GET  /api/health           ──►  Health Check          ──►  {"status":"ok"}
-                    │                          │
-                    └──────┬───────────┬───────┘
-                           │           │
-                    ┌──────▼──────┐ ┌──▼──────────────┐
-                    │  Oracle ERP  │ │    MariaDB      │
-                    │  (Supplier   │ │  (Reporting     │
-                    │   Invoices)  │ │   Tables)       │
-                    └─────────────┘ └─────────────────┘
-                           │
-                    ┌──────▼──────────────┐
-                    │  AI Gateway (qwen)│
-                    │  llmgw.datapatterns │
-                    └─────────────────────┘
+JOIN PATHS:
+EACSUPPINVOICES.SUPPLIER_ID = EACSUPPMASTER.SUPPLIER_ID
+EACSUPPINVOICES.PO_ID = EACPOMASTER.PO_ID
+EACPOMASTER.ITEM_ID = EACITEMMASTER.ITEM_ID
+...
 ```
+This is metadata you already maintain — it just needs to move from "validator-only" to "prompt-visible." This alone fixes a large share of join errors, because the LLM stops guessing which column links which table.
 
-**Key Design Principles:**
+## 2. Force a two-step "plan then write" generation
 
-- **Read-only queries only** — SQL validator blocks all DML (UPDATE, DELETE, DROP, INSERT, ALTER, TRUNCATE, EXEC, MERGE)
-- **Whitelist-based table/column access** — Only 6 Oracle ERP tables and their defined columns are accessible
-- **Self-correcting generation** — LLM retries up to 3 times with validation errors appended to the prompt
-- **Two modes**: Interactive (per-query pipeline via API) and Batch (ETL for the ageing report)
-- **Connection pooling** — SQLAlchemy engines for both Oracle and MariaDB with `pool_size=5, max_overflow=10`
+Don't let the LLM jump straight to full SQL. Split `generate_sql` into two LLM calls:
 
----
+- **Step A — Join plan**: LLM outputs structured JSON: which tables are needed for this question, and which join edges (from the list above) connect them. No SQL yet.
+- **Step B — Full SQL**: LLM writes the actual SELECT/WHERE/GROUP BY/ageing CASE logic, using the join plan from Step A as a locked scaffold.
 
-## Project Structure
+This is the single biggest reliability lever in text-to-SQL literature — models are far more accurate at multi-table joins when forced to reason about table selection separately from syntax generation, instead of doing both in one pass.
 
-```
-finance_oracle/
-├── backend/
-│   ├── .env                           # Environment variables (DB credentials, LLM config)
-│   ├── requirements.txt               # Python dependencies
-│   ├── docs/
-│   │   └── etl_flow.md               # ETL pipeline architecture doc
-│   └── app/
-│       ├── __init__.py
-│       ├── main.py                    # FastAPI entry point (port 8119)
-│       ├── api/
-│       │   └── routes.py              # 3 API endpoints
-│       ├── core/
-│       │   ├── config.py              # Pydantic Settings (all config)
-│       │   └── state.py               # WorkflowState TypedDict (LangGraph state)
-│       ├── agents/
-│       │   ├── __init__.py
-│       │   ├── workflow.py            # LangGraph StateGraph orchestrator
-│       │   ├── llm_factory.py         # LLM singleton (ChatOpenAI → AI gateway)
-│       │   ├── sql_generator.py       # build_context() + generate_sql() nodes
-│       │   ├── sql_validator.py       # Deterministic regex-based SQL validator
-│       │   ├── sql_executor.py        # Oracle/MariaDB query execution
-│       │   ├── table_creator.py       # Auto-create MariaDB table from results
-│       │   └── insight_agent.py       # CFO-level executive summary generation
-│       ├── etl/
-│       │   └── build_ageing_report.py # Ageing report ETL (CLI + API)
-│       ├── metadata/
-│       │   └── loader.py              # MetadataLoader singleton (ERD, whitelists, rules)
-│       ├── models/
-│       │   ├── request.py             # Pydantic models (ReportRequest, ReportResponse)
-│       │   └── validation.py          # SQLValidationResult dataclass
-│       └── prompts/
-│           ├── system_prompt.txt      # LLM system prompt template
-│           ├── insight_prompt.txt     # Insight generation prompt
-│           └── few_shot_examples.txt  # Few-shot SQL examples (currently empty)
-├── test_oracle_connection.py          # Standalone Oracle connectivity test
-└── debug.log                          # Oracle client debug log
-```
+## 3. Validate the join plan before it becomes SQL
 
----
+Between Step A and Step B, run a **deterministic check** (plain Python, not an LLM call): does every edge in the LLM's join plan actually exist in your `ERD_RICH` join-path list? If the LLM invented a join column that doesn't exist, reject it right there with a specific message ("SUPPLIER_ID does not join EACPOMASTER to EACITEMMASTER — valid edges from EACPOMASTER are: ITEM_ID, PO_ID") and loop back to Step A. This is much cheaper and more precise than catching it after full SQL generation and execution fails.
 
-## Technology Stack
+## 4. Populate real join few-shots
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| **Web Framework** | FastAPI | 0.115.0 |
-| **WSGI Server** | Uvicorn | 0.30.6 |
-| **Orchestration** | LangGraph | 0.2.34 |
-| **LLM Framework** | LangChain + langchain-openai | 0.3.6 / 0.2.7 |
-| **Database ORM** | SQLAlchemy | 2.0.35 |
-| **Oracle Driver** | oracledb | 2.4.0 |
-| **MariaDB Driver** | PyMySQL | 1.1.1 |
-| **SQL Transformation** | sqlglot | 25.12.0 |
-| **Data Processing** | Pandas | 2.2.3 |
-| **Configuration** | Pydantic Settings | 2.9.1 / 2.5.2 |
-| **Environment** | python-dotenv | 1.0.1 |
+Your `few_shot_examples.txt` is empty — this is a big gap specifically for joins. Add 10-15 examples that show full 3-to-6-table joins for your actual glossary patterns (drilldown, ageing summary, payment history, overdue). Mimicry from good examples is one of the strongest levers you have with a mid-size model like qwen, and you're currently giving it zero.
 
----
+## 5. Semantic join validation with sqlglot (not just regex)
 
-## Configuration
+Extend `sql_validator.py` to parse the generated SQL's AST and check that every `JOIN ... ON` clause matches a declared edge in `ERD_RICH` — not just that the tables/columns individually exist in the whitelist. Your current regex validator can confirm `EACPOMASTER.ITEM_ID` is a real column, but it can't tell you if joining it to the wrong table produced a cartesian product or silently wrong results. This closes that gap.
 
-All configuration is managed through [config.py](backend/app/core/config.py) using Pydantic `BaseSettings`, loaded from `backend/.env`.
+## 6. Self-consistency for the hardest queries
 
-### Oracle ERP Database
+For the full 6-table joins specifically, generate 2-3 candidate join plans in parallel (cheap, since Step A is just JSON, not full SQL), validate all of them against step 3, and proceed with SQL generation only for the one that validates. If more than one validates, prefer the one matching the most similar few-shot example. This costs a bit more latency but meaningfully increases the odds you get a correct join before ever hitting Oracle.
 
+## Why this is the right shape
 
+Every part of this keeps the LLM as the decision-maker on tables, columns, and business logic — nothing is pre-baked or human-joined. What changes is that the LLM's *join reasoning* becomes visible and checkable at the plan stage, using metadata you already collect (`ERD_RICH`) but currently under-use, instead of being buried inside a monolithic SQL string that only gets validated (or fails) after the fact. That's the difference between "hope the join is right" and "catch a wrong join in milliseconds, for free, before it ever touches Oracle."
 
-SQLAlchemy URL: `oracle+oracledb://{user}:{password}@{host}:{port}/?service_name={service}`
-
-### MariaDB (Secondary / Reporting DB)
-
-
-SQLAlchemy URL: `mysql+pymysql://{user}:{password}@{host}:{port}/{name}`
-
-### LLM / AI Gateway
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `AI_API_KEY` | (see .env) | Internal AI gateway API key |
-| `AI_API_URL` | `` | Gateway base URL |
-| `AI_MODEL` | `qwen-3.6` | Model name via gateway |
-| `LLM_MAX_TOKENS` | `32768` | Max response tokens |
-| `LLM_TEMPERATURE` | `0.0` | Zero temperature for deterministic output |
-
-The LLM is wrapped as `langchain_openai.ChatOpenAI` with `openai_api_base` pointing to the internal gateway — not a direct Anthropic SDK call.
-
-### Workflow Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `MAX_RETRY_COUNT` | `3` | Max SQL generation retries on validation failure |
-| `MAX_ROWS` | `10,000` | Max row limit for query execution |
-| `QUERY_TIMEOUT` | `30` seconds | SQL execution timeout |
-
----
-
-## Two Operational Modes
-
-### Mode 1: Interactive Text-to-SQL API
-
-A per-request pipeline triggered by `POST /api/report/generate`. Takes a natural-language question, generates SQL via LLM, validates it, executes against Oracle, creates a MariaDB result table, and returns executive insights.
-
-**Flow:** User Query → LLM SQL → Validate → (Retry?) → Execute Oracle → Create MariaDB Table → Generate Insights → JSON Response
-
-**Use case:** Ad-hoc CFO queries like "Show me top 5 suppliers with highest outstanding amounts"
-
-### Mode 2: Scheduled ETL Pipeline
-
-A batch pipeline triggered by `POST /api/report/ageing` or CLI `python -m app.etl.build_ageing_report`. Generates SQL specifically for the supplier ageing report, extracts from Oracle, computes ageing buckets in Python, and loads into a fixed MariaDB reporting table.
-
-**Flow:** Generate Ageing SQL → Extract Oracle → Transform (Python) → Load MariaDB → Status Response
-
-**Use case:** Periodic refresh of the CFO supplier ageing report dashboard
-
----
-
-## LangGraph Workflow (Interactive Mode)
-
-The interactive pipeline is built with LangGraph's `StateGraph`, providing a directed acyclic graph (DAG) with one conditional loop for retry logic.
-
-### Graph Definition
-
-Built in [workflow.py](backend/app/agents/workflow.py):
-
-```
-EntryPoint
-    │
-    ▼
-build_context ──────────────────────┐
-    │                               │
-    ▼                               │ (on validation errors, retry_count < 3)
-generate_sql ──► validate_sql ──────► increment_retry ──┐
-    │                       │                           │
-    │               ┌───────┴───────┐                   │
-    │               │               │                   │
-    │         "execute_sql"    "error" (retry exhausted)│
-    │               │                                   │
-    │               ▼                                   │
-    │        create_table                               │
-    │               │                                   │
-    │               ▼                                   │
-    │        generate_insights                          │
-    │               │                                   │
-    └───────────────┼───────────────────────────────────┘
-                    ▼
-                   END
-```
-
-### Conditional Routing Logic
-
-`should_retry(state)` in [workflow.py:57-65](backend/app/agents/workflow.py#L57-L65):
-
-```
-if validation_errors is empty → "execute_sql"
-elif retry_count < 3          → "retry" (loop back to generate_sql)
-else                          → "error" (terminate with END)
-```
-
-### State Schema
-
-Defined in [state.py](backend/app/core/state.py). The `WorkflowState` TypedDict tracks the full pipeline state:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `user_query` | `str` | User's natural-language question |
-| `system_prompt` | `str` | Fully rendered system prompt (with injected metadata) |
-| `generated_sql` | `Optional[str]` | LLM-generated Oracle SQL |
-| `validation_errors` | `List[str]` | Errors from the SQL validator |
-| `retry_count` | `int` | Number of retry attempts |
-| `raw_data` | `List[dict]` | Query result rows from Oracle |
-| `execution_error` | `Optional[str]` | Error message if execution failed |
-| `created_table` | `Optional[str]` | Name of created MariaDB table |
-| `final_insights` | `List[str]` | Generated executive summary bullets |
-| `status` | `str` | Pipeline status: `starting`, `success`, `error`, `no_data`, `table_created` |
-
----
-
-## Agents / Pipeline Nodes
-
-### 1. `build_context` — [sql_generator.py:19-51](backend/app/agents/sql_generator.py#L19-L51)
-
-**Purpose:** Inject schema metadata and business rules into the system prompt.
-
-**Logic:**
-1. Creates `MetadataLoader()` singleton to load the ERD (6 tables, columns, FKs, join paths, business context)
-2. Builds an ERD description string via `loader.build_erd_description()`
-3. Reads `system_prompt.txt` template from disk
-4. Renders the template with `{runtime_schema}` (ERD description) and `{runtime_few_shot_examples}`
-5. Optionally appends expected MariaDB target columns (used by ETL pipeline)
-6. Stores the rendered prompt in `state["system_prompt"]`
-
-**Key detail:** The few-shot examples file is currently empty. The system prompt itself contains embedded business rules for the ageing report.
-
-### 2. `generate_sql` — [sql_generator.py:55-119](backend/app/agents/sql_generator.py#L55-L119)
-
-**Purpose:** Call the LLM to generate an Oracle SELECT query.
-
-**Logic:**
-1. Extracts `user_query`, `system_prompt`, `retry_count`, and `validation_errors` from state
-2. If this is a retry (`retry_count > 0`), appends previous validation errors to the human message so the LLM can self-correct
-3. Sends `SystemMessage(system_prompt)` + `HumanMessage(user_query)` to the LLM
-4. Logs detailed diagnostics (response type, content, token usage metadata)
-5. Strips markdown code fences (` ```sql ... ``` `) via `_strip_fences()` regex
-6. Stores the SQL in `state["generated_sql"]` and resets `validation_errors = []`
-
-**Self-correction loop:** On retry, the human message includes:
-```
-Retry #1. Previous validation errors:
-- Table 'X' is not in the allowed table whitelist.
-- Column 'Y' is not recognised...
-Fix these issues.
-```
-
-### 3. `validate_sql` — [sql_validator.py:63-112](backend/app/agents/sql_validator.py#L63-L112)
-
-**Purpose:** Deterministic, zero-LLM validation of the generated SQL against the schema whitelist.
-
-**Logic:** (see [SQL Validation Logic](#sql-validation-logic) section below)
-
-**Key detail:** This node never calls the LLM. All validation uses regex pattern matching against the embedded ERD whitelists.
-
-### 4. `execute_sql` — [sql_executor.py:72-150](backend/app/agents/sql_executor.py#L72-L150)
-
-**Purpose:** Execute the validated SELECT query against Oracle and populate `state["raw_data"]`.
-
-**Logic:**
-1. Resolves the appropriate SQLAlchemy engine (Oracle or MariaDB, via `db_label`)
-2. Executes the SQL with `conn.execute(text(sql))`
-3. Fetches up to `settings.max_rows` (default 10,000) rows
-4. Converts result to list-of-dicts: `[dict(zip(columns, r)) for r in rows]`
-5. Catches all known SQLAlchemy exceptions (`ProgrammingError`, `OperationalError`, `SQLAlchemyError`) and stores friendly messages in `state["execution_error"]`
-
-**Lazy engine initialization:** Engines are created on first use. Oracle client library is initialized if `oracle_client_lib` is set in config.
-
-**Connection pooling:** `pool_size=5, max_overflow=10, pool_pre_ping=True, pool_timeout=30`
-
-
-### 6. `generate_insights` — [insight_agent.py:13-40](backend/app/agents/insight_agent.py#L13-L40)
-
-**Purpose:** Generate a CFO-level executive summary from the query results.
-
-**Logic:**
-1. If no data → returns a default message: "The query returned no data to analyse..."
-2. Truncates data to first 50 rows to avoid context-window overflow
-3. Renders first 10 rows as pipe-delimited text: `COL1 \| COL2 \| ...`
-4. Reads `insight_prompt.txt` template and injects the data snippet
-5. Sends a single `HumanMessage` to the LLM (no system prompt)
-6. Parses numbered bullets from LLM output (expects "1. ...", "2. ...", "3. ...")
-7. Guarantees exactly 3 bullets (pads with "(no insight available)" or truncates)
-
-**Insight prompt rules:** "Focus on financial insight: totals, trends, outliers, risks. No methodology descriptions. Use absolute numbers and percentages."
-
----
-
-## Metadata & Schema
-
-The metadata layer is defined in [loader.py](backend/app/metadata/loader.py) via the `MetadataLoader` singleton.
-
-### ERD (Embedded Oracle ERP Schema)
-
-The system has 6 tables with a star-schema pattern centered on invoices:
-
-
-### ERD vs ERD_RICH
-
-Two levels of metadata exist:
-
-- **`ERD`** — Compact table-level schema injected into the LLM prompt (`{runtime_schema}`). Contains column names, types, PK/FK flags.
-- **`ERD_RICH`** — Full column-level descriptions, nullable flags, allowed values, formulas, business context, and join paths. Used ONLY by the deterministic SQL validator. Not sent to the LLM to keep the prompt compact.
-
-### AGEING_REPORT_SCHEMA
-
-A schema definition for the ageing ETL pipeline, containing:
-- 27 required target columns with types
-- Ageing bucket definitions (NOT_YET_DUE, CURRENT, 1-30, 31-60, 61-90, ABOVE 90)
-- Required Oracle table list
-- Required join conditions
-- Oracle function guidance (NVL, TRUNC)
-
----
-
-## Prompts
-
-### System Prompt — [system_prompt.txt](backend/app/prompts/system_prompt.txt)
-
-The full system prompt template, rendered at runtime with `{runtime_schema}` and `{runtime_few_shot_examples}`. Contains:
-
-**Instructions:**
-1. Always output ONLY raw SQL (no markdown, no backticks, no explanations)
-2. Always use Oracle SQL syntax (compatible with 19c+)
-3. Always preserve exact column name capitalization
-4. Always use parameterized queries
-5. Mimic few-shot examples
-6. If question can't be answered → "INSUFFICIENT_SCHEMA: ..."
-
-**Query Planning Steps (internal):**
-1. Intent Detection → 2. Metadata Retrieval → 3. Table Selection → 4. Column Selection → 5. Business Rule Application → 6. Security Validation → 7. Output
-
-**Business Domain Rules:**
-- **INVAMOUNT** 
-- **INV_AMOUNT_FINAL**
-- **PAID**
-- **CURRENT_OUTSTANDING_AMOUNT**
-- **DAYS_DIFF**
-- **DAYS_DIFF_WITH_TERMS**
-
-**Ageing Buckets (Oracle CASE logic):**
-
-| Condition | Bucket |
-|-----------|--------|
-| DAYS_DIFF < 0 | NOT_YET_DUE |
-| DAYS_DIFF = 0 | CURRENT |
-| 0 < DAYS_DIFF <= 30 | 1 - 30 DAYS |
-| 30 < DAYS_DIFF <= 60 | 31 - 60 DAYS |
-| 60 < DAYS_DIFF <= 90 | 61 - 90 DAYS |
-| DAYS_DIFF > 90 | ABOVE 90 DAYS |
-
-
-**Glossary (natural language → SQL patterns):**
-- "drilldown" / "breakdown" → invoice-level details for a supplier
-- "top suppliers" / "outlier" → rank by total outstanding DESC, LIMIT
-- "ageing summary" / "ageing report" → full aggregated ageing grid with KPIs
-- "payment history" → query fin_supplier_payments with LEFT JOIN
-- "overdue" → AGEING_BUCKET_WITH_TERMS <> 'CURRENT'
-- "KPI" / "dashboard" → summary statistics
-
-**Security Constraints:**
-- Only SELECT queries
-- No DML keywords
-- No dangerous functions: `sleep()`, `benchmark()`, `load_file()`, `xp_cmdshell`
-- Only whitelisted tables and columns
-
-### Insight Prompt — [insight_prompt.txt](backend/app/prompts/insight_prompt.txt)
-
-Prompt for the `generate_insights` node. Instructs the LLM to produce exactly 3 bullet points (max 25 words each) suitable for an executive CFO summary. Rules: focus on financial insight (totals, trends, outliers, risks), no methodology descriptions, use absolute numbers and percentages.
-
-### Few-Shot Examples — [few_shot_examples.txt](backend/app/prompts/few_shot_examples.txt)
-
-Currently empty. Intended for providing reference SQL examples for the LLM to mimic.
-
----
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `generated_sql` | `string \| null` | LLM-generated Oracle SQL |
-| `raw_data` | `dict[]` | Query result rows (list of dicts) |
-| `final_insights` | `string[]` | Exactly 3 bullet points |
-| `validation_errors` | `string[]` | Validation error messages (empty if passed) |
-| `execution_error` | `string \| null` | Error message if execution failed |
-| `retry_count` | `int` | Number of retries performed |
-| `created_table` | `string \| null` | MariaDB table name created from results |
-| `status` | `string` | `starting`, `success`, `error`, `no_data`, `table_created` |
-
-## Database Schemas
-
-### Oracle ERP (Source)
-
-6 tables, star-schema centered on `EACSUPPINVOICES`. See [Metadata Schema](#erd-embedded-oracle-erp-schema) section above for full details.
-
-### MariaDB (Target)
+If you want, I can write out the actual `sql_generator.py` split (Step A / Step B) and the join-plan validator function next.
