@@ -188,6 +188,92 @@ If you want a single, universal chat box where the user can say "Apply for leave
 
 ========================================================================================================
 
+ ok now i got a clarity so actually if i switch from sidebar from dashboard to analytics means nothing will happen like a api call sending collection_name.
+
+
+but if i go to analytics and type a prompt means in the request this is going collection_name"RMS_ANALYTICS" . so the chat/stream while invoking the langraph orchesrtation it is building a state below
+
+
+# GRAPH SELECTION
+
+        if is_analytics:
+
+            graph = ChatController.get_analytics_graph()
+
+        elif module_name == "HRMS":
+
+            graph = ChatController.get_hrms_graph()
+
+        elif module_name in ["SCM", "MRR"]:
+
+            graph = ChatController.get_mrr_graph()
+
+        else:
+
+            graph = ChatController.get_rms_graph()
+
+
+        user_dept = user.get("dept", "Operations")
+
+        config = {"configurable": {"thread_id": thread_id}}
+
+
+        # STATE INITIALIZATION
+
+        if is_analytics:
+
+            initial_state = {
+
+                # Fallback to emp_no if sub is missing
+
+                "user_id": str(user.get("sub") or user.get("emp_no", "")),
+
+                "user_name": user.get("name", ""),
+
+                "user_dept": user_dept,
+
+                "collection_agents": user.get("collection_agents", {}),
+
+                "selected_collection": module_name,
+
+                "selected_agent_role": agent_role,
+
+                "has_permission": False,
+
+                "denial_message": None,
+
+                "messages": [],
+
+                "intent_type": None,
+
+                "generated_sql": None,
+
+                "sql_result": None,
+
+                "sql_error": None,
+
+                "output_type": None,
+
+                "chart_spec": None,
+
+                "table_data": None,
+
+                "text_response": None,
+
+                "retry_count": 0,
+
+            }
+
+
+at this time the selected collection will go and insert there in the state. so from the state we are taking that selected where ever we want.
+
+ok i got clarity only small doubt is why we are storing selected collection only why not module because the hierarchy starts from module, collection and then agents right?
+
+with a user prompt straight away we are passing collection_name"RMS_ANALYTICS" means how we will differ whether user asked a question regarding RMS_ANALYTICS , MRR_ANALYTICS,.. becuase soon we need to implement for these other modules also then how can we differ from the user prompt itself?
+
+
+]
+
 You have reverse-engineered the flow perfectly! You are 100% correct about how the React hook's payload becomes the initial_state in LangGraph.
 
 Your doubt about Module vs. Collection and How we scale this in the future is exactly the right architectural question to ask right now.
