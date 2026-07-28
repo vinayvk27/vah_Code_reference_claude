@@ -1,446 +1,179 @@
- ** all the other test cases are working fine but these below 2 cases were found as ambigous for me compared to expected and actual
+** i have got a problem and the AI given a solution can i proceed and implement it . because now the issue is before doing the 4 changes that u told i randomly tested existing workflow chat so the below issue is coming. this is high
+priority because existing shouldnt be disturbed.
 
-** so as i see before moving to frontend integration i have seen 2 places that we need to work on that we are lagging.
 
-** one is in the cuurent workflow only still we are not sure whether it can classify intent as RAG or sql insight that we are expecting.
+i went and checked in my existing dashbaord for mrr work flow whether it is working or not but the below message is coming and i have checked it is coming from chat_route
 
 
-** and another thing is which we didnt started.currently we are using chat/stream api which is the same api that our main workflow also is using. now the problem we need to classify there also right. because now in the dashboard if i ask work flow related things means llm will deny i think. but in the workflow to classify intent i am not using llm i am using keywords along with vector search.
+XHRPOST
 
-so for this scenario we need to start somethinregarding this also.
+http://10.5.1.58:6142/api/v1/chat/stream
 
+[HTTP/1.1 400 Bad Request 57ms]
 
-====================
 
+Stream Failed: Error: Malformed request or unknown module.
 
-{
+    sendMessage useChatStream.js:129
 
-  "collection_name": "RMS_ANALYTICS",
+    handleSend ChatOverlay.jsx:549
 
-  "message": "how productive was I last week",
+    handleKeyDown ChatOverlay.jsx:557
 
-  "chat_history": []
+    React 13
 
-}
+    <anonymous> main.jsx:8
 
-Expect: SQL_INSIGHT intent + PERSONAL scope → proceeds to SQL generation and text response.
+useChatStream.js:256:15
 
 
-actual:
+req:{"module_name":"GLOBAL","collection_name":"GLOBAL","message":"create mrr","chat_history":[{"role":"user","content":"create mrr"}]}
 
-No sentence-transformers model found with name D:/Gokul/genai/Technical Writing/technica_writing_vectordb_v1.0/sentencetransformer. Creating a new one with mean pooling.
 
-[IntentRouter] Layer 2 — Semantic fallback | threshold=25% | best=RMS_reviewer (46.3%) | top3=['RMS_reviewer 46.3%', 'RMS_approver 33.4%', 'RMS_creator 33.4%']
+res:detail="collection_name is deprecated, use module_name instead."
 
-INFO:     10.5.1.51:53870 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
 
-D:\vinay\VAH_dashboard\dpah_backend_cb2_v2.2_analytics\app\routes\chat_route.py:51: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
 
-  async for chunk in ChatController.stream_chat_with_orchestrator(
+chat_route:
 
-[DIAG-ANALYTICS] permission_check_node entered. user_id=3428, collection=RMS_ANALYTICS, available_agents={'RMS_ANALYTICS': ['reviewer']}
 
-[DIAG-ANALYTICS] permission_check_node -> GRANTED as 'reviewer'
+if request.collection_name and not request.collection_name.endswith("_ANALYTICS"):
 
-[DIAG-ANALYTICS] intent_classifier_node entered.
+        raise HTTPException(status_code=400, detail="collection_name is deprecated, use module_name instead.") 
 
-[DIAG-ANALYTICS] classifier -> intent=SQL_DATA, scope=PERSONAL
 
-[DIAG-ANALYTICS] sql_generator_node entered.
+answer:
 
-[DIAG-ANALYTICS] sql_generator_node -> Generated SQL: SELECT 
+You are absolutely right. Trying to juggle `collection_name` on the frontend is a messy hack. Fixing this at the backend routing level is the cleanest, most scalable architectural decision.
 
-  ROUND(SUM(w.TimeSpentInSec) / 3600.0, 2) AS TotalHoursLogged,
+Here is exactly what is happening under the hood, why it broke, and how we can fix it perfectly in the backend with just three lines of Python.
 
-  COUNT(w.Idx) AS TotalWorklogEntries,
+### The Root Cause (Why both flows broke)
 
-  SUM(CASE WHEN w.IsApproved = 1 THEN 1 ELSE 0 END) AS ApprovedEntries
+Your FastAPI backend is doing two things that are fighting with each other:
 
-FROM pp_worklogs_demo w
+1. **Why the MRR (Global) Chat Broke:**
+In your recent test, the frontend sent `collection_name: "GLOBAL"`. Your backend explicitly rejects any `collection_name` unless it ends in `_ANALYTICS`. It threw the `400` error instantly, killing the request.
+2. **Why the Analytics Chat Broke earlier:**
+If the frontend sends `module_name: "RMS_ANALYTICS"`, the backend assigns `module_name = "RMS_ANALYTICS"`. It then runs `AuthController.get_module_id_by_name("RMS_ANALYTICS", db)`. **This crashes.** Your database table for modules only contains `"RMS"`, `"MRR"`, `"HRMS"`, etc. It does not contain `"RMS_ANALYTICS"`.
 
-LEFT JOIN pp_project_task_assigment_demo t ON w.WorkLogIdx = t.WorkLogIdx
+### The End-to-End Solution
 
-WHERE w.Resource = 3428
+We want the frontend to be incredibly stupid and simple: it just sends `module_name` (`"GLOBAL"` for standard chat, `"RMS_ANALYTICS"` for the dashboard).
 
-  AND w.TaskDate >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+We will teach the backend to parse `"RMS_ANALYTICS"`, realize it is an analytics request, but look up `"RMS"` in the database to verify permissions.
 
-  AND w.TaskDate < CURDATE()
+---
 
-[DIAG-ANALYTICS] sql_validator_node entered.
+### Step 1: The Backend Fix (`chat_route.py`)
 
-[DIAG-ANALYTICS] sql_validator_node -> PASSED
+Open `chat_route.py` and replace your `stream_chat_message` function with this updated version. Notice the new **"base_module_name"** logic.
 
-[DIAG-ANALYTICS] sql_executor_node entered.
+```python
+async def stream_chat_message(
+    request: ChatStreamRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    raw_token: str = Depends(oauth2_scheme),
+):
+    request_data = request.model_dump()
 
-[DIAG-ANALYTICS] sql_executor_node -> Executed successfully, 1 rows returned.
+    # Reject old-shape requests containing "collection_name"
+    if request.collection_name and not request.collection_name.endswith("_ANALYTICS"):
+        raise HTTPException(status_code=400, detail="collection_name is deprecated, use module_name instead.")
 
-[DIAG-ANALYTICS] output_formatter_node entered. intent=SQL_DATA
-
-[DIAG-ANALYTICS] output_formatter_node -> Outputting Table Data.
-
-
-================================================================
-
-{
-
-  "collection_name": "RMS_ANALYTICS",
-
-  "message": "compare my hours this month vs last month",
-
-  "chat_history": []
-
-}
-
-
-actual:
-
-INFO:     10.5.1.51:53933 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-
-D:\vinay\VAH_dashboard\dpah_backend_cb2_v2.2_analytics\app\routes\chat_route.py:51: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-
-[DIAG-ANALYTICS] permission_check_node entered. user_id=3428, collection=RMS_ANALYTICS, available_agents={'RMS_ANALYTICS': ['reviewer']}
-
-[DIAG-ANALYTICS] permission_check_node -> GRANTED as 'reviewer'
-
-[DIAG-ANALYTICS] intent_classifier_node entered.
-
-[DIAG-ANALYTICS] classifier -> intent=SQL_DATA, scope=PERSONAL
-
-[DIAG-ANALYTICS] sql_generator_node entered.
-
-[DIAG-ANALYTICS] sql_generator_node -> Generated SQL: SELECT
-
-  ROUND(SUM(CASE WHEN YEAR(w.TaskDate) = YEAR(NOW()) THEN w.TimeSpentInSec ELSE 0 END) / 3600.0, 2) AS hours_this_year,
-
-  ROUND(SUM(CASE WHEN YEAR(w.TaskDate) = YEAR(NOW()) - 1 THEN w.TimeSpentInSec ELSE 0 END) / 3600.0, 2) AS hours_last_year
-
-FROM pp_worklogs_demo w
-
-LEFT JOIN pp_project_task_assigment_demo t
-
-  ON w.WorkLogIdx = t.WorkLogIdx
-
-WHERE w.Resource = 3428
-
-[DIAG-ANALYTICS] sql_validator_node entered.
-
-[DIAG-ANALYTICS] sql_validator_node -> PASSED
-
-[DIAG-ANALYTICS] sql_executor_node entered.
-
-[DIAG-ANALYTICS] sql_executor_node -> Executed successfully, 1 rows returned.
-
-[DIAG-ANALYTICS] output_formatter_node entered. intent=SQL_DATA
-
-[DIAG-ANALYTICS] output_formatter_node -> Outputting Table Data.
-
-These are two extremely perceptive observations. You are correctly anticipating the next phase of integration, both at the prompt level and the global architecture level.
-
-Let's address both of these issues without jumping straight into writing code for the master router, so we can ensure the architecture aligns with your vision.
-Issue 1: Why it missed SQL_INSIGHT
-
-What happened: The LLM classified "how productive was I" and "compare my hours" as SQL_DATA instead of SQL_INSIGHT.
-
-Why it happened: The LLM saw words like "hours", "last week", and "compare", and its logic decided, "To answer this, I need to calculate a SUM of hours grouped by month/week." Because it realized it needed to do math, it defaulted to SQL_DATA.
-
-The Fix: We just need to give the LLM slightly sharper definitions in analytics_intent_classifier_node. We need to explicitly tell it that evaluations and comparisons require written insights, not just raw tables.
-
-In nodes.py, update the DIMENSION 1 section of your prompt to this:
-Python
-
-DIMENSION 1 — INTENT (what kind of answer is needed):
-- SQL_DATA: needs strict numbers, counts, aggregations, charts, or raw tables from the database.
-  Examples: "show my hours", "list my tasks", "bar chart of my time"
-- SQL_INSIGHT: needs trend analysis, evaluation, comparison, or a written summary derived from data.
-  Examples: "how productive was I", "compare this month to last month", "why are my hours low", "summarize my work"
-- RAG: needs company policy, procedures, or static knowledge not in the database
-- DENY: is a write/delete/harmful operation, or asks for something completely unrelated
-
-Adding those explicit examples ("how productive was I", "compare...") forces the LLM to map those exact types of phrasing to SQL_INSIGHT.
-Issue 2: The Master Router (Global Workflow Conflict)
-
-You identified a major architectural hurdle. Your application uses /api/v1/chat/stream for everything.
-
-    The standard workflows use a Keyword + Vector Search router ([IntentRouter] Layer 2 — Semantic fallback from your logs).
-
-    Analytics uses an LLM graph.
-
-If a user is on the main chat and asks "Apply for leave", the vector search routes to HRMS.
-If they ask "Show my hours chart", how does the system know to route to RMS_ANALYTICS instead of standard RMS?
-
-Based on the ChatStreamRequest schema you shared with me earlier, you actually have two ways to solve this.
-Option A: Explicit Frontend Context (The Easiest & Safest Way)
-
-Your existing schema defines this field:
-collection_name: Optional[str] = Field(None, description="Specific collection name for routing... If provided, it bypasses NLP routing.")
-
-If you are building a separate Analytics Dashboard UI, the frontend knows the user is looking at analytics. The frontend can simply hardcode "collection_name": "RMS_ANALYTICS" into the API payload.
-
-    Result: The backend skips the Vector/Keyword router entirely and immediately triggers the LangGraph we just built. Standard workflow questions on that specific page will be denied by the LLM (which is correct for an analytics dashboard).
-
-Option B: Updating the Master NLP Router (The Omnichannel Way)
-
-If you want a single, universal chat box where the user can say "Apply for leave" and then immediately say "Now show me a bar chart of my hours", we have to update your Keyword/Vector router.
-
-    Result: We would need to add analytics keywords (e.g., "chart", "graph", "analyze", "trend") and vector embeddings to your Master Router so it can mathematically detect when to branch off into the Analytics LangGraph vs the standard workflow.
-======================================================================================================
-
-can u explain me the architecture of backend langraph
-
-1. The Helper Functions
-
-These run small data-formatting tasks for the rest of the nodes.
-
-    _get_last_user_message(state):
-
-        for msg in reversed(state.get("messages", [])): -> It loops backwards through the chat history array.
-
-        if isinstance(msg, HumanMessage): -> It looks for the first message object that came from a user (ignoring AI messages) and returns its text.
-
-    _rows_to_table(rows):
-
-        Takes the raw database output (a list of dictionaries).
-
-        columns = list(rows[0].keys()) -> Grabs the dictionary keys from the first row to use as table headers.
-
-        table_rows = [[str(row.get(col, "")) for col in columns] for row in rows] -> A nested list comprehension. It loops through every row, and for each column, it extracts the value, converts it to a string (str()), and returns a 2D array (a list of lists) which is the exact format AG-Grid needs.
-
-2. analytics_permission_check_node
-
-This node verifies if the user is legally allowed into the Analytics module.
-
-    collection_agents = state.get("collection_agents", {}) -> It pulls the RBAC access tree (which your frontend sent via the JWT token).
-
-    user_personas = collection_agents.get(collection, []) -> It checks if the user has any roles (like ["reviewer", "creator"]) for the requested collection (e.g., RMS_ANALYTICS).
-
-    Syntax Logic: If user_personas is empty, it sets state["has_permission"] = False. If it has roles, it defaults to the first one user_personas[0] and sets has_permission = True.
-
-3. analytics_intent_classifier_node
-
-This is where COLLECTION_TABLE_MAP actually comes into play, enforcing row-level security.
-
-    LLM Execution:
-
-        llm.invoke(..., config={"callbacks": []}) -> It sends the prompt to the LLM. The callbacks: [] syntax explicitly mutes LangGraph's streaming so the JSON doesn't leak to the React UI.
-
-    Regex Parsing:
-
-        re.sub(r'^```json\s*', '', raw, flags=re.IGNORECASE) -> LLMs often wrap JSON in markdown blocks (json ... ). These three re.sub lines use regular expressions to strip those backticks out so Python can safely read it.
-
-        classification = json.loads(raw.strip()) -> Converts the string into a Python dictionary.
-
-    Scope Enforcement (The Python Override):
-
-        filters = COLLECTION_TABLE_MAP.get(collection, {}).get("persona_filters", {}).get(persona, {}) -> It drills down into your registry file to find the persona_filters for this specific user's role.
-
-        has_self_restriction = any(f is not None for f in filters.values()) -> It loops through the filter values. If any filter exists (meaning the user is locked to their own employee ID), it returns True.
-
-        Syntax Logic: if scope == "GROUP" and has_self_restriction: -> If the LLM said the user wants team data, but Python sees they have a self-restriction, Python forcibly changes state["intent_type"] = "DENY".
-
-4. analytics_sql_generator_node
-
-This node writes the database query using string manipulation.
-
-    schema_block = build_schema_description(...) -> Calls an external function to convert your Python schema registry into a readable text string for the LLM.
-
-    Self-Correction Syntax:
-
-        if state.get("sql_error") and state.get("retry_count", 0) > 0: -> If the graph looped back to this node because of a validation failure, it dynamically appends state['sql_error'] to the bottom of the prompt so the LLM knows what to fix.
-
-    Fallback Logic:
-
-        if generated.upper() == "CANNOT_ANSWER": -> If the LLM realizes the tables don't contain the requested data, it outputs this specific keyword. Python catches it and sets a clean error state instead of executing garbage SQL.
-
-5. analytics_sql_validator_node
-
-A strict Python firewall to protect MariaDB.
-
-    allowed_tables = list(COLLECTION_TABLE_MAP.get(collection, {}).get("tables", {}).keys()) -> It extracts just the keys (the table names) from your registry and converts them into a list (e.g., ['pp_worklogs_demo', 'pp_project_task...']).
-
-    is_valid, error_msg = validate_generated_sql(sql=state["generated_sql"], allowed_tables=allowed_tables) -> Passes the SQL string and the allowed list into an AST (Abstract Syntax Tree) parser. It returns a tuple: a boolean and an error string.
-
-    state["retry_count"] = state.get("retry_count", 0) + 1 -> If validation fails, it increments the retry counter so the graph knows to try again.
-
-6. analytics_sql_executor_node
-
-This node physically connects to the database.
-
-    db = SessionLocal() -> Opens a SQLAlchemy session.
-
-    result = db.execute(text(sql)) -> Wraps the raw string in SQLAlchemy's text() function (a security requirement) and executes it.
-
-    Dictionary Zipping:
-
-        columns = list(result.keys()) -> Extracts the database column headers.
-
-        rows = [dict(zip(columns, row)) for row in result.fetchmany(10000)] -> fetchmany(10000) prevents memory crashes by capping the return at 10k rows. zip(columns, row) pairs the column names with the row values, and dict() turns those pairs into a standard Python dictionary.
-
-    except Exception as e: -> Catches any MariaDB error (like the ambiguous column error we saw earlier) and saves it to the state.
-
-7. analytics_output_formatter_node
-
-The final prep step before sending data to the frontend.
-
-    Keyword Matching:
-
-        chart_keywords = {"bar", "pie", "line"...} -> A Python set of trigger words.
-
-        wants_chart = any(kw in question_lower for kw in chart_keywords) -> Loops through the set. If any word exists in the user's question, it becomes True.
-
-    JSON Serialization:
-
-        data_sample = json.dumps(sql_result[:100], default=str) -> Takes the first 100 rows ([:100]) and turns them into a JSON string. The default=str parameter is critical: if MariaDB returns a datetime object, standard JSON crashes. This forces dates into strings.
-
-    Error Catching (Charts):
-
-        except json.JSONDecodeError: -> If the LLM hallucinates and returns broken JSON that ECharts can't read, this except block catches the crash. Instead of showing an error to the user, it silently switches state["output_type"] = "table" and sends the AG-Grid table instead.
-
-8. The Router Functions
-
-These are tiny conditional functions at the bottom. LangGraph calls them to decide which node to run next.
-
-    permission_router returns "proceed" or "blocked" based on a boolean.
-
-    intent_router returns the exact string of the intent (e.g., "SQL_DATA"). LangGraph matches this string to an edge connecting to the SQL generator.
-
-    validation_router returns "retry" if it failed but retry_count <= 1. If it fails twice, it returns "error".
-======================================================================================================
-
-========================================================================================================
-
- ok now i got a clarity so actually if i switch from sidebar from dashboard to analytics means nothing will happen like a api call sending collection_name.
-
-
-but if i go to analytics and type a prompt means in the request this is going collection_name"RMS_ANALYTICS" . so the chat/stream while invoking the langraph orchesrtation it is building a state below
-
-
-# GRAPH SELECTION
-
-        if is_analytics:
-
-            graph = ChatController.get_analytics_graph()
-
-        elif module_name == "HRMS":
-
-            graph = ChatController.get_hrms_graph()
-
-        elif module_name in ["SCM", "MRR"]:
-
-            graph = ChatController.get_mrr_graph()
-
+    # Gate 1: module-level permission check
+    raw = (request.module_name or "").strip().upper()
+    if not raw or raw == "GLOBAL":
+        # Route through the controller's master intent router
+        from app.services.global_intent_router import resolve_module_from_request
+        resolved_mod, _ = resolve_module_from_request(
+            module_name=None,
+            message=request.message,
+            chat_history=request.chat_history,
+        )
+        if resolved_mod:
+            module_name = resolved_mod
         else:
+            module_name = "RMS"
+    else:
+        module_name = raw
 
-            graph = ChatController.get_rms_graph()
+    # --- THE FIX: Extract base module for database validation ---
+    # If module_name is "RMS_ANALYTICS", we validate against "RMS" in the DB.
+    # If module_name is "MRR", it stays "MRR".
+    base_module_name = module_name
+    if module_name.endswith("_ANALYTICS"):
+        base_module_name = module_name.replace("_ANALYTICS", "")
 
+    module_id = AuthController.get_module_id_by_name(base_module_name, db)
+    if module_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown module: {base_module_name}"
+        )
+        
+    if not AuthController.check_module_access(
+        current_user.emp_no,
+        current_user.group_idx,
+        current_user.role_ids,
+        module_id,
+        db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You do not have access to module '{base_module_name}'."
+        )
 
-        user_dept = user.get("dept", "Operations")
+    # Pass the original request_data (which retains "RMS_ANALYTICS") to the orchestrator
+    return StreamingResponse(
+        sse_generator_with_orchestrator(db, current_user.model_dump(), raw_token, request_data),
+        media_type="text/event-stream",
+    )
 
-        config = {"configurable": {"thread_id": thread_id}}
+```
 
+---
 
-        # STATE INITIALIZATION
+### Step 2: The Frontend Simplification (`useChatStream.js`)
 
-        if is_analytics:
+Now that the backend is smart enough to handle this, we can strip all the complicated `collection_name` hacks out of React.
 
-            initial_state = {
+In `useChatStream.js` (inside both `sendMessage` and `submitForm`), just send `module_name`.
 
-                # Fallback to emp_no if sub is missing
+```javascript
+      // --- NATURAL ROUTER ---
+      // This will either be "GLOBAL" or "RMS_ANALYTICS" natively.
+      const safeModuleName = (moduleName && moduleName !== "AUTO") ? moduleName : "GLOBAL";
 
-                "user_id": str(user.get("sub") or user.get("emp_no", "")),
+      if (files.length > 0) {
+        // ... (file logic)
+        formData.append('module_name', safeModuleName);
+        // Do NOT append collection_name at all
+      } else {
+        const payload = {
+          module_name: safeModuleName, // <-- Just this!
+          message: text,
+          chat_history: historyRef.current.slice(-10)
+        };
+        // Do NOT append collection_name at all
 
-                "user_name": user.get("name", ""),
+```
 
-                "user_dept": user_dept,
+### How the New End-to-End Flow Works
 
-                "collection_agents": user.get("collection_agents", {}),
+**Scenario A: Global Chat ("create mrr")**
 
-                "selected_collection": module_name,
+1. React sends `{"module_name": "GLOBAL", "message": "create mrr"}`.
+2. Backend receives `"GLOBAL"`.
+3. Backend passes it to the NLP Intent Router. The router reads "create mrr" and resolves the module to `"MRR"`.
+4. Backend looks up `"MRR"` in the SQL database. It succeeds.
+5. LangGraph receives `"MRR"` and runs your MRR workflow.
 
-                "selected_agent_role": agent_role,
+**Scenario B: Analytics Chat ("show my hours")**
 
-                "has_permission": False,
-
-                "denial_message": None,
-
-                "messages": [],
-
-                "intent_type": None,
-
-                "generated_sql": None,
-
-                "sql_result": None,
-
-                "sql_error": None,
-
-                "output_type": None,
-
-                "chart_spec": None,
-
-                "table_data": None,
-
-                "text_response": None,
-
-                "retry_count": 0,
-
-            }
-
-
-at this time the selected collection will go and insert there in the state. so from the state we are taking that selected where ever we want.
-
-ok i got clarity only small doubt is why we are storing selected collection only why not module because the hierarchy starts from module, collection and then agents right?
-
-with a user prompt straight away we are passing collection_name"RMS_ANALYTICS" means how we will differ whether user asked a question regarding RMS_ANALYTICS , MRR_ANALYTICS,.. becuase soon we need to implement for these other modules also then how can we differ from the user prompt itself?
-
-
-]
-
-You have reverse-engineered the flow perfectly! You are 100% correct about how the React hook's payload becomes the initial_state in LangGraph.
-
-Your doubt about Module vs. Collection and How we scale this in the future is exactly the right architectural question to ask right now.
-
-Here is why it is built this way, and how it will easily handle MRR_ANALYTICS and HRMS_ANALYTICS in the future.
-1. Why store Collection instead of Module?
-
-You are right that the hierarchy is Module -> Collection -> Agents.
-
-    Module: RMS
-
-    Collection: RMS_ANALYTICS
-
-    Agent: reviewer
-
-In your backend architecture, a Module is just a broad bucket. The Collection is the actual target engine you want to run.
-For example, inside the RMS module, you might have one collection for standard RAG chat, another for timesheet approvals, and another for Analytics. By storing selected_collection = "RMS_ANALYTICS", the backend immediately knows exactly which specialized graph to use and which specific database tables to expose. If we only stored the Module (RMS), the backend would have to guess whether the user wanted standard chat or analytics.
-
-(Note: In your Python snippet, it says "selected_collection": module_name. That is just a variable naming quirk in your chat_route.py where the router assigned the incoming collection_name string into a variable called module_name.)
-2. How will we differentiate them in the future?
-
-Right now, in DashboardLayout.jsx, we hardcoded this line:
-JavaScript
-
-const currentCollection = isAnalyticsChat ? "RMS_ANALYTICS" : "AUTO";
-
-Because of this hardcoding, every prompt typed on the Analytics page currently goes straight to RMS.
-
-When you are ready to add MRR_ANALYTICS (Material Requisition Analytics), we won't try to guess it from the user's prompt. Instead, we will add a small UI control to the frontend.
-
-The Future Frontend Update:
-When a user clicks "Analytics" in the sidebar, they will see a small dropdown or toggle button at the top of the chat window:
-
-    [🔘 RMS Analytics (Timesheets)]
-
-    [⚪ MRR Analytics (Materials)]
-
-    [⚪ HRMS Analytics (Employees)]
-
-When the user toggles that button to MRR, React will simply update a state variable, and DashboardLayout will pass "MRR_ANALYTICS" down to the chat hook instead.
-
-The Future Backend Update:
-When the backend receives "MRR_ANALYTICS", it will build the exact same state, but selected_collection will be "MRR_ANALYTICS".
-Your analytics_permission_check_node will look inside the JWT for "MRR_ANALYTICS" to verify they have access. Then, when the flow reaches the SQL Generator, COLLECTION_TABLE_MAP will automatically inject the MRR database schemas (like mrr_requests_table) instead of the Timesheet schemas!
-
-By using the Collection name as the key, the entire backend becomes infinitely scalable without changing the LangGraph structure.
-
-==================================================================================================================
+1. React sends `{"module_name": "RMS_ANALYTICS", "message": "show my hours"}`.
+2. Backend receives `"RMS_ANALYTICS"`.
+3. Backend skips the NLP Router (because it isn't "GLOBAL").
+4. Backend strips `_ANALYTICS` and looks up `"RMS"` in the SQL database. It succeeds.
+5. LangGraph receives the original `"RMS_ANALYTICS"` payload, builds the specific Analytics state, and runs the read-only SQL graph.
