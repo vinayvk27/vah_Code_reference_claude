@@ -185,3 +185,52 @@ Option B: Updating the Master NLP Router (The Omnichannel Way)
 If you want a single, universal chat box where the user can say "Apply for leave" and then immediately say "Now show me a bar chart of my hours", we have to update your Keyword/Vector router.
 
     Result: We would need to add analytics keywords (e.g., "chart", "graph", "analyze", "trend") and vector embeddings to your Master Router so it can mathematically detect when to branch off into the Analytics LangGraph vs the standard workflow.
+
+========================================================================================================
+
+You have reverse-engineered the flow perfectly! You are 100% correct about how the React hook's payload becomes the initial_state in LangGraph.
+
+Your doubt about Module vs. Collection and How we scale this in the future is exactly the right architectural question to ask right now.
+
+Here is why it is built this way, and how it will easily handle MRR_ANALYTICS and HRMS_ANALYTICS in the future.
+1. Why store Collection instead of Module?
+
+You are right that the hierarchy is Module -> Collection -> Agents.
+
+    Module: RMS
+
+    Collection: RMS_ANALYTICS
+
+    Agent: reviewer
+
+In your backend architecture, a Module is just a broad bucket. The Collection is the actual target engine you want to run.
+For example, inside the RMS module, you might have one collection for standard RAG chat, another for timesheet approvals, and another for Analytics. By storing selected_collection = "RMS_ANALYTICS", the backend immediately knows exactly which specialized graph to use and which specific database tables to expose. If we only stored the Module (RMS), the backend would have to guess whether the user wanted standard chat or analytics.
+
+(Note: In your Python snippet, it says "selected_collection": module_name. That is just a variable naming quirk in your chat_route.py where the router assigned the incoming collection_name string into a variable called module_name.)
+2. How will we differentiate them in the future?
+
+Right now, in DashboardLayout.jsx, we hardcoded this line:
+JavaScript
+
+const currentCollection = isAnalyticsChat ? "RMS_ANALYTICS" : "AUTO";
+
+Because of this hardcoding, every prompt typed on the Analytics page currently goes straight to RMS.
+
+When you are ready to add MRR_ANALYTICS (Material Requisition Analytics), we won't try to guess it from the user's prompt. Instead, we will add a small UI control to the frontend.
+
+The Future Frontend Update:
+When a user clicks "Analytics" in the sidebar, they will see a small dropdown or toggle button at the top of the chat window:
+
+    [🔘 RMS Analytics (Timesheets)]
+
+    [⚪ MRR Analytics (Materials)]
+
+    [⚪ HRMS Analytics (Employees)]
+
+When the user toggles that button to MRR, React will simply update a state variable, and DashboardLayout will pass "MRR_ANALYTICS" down to the chat hook instead.
+
+The Future Backend Update:
+When the backend receives "MRR_ANALYTICS", it will build the exact same state, but selected_collection will be "MRR_ANALYTICS".
+Your analytics_permission_check_node will look inside the JWT for "MRR_ANALYTICS" to verify they have access. Then, when the flow reaches the SQL Generator, COLLECTION_TABLE_MAP will automatically inject the MRR database schemas (like mrr_requests_table) instead of the Timesheet schemas!
+
+By using the Collection name as the key, the entire backend becomes infinitely scalable without changing the LangGraph structure.
