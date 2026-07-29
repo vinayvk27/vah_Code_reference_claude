@@ -1,147 +1,26 @@
-Good instinct on the backup — do that before anything else, and confirm it's a full working copy you can restore in seconds if something breaks.
 
-The routing fix looks correct and your test results genuinely validate all four scenarios properly. One thing I want to flag before moving to the RMS refactor: in the test summary, item 4 ("show my logged hours" → RMS workflow) is only "expected behavior" *if* that message was genuinely typed in the Global chat window. Since you're running these through Postman with raw JSON payloads rather than clicking through the UI, make sure you're actually distinguishing which window each test represents by explicitly setting `module_name` — don't rely on memory of which tab was open. This isn't blocking, just a note for test hygiene going forward.
+Based on the report, here is the deliverable for **Step 1: Read-Only Inventory Table**.
 
-Now, the RMS refactor. Your reasoning is sound — management needs to see architectural parity with MRR, and doing this now (while MRR is fresh in mind and RMS is stable) is a reasonable time to do it, as long as it's done as **pure registration of existing logic**, not new logic. That distinction is the entire safety strategy here.
+### Step 1 — Branching Inventory Table
 
----
+| Existing Target Function | Called From | Trigger Condition Today | Proposed New Graph Node Name |
+| --- | --- | --- | --- |
+| `_handle_creator_excel` | `creator_agent_node` | `uploaded_files` present | `creator_excel_node` |
+| `_handle_rms_form_submit` | `creator_agent_node` | `_parse_rms_form_submit` is not None | `creator_form_submit_node` |
+| *(Normal Text/Regex flow)* | `creator_agent_node` | Default fall-through | `creator_agent_node` (unchanged) |
+| `_handle_reviewer_excel` | `reviewer_agent_node` | `uploaded_files` present | `reviewer_excel_node` |
+| *(Normal Text/Regex flow)* | `reviewer_agent_node` | Default fall-through | `reviewer_agent_node` (unchanged) |
+| `_handle_approver_excel` | `approver_agent_node` | `uploaded_files` present | `approver_excel_node` |
+| *(Normal Text/Regex flow)* | `approver_agent_node` | Default fall-through | `approver_agent_node` (unchanged) |
 
-## The Core Principle Before Any Code Changes
+### Decisions Validated by the Report
 
-**This refactor must not change what any function does. It only changes how the graph reaches those functions.**
+1. **Form Submit is Creator-Only:** As Qwen confirmed, reviewer and approver nodes do not check for form payloads. Therefore, the router's `form_submit` branch will *only* exist in the creator's routing path. Widening this to reviewers or approvers is out of scope and violates the topology-only constraint.
+2. **Three Excel Nodes, Not One:** The Qwen report shows that while the structural pattern of the Excel handlers is the same, they call entirely different validator functions (`_validate_creator_row` vs `_validate_approver_row`), different DB store methods (`create_task` vs `approve_worklog`), and generate different summaries.
+* *Strict BRD Adherence:* If we merged these into a single `excel_handler_node`, we would have to write *new* `if/else` logic inside that node to figure out which persona is acting and which validator to call. The BRD strictly forbids rewriting functions "to make them cleaner while we're in there."
+* *Solution:* We will register them as three distinct nodes (`creator_excel_node`, `reviewer_excel_node`, `approver_excel_node`). This requires zero changes to the actual `_handle_*_excel` functions.
 
-Right now, `creator_agent_node` internally does:
-```python
-if uploaded_files:
-    return _handle_creator_excel(...)
-if rms_form_payload:
-    return _handle_rms_form_submit(...)
-# else fall through to normal LLM-driven creation
-```
 
-The refactor extracts these branches into graph-level routing, but the actual function bodies (`_handle_creator_excel`, `_handle_rms_form_submit`, the normal creation logic) must be called with **identical arguments, in identical order, doing identical work**. You are moving *where* the `if` statement lives — from inside the function to a router — not changing *what* the `if` statement decides.
 
-If your AI proposes rewriting any of `_handle_creator_excel`, `_validate_creator_row`, or similar helper functions "to make them cleaner while we're in there" — refuse that. Not now. That's a separate task with separate risk. This refactor is topology-only.
-
----
-
-## Step-by-Step Plan
-
-### Step 0 — Baseline safety net (before touching anything)
-
-1. Confirm backup is a full copy of the working repo, not just `nodes.py`.
-2. Write down the exact current passing test cases you already have (RMS chat creation, RMS Excel creation, RMS chat approval, RMS Excel approval, plus whatever reviewer-persona tests you've run). This is your regression checklist — after the refactor, every one of these must produce **identical output**, not just "still work."
-3. Ask your AI to print the current `RMSState` TypedDict fields (`state.py`) so we know exactly what fields already exist before adding new ones. You likely already have `uploaded_files` — confirm what else (e.g., is there already a `pending_data` equivalent for confirmation, or does that field need to be added fresh?).
-
-### Step 1 — Read-only inventory (no code changes yet)
-
-Ask your AI to produce a table like this, scanning `nodes.py`:
-
-| Existing function | Called from (which agent node) | Trigger condition today | Proposed new node name |
-|---|---|---|---|
-| `_handle_creator_excel` | `creator_agent_node` | `uploaded_files` present | `excel_handler_node` (shared) |
-| `_handle_reviewer_excel` | `reviewer_agent_node` | `uploaded_files` present | same shared node, persona-branched inside |
-| `_handle_approver_excel` | `approver_agent_node` | `uploaded_files` present | same shared node |
-| `_parse_rms_form_submit` + `_handle_rms_form_submit` | `creator_agent_node` | regex-detected form payload in message | `form_submit_handler_node` |
-| (fall-through / normal LLM path) | all three agent nodes | default, no upload, no form submit | unchanged — still routes to `creator_agent`/`reviewer_agent`/`approver_agent` |
-
-This table is the actual deliverable of Step 1. Do not let your AI write a single line of graph code until this table exists and you've reviewed it. This is where mistakes get caught cheaply — in a table, not in a stack trace.
-
-**Decision point for you:** does MRR use one shared `excel_handler_node` for all three personas, or three separate ones? Your earlier report said MRR has a single `excel_handler_node`. If RMS's three excel handlers (`_handle_creator_excel`, `_handle_reviewer_excel`, `_handle_approver_excel`) have meaningfully different logic per persona, you may need three separate nodes rather than forcing them into one — don't merge them into a single node just to match MRR's shape if the underlying logic doesn't naturally unify. Ask your AI to diff those three functions and tell you how similar they actually are before deciding.
-
-### Step 2 — Design the router function (still no changes to node bodies)
-
-The new router, analogous to `permission_router` but operating one level lower, needs to decide, **after** persona is already known, whether this specific message is: Excel upload, form submit, or normal text.
-
-```python
-def rms_input_router(state: RMSState) -> Literal["excel", "form_submit", "normal"]:
-    if state.get("uploaded_files"):
-        return "excel"
-    if _parse_rms_form_submit(_get_last_user_message(state)) is not None:
-        return "form_submit"
-    return "normal"
-```
-
-Critical detail: `_parse_rms_form_submit` is currently called *inside* `creator_agent_node` only — reviewer and approver nodes don't check for form submissions today (per your report, form submit only exists in the creator path). So the router's `form_submit` branch should only be reachable when persona is creator, otherwise `_parse_rms_form_submit` might get called against reviewer/approver messages where it was never exercised before, which is new behavior, not a topology change. Ask your AI to explicitly confirm: **does the router need persona-awareness, or should form_submit detection remain creator-only for now?** My recommendation: keep it creator-only, matching current behavior exactly. Widening it to reviewer/approver is a feature addition, not this refactor.
-
-### Step 3 — Wire the graph (this is the actual change)
-
-New graph shape:
-
-```
-permission_check → permission_router → {permission_blocked, creator_agent, reviewer_agent, approver_agent}
-```
-
-becomes:
-
-```
-permission_check → permission_router → {
-    permission_blocked,
-    creator_entry,
-    reviewer_entry,
-    approver_entry,
-}
-
-creator_entry → rms_input_router → {
-    "excel": excel_handler_node → END,
-    "form_submit": form_submit_handler_node → END,
-    "normal": creator_agent_node → END,
-}
-
-reviewer_entry → rms_input_router → {
-    "excel": excel_handler_node → END,
-    "normal": reviewer_agent_node → END,
-    # no form_submit branch for reviewer, matches current behavior
-}
-
-approver_entry → rms_input_router → {
-    "excel": excel_handler_node → END,
-    "normal": approver_agent_node → END,
-}
-```
-
-`creator_entry`, `reviewer_entry`, `approver_entry` can literally be pass-through nodes that just set persona context, or you can skip them and have `permission_router` route directly into three separate router-conditional-edges (one per persona) if LangGraph's conditional edge syntax allows reusing the same router function with different destination maps per source node — check with your AI which is cleaner in your LangGraph version.
-
-**Then**, inside `creator_agent_node` (and reviewer/approver), **delete** the now-redundant internal checks:
-
-```python
-# DELETE this — now handled by rms_input_router before this node is even entered
-uploaded_files = state.get("uploaded_files") or []
-if uploaded_files:
-    return _handle_creator_excel(...)
-
-rms_form_payload = _parse_rms_form_submit(...)
-if rms_form_payload is not None:
-    return _handle_rms_form_submit(...)
-
-# KEEP everything after this point unchanged — normal LLM-driven flow
-```
-
-This is the one place where code inside the node bodies actually changes — and it's a *deletion* of now-unreachable dead code, not new logic.
-
-### Step 4 — Test in this exact order
-
-Do not skip ahead or batch these:
-
-1. Normal text creation (no Excel, no form) — creator, reviewer, approver personas. Confirm identical output to pre-refactor.
-2. Excel upload — creator, reviewer, approver. Confirm identical output, confirm DB rows still get created correctly.
-3. Form submit — creator only (since that's the only path that had it before). Confirm identical output.
-4. Permission denial cases — confirm `permission_blocked` still fires correctly for all three entry paths.
-5. Re-run your full earlier regression checklist from Step 0.
-6. Re-run the analytics routing tests from your previous message one more time — this refactor touches `chat_controller.py`'s graph object indirectly only if `get_rms_graph()`'s structure changes shape in a way that affects import timing, so a quick sanity check costs little and catches surprises.
-
-### Step 5 — What NOT to do in this pass
-
-Explicitly tell your AI these are out of scope for this task:
-- No checkpointer (`MemorySaver`) addition — that's Priority 4 in the report, unrelated to topology matching, adds new statefulness risk
-- No confirm/cancel flow for bulk Excel — that's new functionality (Priority 3), not a refactor
-- No changes to validation logic in `_validate_creator_row`, `_validate_reviewer_row`, `_validate_approver_row`
-- No renaming of existing functions beyond what's needed to expose them as graph nodes (i.e., don't gratuitously rewrite `_handle_creator_excel` into a differently-shaped function — wrap it if needed, don't rewrite it)
-
----
-
-## What to Literally Say to Your AI to Start
-
-> "We are refactoring RMS's graph topology to register existing node logic explicitly, matching MRR's pattern. This is topology-only — no function body should change except removing now-dead if-checks that get replaced by graph-level routing. Step 1: produce an inventory table of every internal branch inside creator_agent_node, reviewer_agent_node, and approver_agent_node (Excel handling, form submit handling, normal fallthrough), showing what triggers each branch today. Do not write any graph or router code yet — just the inventory table for me to review first."
-
-Get that table, paste it back to me if you want a second check on it, and only then move to Step 2.
+This table accurately maps the current state to the proposed graph topology without changing a single line of business logic.
+==================================================================================================================================================================================
