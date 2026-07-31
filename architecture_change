@@ -1,126 +1,88 @@
-Here is the finalized summary report you can send to management. It directly addresses their specific verification requests and details the final stabilization fix.
+Good report. The RMS refactor sign-off is legitimate — the persona-flip fix is a real bug you'd have hit in production, and fixing it the same way MRR already solved it (short-circuit before the LLM sees the raw form JSON) is the right move rather than inventing a new pattern. That's closed.
+
+Now, the MRR cleanup report. Before I hand you a task plan, I want to flag something important about how you sequence this, because this report mixes two very different risk categories together and treating them the same way will bite you.
 
 ---
 
-### Subject: RMS Refactor Completion & Final Verification Report
+## The Critical Distinction You Need to Make
 
-Following the review of the RMS topology refactoring, we have executed the three specific verifications requested by management. The architecture is now fully stabilized, validated, and strictly aligned with the MRR pattern.
+**Category A — Dead code removal.** Deleting `mrr_tools.py`, `creator_agent.py`, and the four orphaned functions. This is genuinely low-risk *if and only if* "never imported / never called" is actually true. The report claims this with confidence, but I want you to independently verify it before deleting anything, because "grep found no imports" and "actually dead" are not always the same thing — dynamic imports, string-based imports, or lazy imports inside conditionals can hide a real caller from a static scan. The report itself notes `intent.py` is imported "lazily" elsewhere in the codebase, which proves your AI already knows lazy imports exist in this codebase. That's exactly the kind of import a naive grep misses.
 
-Here are the results of the final verification pass:
+**Category B — DAO migration.** Moving raw SQL out of `nodes.py`, `approver_react_agent.py`, `creator_agent.py`, `tools.py`, and `mrr_tools.py` into `mrr_dao.py`. This is **not cleanup** — this is a refactor that touches the exact same live, working, just-stabilized MRR paths you spent the last several sessions hardening. This carries real regression risk and should not be bundled into the same task as deleting dead files.
 
-#### 1. Verification of Inlined `_get_last_user_message` Logic
+Do not let your AI present these as one unified "cleanup task." Split them, and do Category A first, completely, with its own verification pass, before even discussing Category B.
 
-We ran a strict byte-for-byte comparison of the inline message extraction loops.
+---
 
-* **Result:** The logic injected into the two new nodes (`rms_input_router` and `creator_form_submit_node`) is byte-for-byte identical.
-* **Note on Legacy Nodes:** The new nodes actually utilize a more robust dual-check pattern (`hasattr(msg, 'type')` with a dictionary fallback) to handle serialized state, whereas the legacy nodes (like `parse_intent_node`) only use a basic `isinstance` check. The pattern is safe, consistent, and introduces no diverging logic.
+## Task Plan — Phase 1: Dead Code Removal Only
 
-#### 2. Verification of `static_output_nodes` Updates
+### Step 1 — Independent verification (before deleting anything)
 
-We audited the `chat_controller.py` modifications to ensure shared routing logic remains pristine.
+Ask your AI to run three separate checks per candidate for deletion, not just a plain grep:
 
-* **Collision Check:** Confirmed zero naming collisions. The names `creator_excel_node`, `reviewer_excel_node`, `approver_excel_node`, and `creator_form_submit_node` are completely unique to RMS and do not exist in MRR, HRMS, or Analytics.
-* **Array Diff Check:** Verified that both `stream_chat_with_orchestrator` and `stream_chat_with_file` arrays were updated identically with the four new node names. File uploads and standard chat inputs will now reliably surface widgets to the frontend without discrepancies.
+```
+For each of: mrr_tools.py, creator_agent.py, _parse_approval_command (both instances), 
+_get_last_user_message (line 978), run_approver_summary
 
-#### 3. Manual Testing & The "Persona Flip" Fix
+1. Standard import grep: grep -rn "mrr_tools" --include="*.py"
+2. Dynamic/string import check: grep -rn "importlib" --include="*.py" and grep -rn "'mrr_tools'" or '"mrr_tools"' (quoted, string-form references)
+3. For functions specifically: grep -rn "run_creator_agent\(" to confirm zero call sites, 
+   not just zero import statements (a function can be imported and still never invoked — 
+   the report already found exactly this pattern with run_creator_agent)
+```
 
-During the final regression testing phase, we identified and resolved one edge-case bug to achieve parity with the MRR module:
+The report already demonstrates awareness of the "imported but never called" trap with `run_creator_agent` — good catch by your AI. Apply that same rigor to every other deletion candidate, not just that one.
 
-* **The Issue:** When submitting the giant UI form JSON payload, the stateless Intent LLM attempted to parse the raw JSON code, became confused, and hallucinated a `reviewer` persona instead of a `creator`.
-* **The Fix:** We applied the exact same "short-circuit" pattern currently used in the MRR module. We added a 10-line check inside `parse_intent_node` that detects the RMS form payload, safely bypasses the LLM entirely, and locks the persona to `creator`.
-* **Regression Results:**
-* **Form Submissions:** Passed. The short-circuit correctly routes the JSON payload directly to the `creator_form_submit_node`.
-* **Permission Denial:** Passed. Unauthorized users hitting the entry passthroughs correctly trigger the `permission_blocked` terminal node.
-* **Analytics Routing:** Passed. Standard analytics queries remain unaffected by the controller edits.
+### Step 2 — Check for indirect references outside the workflow folder
 
-============================================================================
+`mrr_tools.py` and `creator_agent.py` might not be imported by anything inside `material_workflow/`, but could still be referenced from:
+- Test files (if any exist)
+- Startup/registration code that scans directories for tool discovery (some LangGraph setups auto-discover tools by scanning modules)
+- Documentation generation or admin scripts
 
-** so the next task is in mrr there are some unused codes and files and some insert codes are not there in dao so like that i asked my AI to send me a report by going through the code.
-** so check the report and give me the task plan to proceed for clean up
+Ask your AI specifically: *"Search the entire repository, not just app/workflows/material_workflow/, for any reference to these file names or function names, including in scripts/, tests/, and any startup/registration code."*
 
-MRR Workflow Analysis Report
-Directory: app/workflows/material_workflow/
-Date: 2026-07-31
+### Step 3 — Delete in this order, testing after each
 
-1. SQL Leakage in Nodes
-1a. Raw SQL in nodes.py — 7 functions, 14 SQL executions
-#	Function	Lines	Operation	Table(s)
-1	_lookup_project	90	SELECT	posproject
-2	_lookup_latest_phase	107	SELECT	posprojectphases
-3	evaluate_and_route	722-788	SELECT + INSERT (x2)	mrr_matrequisitionheader, mrr_matrequisitionlines
-4	evaluate_and_route	794	SELECT (JOIN)	posproject, projlist, Resources
-5	auto_verifier_node	918-953	SELECT + UPDATE (x2)	mrr_matrequisitionlines, mrr_matrequisitionheader
-6	_lookup_item (nested)	1231	SELECT	com_search
-7	form_submit_handler_node	1388	SELECT	mrr_matrequisitionheader
-8	mrr_submission_node	1735-1809	INSERT (x2) + SELECT (JOIN)	mrr_matrequisitionheader, mrr_matrequisitionlines, posproject, projlist
-1b. Raw SQL in other active files
-File	Function(s)	Operations	Tables
-approver_react_agent.py	approve_one, reject_one, approve_all (inner functions of _build_approver_tools)	UPDATE (x7), SELECT (x3)	mrr_matrequisitionheader, posproject, projlist
-creator_agent.py	run_creator_agent → Submit_MRR tool	INSERT (x2), SELECT (x2)	mrr_matrequisitionheader, mrr_matrequisitionlines, posproject, scmitems
-tools.py	search_projects, get_project_phases, get_effective_item_availability, get_item_details_from_db	SELECT (x4)	posproject, posprojectphases, scmitems, mrr_matrequisitionlines, mrr_matrequisitionheader
-mrr_tools.py	tool_search_projects, tool_get_project_phases, tool_get_effective_item_availability	SELECT (x4)	posproject, posprojectphases, scmitems, SCMQUANTITYONHAND, mrr_matrequisitionlines, POHEADERS, POLINES
-1c. DAO Status
-MRRDao exists at app/dao/mrr_dao.py and provides:
+Don't delete everything in one commit. Sequence:
 
-Read methods: get_mrr_breakdown, get_pending_mrrs_for_*, search_projects, search_items, get_creator_email, get_employee_email
-Write methods: execute_threshold_approval, execute_manager_approval, update_ai_verification
-DAO gaps (no methods exist):
+1. Delete `run_approver_summary` (lowest risk — single dead function, single file)
+2. Run your MRR regression checklist (approval flow specifically, since this touches `approver_react_agent.py`)
+3. Delete the two dead `_parse_approval_command` instances and the dead `_get_last_user_message` duplicate
+4. Run regression checklist again (form submit and approval flows)
+5. Delete `mrr_tools.py`
+6. Run full regression checklist
+7. Delete `creator_agent.py`
+8. Run full regression checklist one final time
 
-INSERT into mrr_matrequisitionheader
-INSERT into mrr_matrequisitionlines
-Sequence ID computation (MAX(id) + 1)
-Lookups on posproject, posprojectphases, com_search
-2. Unused / Orphaned Files
-2a. File Inventory (15 .py files)
-File	Status	Notes
-graph.py	ACTIVE	Entry point — builds the LangGraph state machine
-__init__.py	ACTIVE	Re-exports mrr_graph, state, and node functions
-nodes.py	ACTIVE	All node functions, imported by graph.py and init.py
-state.py	ACTIVE	TypedDict definition, imported by graph.py and init.py
-config.py	ACTIVE	get_llm() — imported by nodes.py
-agents.py	ACTIVE	Agent configs, extractors — imported by nodes.py
-tools.py	ACTIVE	LangChain @tool functions — imported by nodes.py, chat_route.py
-prompts.py	ACTIVE	Form widget payloads, keywords — imported by nodes.py
-approvers.py	ACTIVE	is_manager_approver, is_erp_approver, is_issuer — imported by nodes.py, email controller, mrr welcome controller
-intent.py	ACTIVE	classify_mrr_intent — imported by nodes.py (lazy import)
-verifier_agent.py	ACTIVE	run_ai_verifier — imported by nodes.py
-approver_react_agent.py	ACTIVE	run_approver_react_agent — imported by nodes.py
-mrr_tools.py	ORPHANED	Never imported by any file in the codebase. Duplicate of tools.py and tools.py functions.
-agent_factory.py	ACTIVE	create_bulletproof_react_agent — used by approver_react_agent.py, verifier_agent.py, creator_agent.py
-creator_agent.py	QUASI-ORPHANED	run_creator_agent is imported by nodes.py (line 49) but NEVER CALLED from anywhere. The file itself has raw SQL INSERTs but is dead code.
-2b. Dead files summary:
-mrr_tools.py — completely dead, never imported anywhere. Duplicates tools.py.
-creator_agent.py — run_creator_agent is imported but never invoked. The entire file is dead code.
-3. Unused Functions in Active Files
-3a. In nodes.py (1 dead function):
-Function	Line	Why dead
-_parse_approval_command	119	NEVER CALLED. Duplicated at line 988 with the same name, but line 988 version is also never called. The line 119 version is the earlier definition that no caller references.
-3b. Duplicate functions in nodes.py (one is dead):
-Function	Line	Line	Status
-_get_last_user_message	144	978	Line 144 IS CALLED (by pl_pm_agent_node at line 853). Line 978 is a dead duplicate — never called.
-_parse_approval_command	119	988	BOTH are dead — never called by any function.
-3c. In approver_react_agent.py:
-Function	Line	Status
-run_approver_summary	268	DEAD — documented as "Legacy wrapper for compatibility with nodes.py" but never called from anywhere. Only calls run_approver_react_agent.
-Summary of Safe Deletions
-Files safe to delete:
-mrr_tools.py — never imported, duplicates tools.py
-creator_agent.py — run_creator_agent imported but never called; entire file is dead
-Functions safe to delete from nodes.py:
-_parse_approval_command (line 119) — dead duplicate
-_parse_approval_command (line 988) — dead duplicate
-_get_last_user_message (line 978) — dead duplicate of line 144
-fire_email_async (line 55) — actually used at lines 808 and 1815, so NOT safe to delete
-Functions safe to delete from approver_react_agent.py:
-run_approver_summary (line 268) — dead legacy wrapper
-DAO Migration Priority (highest impact first):
-mrr_submission_node and evaluate_and_route — duplicate INSERT logic, needs DAO methods for header/line insertion
-auto_verifier_node — UPDATE logic duplicates what DAO methods could handle
-approver_react_agent.py — approval/rejection UPDATEs should be in DAO
-creator_agent.py — INSERT logic (but this file is dead)
-tools.py / mrr_tools.py — SELECT lookups could be DAO methods
+Yes, this is slower than deleting everything at once. But if something breaks, you know exactly which deletion caused it, instead of debugging five simultaneous changes.
 
+### Step 4 — What your MRR regression checklist must cover
 
+Before starting Phase 1, write down (same as you did for RMS) the current known-good behavior for:
+- Creator: chat-based MRR creation, Excel-based MRR creation
+- Approver: chat-based approve/reject, Excel-based approve/reject
+- Form submission flow (the one you just fixed the persona-flip bug for)
+- AI verifier flow (`auto_verifier_node`)
 
-**Conclusion:**
-The RMS graph topology refactor is officially complete. The architecture now securely routes file uploads and form submissions via explicit conditional edges before any LLM execution, strictly satisfying the BRD constraints with zero modifications to underlying business logic.
+If any of these regress after a deletion, revert that specific deletion immediately rather than debugging forward.
+
+---
+
+## Phase 2: DAO Migration — Do Not Start Yet
+
+I'm deliberately not giving you a task plan for this yet, and here's why.
+
+The report frames DAO migration as a natural continuation of cleanup, but it's actually a much larger, higher-risk piece of work masquerading as tidiness. Consider what it actually involves: rewriting the INSERT logic in `mrr_submission_node` and `evaluate_and_route`, rewriting UPDATE logic in `auto_verifier_node` and `approver_react_agent.py`'s approval functions, adding sequence-ID computation to the DAO that currently doesn't exist there — all of this is business-logic-adjacent code, not dead code. Moving a raw `INSERT INTO mrr_matrequisitionheader` from `nodes.py` into `mrr_dao.py` means re-implementing that exact SQL in a new location, and any subtle difference (parameter binding, transaction scope, error handling) becomes a live bug in your requisition creation flow.
+
+You just spent significant effort stabilizing RMS to match MRR's topology because MRR was the reference architecture. Touching MRR's actual database write paths right after finishing that work, without a clear business reason forcing it, is exactly the kind of scope creep that turns "let's clean up a few unused files" into "why is MRR creation broken now."
+
+**My recommendation:** finish Phase 1 (dead code deletion), verify everything still works, and then stop. Log the DAO migration as a backlog item with the report's findings attached. Don't schedule it now. Do it later, as its own dedicated task, with its own full regression pass, when you have a specific reason to (e.g., you're about to add a new feature that needs to touch those same insert paths anyway, so consolidating them into the DAO first makes sense as part of that work — not as standalone tidiness).
+
+---
+
+## What to Tell Your AI Right Now
+
+> "We're doing Phase 1 only: dead file and dead function removal. First, verify each deletion candidate with import grep, string/dynamic import grep, and call-site grep — not just import statements. Also search the full repo outside material_workflow/ for any reference. Then delete one item at a time, in this order: run_approver_summary, the two dead _parse_approval_command instances, the dead _get_last_user_message duplicate, mrr_tools.py, creator_agent.py — running the full MRR regression checklist after each deletion. Do not touch any raw SQL, do not begin DAO migration, do not modify any function that is still actively called."
+
+Once Phase 1 is verified clean, come back and we'll scope Phase 2 properly as its own task — with its own inventory table, same discipline as the RMS refactor.
