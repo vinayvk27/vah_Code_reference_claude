@@ -71,3 +71,17 @@ Instead of leaving this in the backlog, I immediately patched it.
 
 The codebase is now 100% DAO-pure, manually verified, and significantly more secure than it was yesterday. The Phase 2 migration is definitively complete.
 
+=================================
+
+** coming to the React approach that u have said .you said that we will remove the initialise agent and REact in the current mrr because llm is hallucinating and it is failing to produce the results on time by failing to produce "action" sometimes while though action observation.
+** and you are asking to completely remove reasoning. i understand your concern becuase of this reasoning only the UX will be disturbed and sometimes those <think> tags and other things were coming in the frontend instead of table coming first
+** but managament is asking reasoning should be there. so instead of giving only friendly message. i have a approach i dont know whetehr it is coorect ot not.
+approach:
+when a user creates we dont even show any reasoning to him staright it will insert and friendly message will come.
+similiarly for approver also staright away the form table will display with pending mrr and then if llm failed to provide any reasoning means we can throw blame on llm by one message liek llm failed to produce reasoning so that 
+no one can suspect us.
+like this do u have any approaches comeback to me and also tell about this particualr REact approach and why you are asking not to use this for our use and is there any advantage if i use single shot agent or conversation agent apart from 
+zero shot for this scenario.
+
+can u give a brief about this completelty
+
