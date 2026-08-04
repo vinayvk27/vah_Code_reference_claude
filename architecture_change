@@ -1,61 +1,119 @@
-Here is your exact, sequenced execution plan based directly on Management’s strict orders. Do not do all of these at once. Do them one by one, and run the specified test before moving to the next step.
-Step 1: Delete run_approver_summary
+Before I hand you the plan, one honest pushback: your AI's own report recommended deferring this until "the next feature request that requires modifying the MRR creation logic anyway." Has that trigger actually arrived, or are you starting Phase 2 now just because Phase 1 went cleanly and momentum feels good? I ask because Phase 1 succeeding easily doesn't tell you anything about Phase 2's risk — deleting unreachable code and rewriting live database write paths are different categories of danger, and the report itself said so. If there's no concrete feature driving this right now, I'd still say wait. If you have a real reason, let's do it properly.
 
-    Open app/workflows/material_workflow/approver_react_agent.py.
+Assuming you're proceeding — here's how to do it without breaking requisition creation or approval.
 
-    Scroll to around line 268 and completely delete the run_approver_summary function.
+---
 
-    TEST: Run an approval flow (chat-based approve/reject) to ensure the approver agent still works perfectly.
+## The One Rule That Governs Everything Below
 
-Step 2: Delete the Dead Functions in nodes.py
+**A DAO method is only "done" when it produces byte-identical results to the raw SQL it replaces, under the exact same transaction and error-handling guarantees.** Not "similar." Not "cleaner." Identical. Any deviation — different commit timing, different exception type raised, different row shape returned — is a live bug in a financial/inventory-adjacent system.
 
-    Open app/workflows/material_workflow/nodes.py.
+---
 
-    Delete the first _parse_approval_command (around line 119).
+## Step 0 — Pre-Work (Before Touching Any Code)
 
-    Delete the duplicate _parse_approval_command (around line 988).
+**1. Take a fresh, full database backup**, separate from whatever backup discipline you already have. This migration touches INSERT and UPDATE paths on requisition data — you want a restore point specific to this work.
 
-    Delete the duplicate _get_last_user_message (around line 978). (CRITICAL: Leave the active one at line 144 alone!)
+**2. Ask your AI to produce a transaction-boundary map**, not just the SQL inventory you already have. For each function with multiple SQL statements (especially `mrr_submission_node` with its header+lines INSERTs, and `evaluate_and_route` with its SELECT+INSERT×2), determine:
+- Are these statements currently wrapped in a single DB transaction (one commit for all, rollback-all on any failure)?
+- Or are they separate auto-committed statements?
 
-    TEST: Run both the Form Submit flow and the Approval flow to ensure no side effects occurred.
+This matters enormously. If header+lines insert is currently atomic and your migration accidentally splits it into two separate DAO calls with independent commits, a crash between the two calls leaves an orphaned requisition header with no lines — silent data corruption that surfaces weeks later as a confused user report, not an immediate error.
 
-Step 3: Delete mrr_tools.py
+**3. Ask your AI to flag the sequence-ID generation pattern specifically** (`MAX(id) + 1`, used for whatever surrogate key you're generating manually rather than via auto-increment). This pattern has a known race condition: two concurrent requests can both read the same MAX value and generate the same "next" ID, causing a collision or overwrite. This risk **already exists in the current code** — migrating it to the DAO doesn't make it worse, but it's tempting to "fix" it while you're in there. **Don't.** Fixing a race condition is a deliberate, separate decision with its own testing (concurrent request simulation), not something to bundle into a refactor. Log it as its own backlog item if your AI flags it, and migrate the existing (flawed but working) logic as-is for now.
 
-    Completely delete the file app/workflows/material_workflow/mrr_tools.py.
+---
 
-    TEST: Run your full MRR regression checklist (Creator chat/Excel, Approver chat/Excel, Form submit, AI verifier).
+## Step 1 — Categorize by Risk, Then Migrate in This Order
 
-Step 4: Delete creator_agent.py
+Not all 14 SQL executions carry equal risk. Sequence matters:
 
-    Open app/workflows/material_workflow/nodes.py one last time.
+**Tier 1 (lowest risk) — pure SELECT lookups, no side effects:**
+`_lookup_project`, `_lookup_latest_phase`, `_lookup_item`, `search_projects`, `get_project_phases`, `get_effective_item_availability`, `get_item_details_from_db` — these read data and return it. Worst case if something's subtly wrong: a wrong search result, immediately visible, easily caught in testing. No data corruption risk.
 
-    Go to line 49 and delete the dead import: from app.workflows.material_workflow.creator_agent import run_creator_agent.
+**Tier 2 (medium risk) — single-table UPDATE:**
+The approval/rejection UPDATEs in `approver_react_agent.py` (`approve_one`, `reject_one`, `approve_all`). These mutate existing rows but each operates on one table per statement.
 
-    Completely delete the file app/workflows/material_workflow/creator_agent.py.
+**Tier 3 (highest risk) — multi-statement transactional writes:**
+`mrr_submission_node`'s header+lines INSERT, `evaluate_and_route`'s SELECT+INSERT×2, `auto_verifier_node`'s UPDATE×2. These involve multiple related writes that must succeed or fail together.
 
-    TEST: Run your full MRR regression checklist one final time.
+**Migrate Tier 1 fully, verify, then Tier 2 fully, verify, then Tier 3 fully, verify.** Do not interleave. If something breaks in Tier 3, you want zero doubt about whether Tier 1 or Tier 2 changes contributed.
 
+---
 
-===========================================
+## Step 2 — Verification Method for Tier 1 (Reads)
 
-report results by AI
+For read-only queries, use **parallel-run comparison** — the safest verification technique available, and it's only possible because reads have no side effects.
 
-Workflow Cleanup Status & Backlog Report
+For each Tier 1 function, temporarily modify the node to call **both** the old raw SQL and the new DAO method, then diff the results and log any mismatch, while still using the old result for actual behavior:
 
-Phase 1: Dead Code Removal (COMPLETED)
+```python
+old_result = <existing raw SQL execution>
+new_result = mrr_dao.new_dao_method(...)
+if old_result != new_result:
+    logger.error(f"DAO MISMATCH in _lookup_project: old={old_result} new={new_result}")
+# Continue using old_result for now — don't cut over yet
+return old_result
+```
 
-    Action: Conducted a full-repository static and dynamic string analysis to verify orphaned code. Safely deleted mrr_tools.py, creator_agent.py, and multiple dead functions/imports from nodes.py and approver_react_agent.py.
+Run your full regression checklist plus a handful of manual real-world queries with this dual-execution in place. Watch logs for any mismatch. Only once you've seen zero mismatches across real usage do you delete the old call and cut over to `new_result` as the actual return value.
 
-    Result: Clean bill of health. Full regression testing (Creator flow, Approver flow, Auto-Verifier ReAct agent) passed with zero side effects.
+This is slightly more work upfront but it means you're never trusting "looks right" — you're proving equivalence against real production-shaped queries before the old path is removed.
 
-Phase 2: MRR DAO SQL Migration (LOGGED TO BACKLOG)
+---
 
-    Context: Scans identified raw SQL execution (e.g., INSERT INTO mrr_matrequisitionheader, UPDATE) leaking into workflow nodes (specifically nodes.py, auto_verifier_node, and approver_react_agent.py).
+## Step 3 — Verification Method for Tier 2 and Tier 3 (Writes)
 
-    Risk Assessment: High. Unlike Phase 1, migrating these queries to mrr_dao.py requires rewriting active, live-production database write paths. Any subtle mismatch in transaction scoping, parameter binding, or error handling will directly break the requisition creation and approval flows.
+You cannot parallel-run writes safely — running both old and new INSERT/UPDATE logic would double-write data. Instead:
 
-    Recommendation: Do not execute as a standalone "cleanup" task. This migration has been logged to the backlog. It should be scheduled as a dedicated architectural refactor with its own isolated testing cycle, ideally piggybacking on the next feature request that requires modifying the MRR creation logic anyway.
+**1. Do this on a staging/test database first, never directly on production data**, if you have any staging environment at all. If you don't have one, create a throwaway copy of your MariaDB schema with representative test data specifically for this migration.
 
-==============================================
+**2. For each write function, write a dedicated before/after test:**
+   - Snapshot the exact DB state before the operation (relevant rows in `mrr_matrequisitionheader`, `mrr_matrequisitionlines`, etc.)
+   - Run the OLD code path, capture the resulting DB state
+   - Restore the pre-operation snapshot
+   - Run the NEW DAO-based code path, capture the resulting DB state
+   - Diff the two resulting states — row counts, exact column values, generated IDs, timestamps (allow timestamp drift, everything else must match)
 
-i think we can start phase 2 now . give me a very good plan to complete this cleanly
+**3. Specifically verify transaction behavior on failure.** Deliberately inject a failure partway through (e.g., temporarily break the second INSERT in header+lines) and confirm the NEW DAO method rolls back the first INSERT too, matching whatever the OLD code did on partial failure. This is the single most important test in the entire migration — it's exactly the failure mode that's invisible in happy-path testing and catastrophic in production.
+
+**4. Only after Tier 2 and Tier 3 pass this before/after diff testing on staging**, migrate them in your real environment, then immediately run your full MRR regression checklist (Creator chat/Excel, Approver chat/Excel, Form submit, AI verifier) exactly as you did for Phase 1.
+
+---
+
+## Step 4 — DAO Method Design Constraints
+
+Tell your AI explicitly, before it writes any DAO code:
+
+- Each new DAO method's SQL must be **copy-pasted from the existing raw SQL**, not rewritten "more idiomatically." Same WHERE clauses, same JOIN conditions, same column selection, same parameter binding style.
+- Return types must match exactly what the calling node currently expects (list of dicts vs list of tuples vs single row vs cursor object — check what the node code actually consumes today, don't assume).
+- If the original code uses string formatting for SQL (rather than parameterized queries), **flag this to you explicitly as a separate finding** — don't silently "fix" it to parameterized queries as part of this migration, since that's a behavior-preserving-but-security-improving change that deserves its own conscious decision and testing, not a stealth fix bundled into a refactor task.
+- Multi-statement writes (Tier 3) must be wrapped in a single explicit transaction inside the DAO method (`db.begin()` / commit / rollback-on-exception), matching whatever atomicity guarantee — implicit or explicit — the original code had.
+
+---
+
+## Step 5 — Sequencing Checklist
+
+```
+1. Pre-work: DB backup, transaction-boundary map, flag sequence-ID race condition (log only, don't fix)
+2. Tier 1 (reads): migrate all 7 functions with parallel-run diffing, cut over one at a time, 
+   regression test after each cutover
+3. Tier 2 (single-table writes): migrate approve_one, reject_one, approve_all with staging 
+   before/after diff testing, cut over one at a time, regression test after each
+4. Tier 3 (multi-statement transactional writes): migrate mrr_submission_node, evaluate_and_route, 
+   auto_verifier_node — one function at a time, staging before/after diff testing INCLUDING 
+   deliberate failure-injection testing for rollback correctness, cut over one at a time, 
+   full regression test after each
+5. Final: run complete MRR regression checklist one more time, confirm no raw SQL remains 
+   in nodes.py / approver_react_agent.py / tools.py / creator_agent.py's remnants (already deleted)
+```
+
+Do not compress this into "migrate everything then test once." Every cutover gets its own regression pass, same discipline as Phase 1 and the RMS refactor.
+
+---
+
+## What to Tell Your AI to Start
+
+> "We're beginning Phase 2, Tier 1 only — the 7 read-only SELECT functions. First, produce a transaction-boundary map for all Tier 2/3 functions so we understand atomicity requirements before we get there, and flag the sequence-ID generation pattern as a known race condition to log as a separate backlog item, not fix now. Then, for each Tier 1 function, implement the DAO method as an exact copy of the existing SQL, and wire dual-execution parallel-run logging so we can verify equivalence before cutting over. Do not touch Tier 2 or Tier 3 yet."
+
+Get Tier 1 fully verified and cut over before even discussing Tier 2. This will feel slow. That's the point — this is the tier of your codebase where "fast and slightly wrong" costs you a corrupted requisition, not a failed test.
