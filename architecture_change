@@ -1,104 +1,172 @@
-** i have given your suggestions to management they sid they will comeback to me after checking llm how it is performing bind tools and native cooling meanwhile they have given some naming conventions work after all
-the clean up with help of AI i prepared a plan just check it whether i can proceed or not
-================================
-report:
+Good — string-only scope confirmed, and a clean role-based template is the right instinct for readability. Let me give you the naming framework first, since not every node should be forced into `role_agent_node` shape, then the full consolidated prompt.
 
-LangGraph Node Rename — Blast Radius Report
+---
 
-1. Controller/Route Leakage: YES — HIGH IMPACT
+## The Naming Framework — Two Categories, Not One Template
 
-app/controllers/chat_controller.py contains two hardcoded lists named static_output_nodes (one per chat endpoint handler) that explicitly enumerate every node name. These lists determine how the SSE stream formats each node's output:
+Management's template (`creator_agent_node`, `pl_pm_agent_node`) applies to nodes that represent **a persona making a decision** — an LLM reasoning as a specific role. It does not fit **infrastructure nodes** — routers, handlers, entry points — that exist purely for control flow, not persona reasoning. Forcing a router into `role_agent_node` shape would actually make the codebase *less* readable, not more, because it would blur the distinction between "this node thinks" and "this node routes."
 
-FileLinesPurposechat_controller.py405–425First handler — checks node_name in static_output_nodes then formats messages (form widgets, errors, plain chunks)chat_controller.py764–793Second handler (orchestrator path) — identical pattern
+Industry convention (used across LangGraph examples, Semantic Kernel, and most agent frameworks) splits into these suffixes:
 
-What happens if you rename a node here but not in chat_controller.py: The SSE stream will stop producing any output for that node (the if node_name in static_output_nodes guard will fail, so the node's messages get silently dropped from the frontend response).
+| Suffix | Meaning | Applies to |
+|---|---|---|
+| `_agent_node` | LLM reasons and acts as a named persona | Creator, PL/PM approver, ERP approver, Verifier |
+| `_router` | Pure decision function, returns a string key, no LLM call or side effect | Intent routers, path routers, entry routers |
+| `_handler_node` | Executes a mechanical action (file processing, form parsing) — no persona framing, just does a job | Excel handler, form submit handler |
+| `_entry` | Pass-through / bookkeeping node before a router | Router entry points |
 
-Critical strings in the controller lists (all must be updated together):
+This mirrors exactly what you already did correctly in the RMS refactor — `excel_handler_node`, `form_submit_handler_node`, `permission_router` weren't renamed to fit a "role" template because they aren't roles. Same principle applies here.
 
+---
 
-mrr_approver_agent, mrr_approver_agent_node
+## Proposed MRR Mapping
 
-mrr_erp_approver_agent, mrr_erp_approver_agent_node
+Based on everything discussed across this conversation. **I'm flagging confidence level on each** — some I'm certain about from the blast radius report, others need your AI to confirm against the actual current `graph.py` before finalizing, since I only have fragments, not full source visibility.
 
-submit_mrr, submit_mrr_node
+### Role Agent Nodes (persona reasoning — apply `role_agent_node`)
 
-cancel_mrr, cancel_mrr_node
+| Current name (from reports) | New name | Confidence |
+|---|---|---|
+| `creator_agent` / `creator_agent_node` | `creator_agent_node` | High — already compliant, no change |
+| `approver_agent` / `approver_agent_node` (if this is MRR's PL/PM step) | `pl_pm_agent_node` | **Needs confirmation** — clarify below |
+| `mrr_approver_agent` / `mrr_approver_agent_node` | `pl_pm_agent_node` (may be duplicate/legacy alias of above) | **Needs confirmation** |
+| `mrr_erp_approver_agent` / `mrr_erp_approver_agent_node` | `erp_agent_node` | High |
+| `ai_verifier` / `auto_verifier_node` | `verifier_agent_node` | High |
 
-creator_needs_file, creator_needs_file_node
+**The ambiguity to resolve first:** the blast radius report lists `approver_agent`/`approver_agent_node` AND `mrr_approver_agent`/`mrr_approver_agent_node` as separate entries in the controller's shared list. These might be: (a) two different things — one is MRR's actual node, one is RMS's node that happens to sit in the same shared controller list, or (b) a legacy duplicate within MRR itself, from before some earlier refactor. **Have your AI check `material_workflow/graph.py` directly and tell you which of these two strings is actually registered via `add_node()` inside MRR's own graph** — the other one almost certainly belongs to RMS and must not be touched by this MRR-scoped rename.
 
-form_submit_handler, form_submit_handler_node
+### Infrastructure Nodes (control flow — keep distinct convention, do NOT force into role template)
 
-creator_router_entry
+| Current name | New name | Reasoning |
+|---|---|---|
+| `session_entry_router` | `session_entry_router` | Already compliant — no change |
+| `creator_router_entry` | `creator_entry` | Simplify — "router" redundant with the router it feeds |
+| `creator_path_router` | `creator_path_router` | Already compliant |
+| `rbac_intent_router` | `rbac_intent_router` | Already compliant |
+| `excel_handler_node` | `excel_handler_node` | Already compliant |
+| `form_submit_handler` / `form_submit_handler_node` | `form_submit_handler_node` | Standardize to `_node` suffix consistently |
+| `submit_mrr` / `submit_mrr_node` / `mrr_submission_node` | `mrr_submit_handler_node` | Consolidate naming — this executes an action, not a persona decision |
+| `cancel_mrr` / `cancel_mrr_node` | `mrr_cancel_handler_node` | Same reasoning |
+| `creator_needs_file` / `creator_needs_file_node` | `file_required_prompt_node` | This just tells the user "attach a file" — describe what it does, not who wants it |
 
-approver_agent, approver_agent_node
+---
 
-creator_agent, creator_agent_node
+## The Full Consolidated Prompt
 
-reviewer_agent, reviewer_agent_node
+Paste this to your AI as one message. It includes the mapping (with the one open question flagged for your AI to answer first), the atomic Phase 2+3 fix, the string-only scope constraint, the documentation phase, and the independent verification requirement.
 
-Plus many other nodes from other workflows (RMS, HRMS, issuer) that share the same controller logic.
+```
+TASK: MRR Node Renaming — String-Only, Industry-Standard Convention
 
-2. Database/State Leakage: NO
+SCOPE CONSTRAINT (confirmed with management): We are renaming ONLY the 
+LangGraph string identifiers used in add_node(), add_edge(), 
+add_conditional_edges(), and router return values. We are NOT renaming 
+any Python function definitions (def mrr_submission_node(state): stays 
+exactly as-is). This means zero changes to import statements anywhere, 
+including in rms_workflow/ or hrms_workflow/.
 
-No DB models store node names. There are no columns like node_name or node_status in any model.
+NAMING CONVENTION:
+- Persona/role reasoning nodes (LLM decides+acts as a named role) use 
+  suffix _agent_node — e.g. creator_agent_node, pl_pm_agent_node
+- Pure routing/decision functions (return a string key, no LLM call, 
+  no side effect) use suffix _router — e.g. creator_path_router
+- Mechanical action nodes (execute a task, no persona framing) use 
+  suffix _handler_node — e.g. excel_handler_node
+- Pass-through/bookkeeping nodes before a router use suffix _entry
 
-The execution_log field in the LangGraph state (state.py:51) is a List[str] containing human-readable audit messages (e.g., "Permission GRANTED: Global access verified..."), not node identifier strings.
+STEP 0 — RESOLVE AMBIGUITY BEFORE ANY RENAME:
+Open app/workflows/material_workflow/graph.py and identify exactly 
+which node string is registered via add_node() for the PL/PM approval 
+step. The prior blast-radius report listed both "approver_agent"/
+"approver_agent_node" AND "mrr_approver_agent"/"mrr_approver_agent_node" 
+in the shared chat_controller.py static_output_nodes lists. Determine:
+  a) Which of these two belongs to material_workflow/graph.py specifically
+  b) Whether the other one belongs to rms_workflow or hrms_workflow instead
+  c) If both somehow exist inside material_workflow, whether one is 
+     dead/legacy (cross-reference with the earlier dead-code audit)
+Report back your findings before proceeding to Step 1. Do not guess.
 
-The checkpointer is MemorySaver (graph.py:33) — in-memory only, no persistence layer.
+STEP 1 — MAPPING MATRIX:
+Once Step 0 is resolved, apply this mapping (adjust the ambiguous rows 
+based on Step 0 findings):
 
-Conclusion: Node names are purely transient, used only within LangGraph's execution graph and the SSE stream handler. No DB migration needed.
+  ROLE AGENT NODES:
+    creator_agent / creator_agent_node        -> creator_agent_node (no change)
+    [MRR's actual PL/PM node, confirmed in Step 0] -> pl_pm_agent_node
+    mrr_erp_approver_agent / mrr_erp_approver_agent_node -> erp_agent_node
+    ai_verifier / auto_verifier_node          -> verifier_agent_node
 
-3. Workflow Internal Binding: YES — three touchpoints per rename
+  INFRASTRUCTURE NODES:
+    session_entry_router                      -> session_entry_router (no change)
+    creator_router_entry                      -> creator_entry
+    creator_path_router                       -> creator_path_router (no change)
+    rbac_intent_router                        -> rbac_intent_router (no change)
+    excel_handler_node                        -> excel_handler_node (no change)
+    form_submit_handler / form_submit_handler_node -> form_submit_handler_node
+    submit_mrr / submit_mrr_node / mrr_submission_node -> mrr_submit_handler_node
+    cancel_mrr / cancel_mrr_node               -> mrr_cancel_handler_node
+    creator_needs_file / creator_needs_file_node -> file_required_prompt_node
 
-Inside app/workflows/material_workflow/, each node string appears in exactly 3 places:
+Present this final matrix back to me before touching any code, so I 
+can confirm it matches management's expectations.
 
-a. graph.py — Node registration
+STEP 2 — INDEPENDENT VERIFICATION (before any rename):
+a) Grep the entire frontend codebase (all .js/.jsx/.ts/.tsx/.vue files) 
+   for every OLD node name string listed above. Confirm zero references. 
+   Show me the actual grep command and its actual output — not a summary.
+b) Grep the entire codebase for any reference to these node name strings 
+   OUTSIDE app/workflows/material_workflow/ and app/controllers/chat_controller.py 
+   — specifically check for saved queries, log aggregator configs, or 
+   admin scripts that might filter on these exact strings.
+c) Confirm execution_log (state.py) contains only free-text audit 
+   messages, not node identifier strings, by showing me 5 real sample 
+   entries from a recent test run.
 
+STEP 3 — ATOMIC RENAME (Phase 2+3 combined, NOT sequential):
+Update ALL of the following together, in a single change, before any 
+testing:
+  a) app/workflows/material_workflow/graph.py — every add_node(), 
+     add_edge(), add_conditional_edges() call
+  b) app/workflows/material_workflow/nodes.py — every router function's 
+     return "..." string (creator_path_router and any others)
+  c) app/controllers/chat_controller.py — BOTH static_output_nodes lists 
+     (the ones around lines 405-425 and 764-793), updating only the 
+     entries that belong to MRR per the Step 0 findings. Do NOT touch 
+     entries confirmed to belong to RMS or HRMS.
 
-graph_builder.add_node("submit_mrr", mrr_submission_node) # line 93
+Do not test after (a) and (b) alone — that would give false confidence 
+since the old controller list would still match old names. Only test 
+after all three are updated together.
 
-graph_builder.add_edge("submit_mrr", "ai_verifier") # line 147
+STEP 4 — STAGING VERIFICATION:
+Run one full MRR creation flow and one full MRR approval flow 
+(PL/PM and ERP approver personas) through the actual live UI. 
+Confirm text/widgets/tables actually render in the browser, not just 
+"no errors in logs." Report the actual observed UI behavior for each step.
 
-b. graph.py — Conditional edge router mappings
+STEP 5 — DOCUMENTATION SYNC:
+Update these three files to reflect the new names:
+  - DPAH_APPLICATION_DOCUMENTATION.md
+  - app/workflows/material_workflow/MRR_ARCHITECTURE.md
+  - app/workflows/material_workflow/WORKFLOW_FLOW.md
 
+REPORT BACK after each step separately — do not batch Steps 0-5 into 
+one final report. I want to review Step 0's findings and the final 
+Step 1 matrix before you proceed to Step 2 onward.
 
-# Line 113–116: intent_router returns node names as string keys
+DO NOT:
+- Rename any Python function definitions (def statements)
+- Touch any import statements
+- Modify RMS or HRMS workflow files
+- Modify any node name string that Step 0 determines belongs to a 
+  different workflow
+- Consider this complete until Step 4's actual UI observation is reported
+```
 
-# Line 125–132: creator_router_entry router
+---
 
-# Line 137–154: conditional edge targets
+## Why I Structured It This Way
 
-c. nodes.py — Router function return values
+The prompt forces your AI to stop and report after Step 0 (the ambiguity) and Step 1 (the final matrix) before touching code — this is deliberate. You don't yet know for certain whether `mrr_approver_agent` or `approver_agent` is MRR's real PL/PM node, and I don't either from the fragments I have. Guessing wrong here means either renaming RMS's node by accident (breaking a system you already stabilized) or leaving MRR's actual node unrenamed while touching a decoy string. Get that answer confirmed in writing before any file gets edited.
 
-
-# creator_path_router (lines 1069, 1078, 1084, 1085, 1109, 1124)
-
-# Returns strings like "creator_needs_file", "submit_mrr", "form_submit_handler"
-
-Within the material_workflow directory alone, a single rename requires changes in 3 files.
-
-4. Cross-Workflow References
-
-FileReferenceImpactapp/workflows/rms_workflow/graph.py:17,44approver_agent_node is imported and registered as "approver_agent"If MRR's approver_agent_node function is shared with RMS, the import stays the same — just the graph string changesapp/workflows/hrms_workflow/graph.py:17,33Same pattern as RMSSame noteapp/workflows/rms_workflow/__init__.py:21,34Re-exports approver_agent_nodeSymbol name only (Python function), not the graph string
-
-The RMS/HRMS workflows have their own independent graph registrations. Renaming MRR node strings will not break them unless the same Python function object is being shared.
-
-5. Documentation (Non-Runtime)
-
-FileLinesNoteDPAH_APPLICATION_DOCUMENTATION.md523, 525–526, 604–617, 885, 905, 947–960Architecture reference doc — not loaded at runtimeapp/workflows/material_workflow/MRR_ARCHITECTURE.md150, 161, 174, 199, 483, 528Flow diagrams referencing node namesapp/workflows/material_workflow/WORKFLOW_FLOW.md62–66ASCII flowchart
-
-These are human-readable docs only — no code impact.
-
-6. Frontend: CLEAN
-
-No HTML/JS/TS/TSX/Vue files reference these node names anywhere in the project. The frontend receives SSE events (type: "chunk", type: "form") — it has no knowledge of node identifiers.
-
-Summary: What Will Break
-
-AreaRisk LevelAction Requiredchat_controller.py static_output_nodes listsCRITICALMust update both lists (2 locations, ~30 entries each) in sync with graph renamesnodes.py router return stringsHIGHEvery return "node_name" string must match the new graph registrationgraph.py add_node() / add_edge() / add_conditional_edges()HIGHStandard 3-location rename per nodeDB modelsNoneNo DB persistence of node namesFrontendNoneNo frontend referencesDocumentationNoneNon-runtime, update for consistency onlyRMS/HRMS cross-workflowLowShared function imports, not string bindings
-
-Bottom line: The single most dangerous file is chat_controller.py. If a node string is renamed in the graph but missed in the controller's static_output_nodes list, that node will still execute correctly in LangGraph but its output will be silently dropped from the SSE chat stream. 
-
-
-
-Execution Plan: Node Renaming & StandardizationPhase 1: The Mapping Matrix (Your Next Step)Before we touch a single line of code, we need a definitive source of truth.Action: You need to gather the management-approved names and provide me with a simple mapping list (e.g., creator_needs_file $\rightarrow$ helper_file_prompt, mrr_submission_node $\rightarrow$ helper_db_submit).Decision Point: Let me know if we are only changing the LangGraph string identifiers (e.g., "submit_mrr"), or if management also wants us to rename the actual Python function definitions (e.g., def mrr_submission_node(state):).Phase 2: The Workflow Layer Update (Low Risk)Once the mapping is approved, we will update the internal workflow engine.Action A (nodes.py): Update all the router functions (like creator_path_router) so their return "..." statements output the new standard names.Action B (graph.py): Update all graph_builder.add_node(), add_edge(), and add_conditional_edges() strings to match the new names.Phase 3: The Controller Cutover (High Risk)This is where we update the chat_controller.py to ensure the SSE stream doesn't drop messages.Action: We will perform a careful find-and-replace inside the static_output_nodes lists (around lines 405 and 764).Architectural Note: Hardcoding node names in a controller is a bit of technical debt. While we are in there, we will just update the strings to get the job done, but we should log a minor backlog ticket to eventually move that list to a shared constants.py file so the graph and the controller always share the same source of truth.Phase 4: Cross-Workflow VerificationAction: If we decide to rename the Python function definitions (e.g., approver_agent_node), we will do a quick sweep of the RMS and HRMS workflows to update their import statements so they don't break.Phase 5: Staging VerificationAction: We will run a single MRR creation and approval flow. The test is simple: Does the text actually show up in the UI? If yes, the controller routing is perfect.
+Once you have the Step 0 answer and the Step 1 matrix back, paste both to me if you want a second check before authorizing Step 2 onward — cheap insurance on the one part of this whole task that has genuine uncertainty baked into it.
