@@ -1,106 +1,263 @@
-Two things to work through — the loading-status conversation, and the personalized dashboard feature. Let me give you a clear verdict on each, then the plan for the dashboard.
+Here is the complete engineering report detailing the architecture, implementation steps, and bug resolutions for the state-driven LangGraph streaming loader.
+
+# Feature Report: State-Driven LangGraph UI Loader
+
+## 1. Architectural Approach
+
+The objective was to replace static, timer-based loading indicators with a real-time UI that reflects the exact execution state of the backend LangGraph DAG.
+
+Rather than guessing how long a query might take, the implementation taps into LangGraph's `astream_events` (version API) to listen for `on_chain_start` events. By mapping backend node execution names to user-friendly status strings and streaming them as Server-Sent Events (SSE), the frontend React application acts as a direct mirror of the backend's internal state.
 
 ---
 
-## Conversation 1 — Loading Status Messages: Approve With One Correction
+## 2. Backend Implementation
 
-The approach is sound and the implementation is genuinely well-designed — piggybacking on `on_chain_start` events you're already streaming, rather than a fake timer, is exactly right. It's authentic to actual backend state, costs almost nothing to add, and directly solves a real UX gap (3-15 second silent waits feel broken to users).
+**Primary File Modified:** `chat_controller.py`
 
-One correction before you implement it: the node-name-to-message mapping is now stale relative to the renaming work you just did. The AI wrote this mapping using old names like `sql_generator_node`, `permission_check_node` before you applied the string-only rename pass. Have your AI regenerate this mapping against the **current, post-rename** node names in both `analytics_workflow/graph.py` and `material_workflow/graph.py` — otherwise the status messages will silently never fire for renamed nodes, which is a low-stakes version of the exact "silent drop" failure mode from the node-renaming blast radius work. Small thing, but worth catching before it ships as a day-one bug in a feature meant to *reduce* user confusion, not add a new source of it.
-
-Everything else in that conversation — the frontend catch logic in `useChatStream.js`, the `ChatOverlay.jsx` display swap from blinking cursor to spinner-with-status — is fine to implement as written, once the node-name mapping is refreshed.
-
----
-
-## Conversation 2 — The Code Review: Take the Two Warnings Seriously, Don't Dismiss Them
-
-You said neither warning felt like a show-stopper to you. I want to push back on that for the RLS one specifically, and be more relaxed with you on the async one.
-
-**RLS enforcement (the "show stopper" your AI flagged) — I agree with your, not with your instinct here.** Walk through the actual failure mode concretely: you've built an HRMS_ANALYTICS collection that includes `hr_payslips_demo` — salary data. The security model, as it stands, depends entirely on the LLM correctly remembering to append `WHERE Resource = {emp_id}` to every query it generates, because that instruction lives in a prompt, not in code. LLMs are probabilistic. They will, at some frequency greater than zero, generate a query that omits that clause — not because of malicious input, but simply because that's what "sometimes forgets instructions" means for any LLM. When that happens, per your own `sql_validator_node` design (from much earlier in this build), the validator checks for forbidden keywords and allowed tables — **not** whether the persona-specific row filter is actually present in the generated SQL syntax. That means a query missing the WHERE clause entirely would currently pass validation and execute, returning every employee's payslip data to whoever asked.
-
-This isn't a hypothetical edge case you can deprioritize as "tech debt" — it's the literal core promise of the RBAC system you spent multiple sessions building (the schema registry, the persona filters, the scope-guard semantic classifier). If the validator doesn't actually verify the filter's presence, everything upstream of it — the careful prompt engineering, the scope detection — is a suggestion to the LLM, not an enforced boundary. Your suggestion (parse the generated SQL's AST with something like `sqlglot` and programmatically confirm the required WHERE condition is structurally present, not just hope the LLM remembered) is the right fix, and it's not a large amount of work — you already have `sql_validator.py` as the exact right place to add this check.
-
-**Concretely, before you consider analytics production-ready for anything touching HRMS/salary data:** ask your AI to add a hard validator check — after parsing the SQL, confirm the specific WHERE condition string (with the actual resolved emp_id) is present for any table that has a non-null persona filter for that user's role. If it's missing, reject the query and force a regeneration (you already have retry logic in the graph for validation failures — this slots into the same mechanism) rather than executing an unfiltered query. This is maybe an hour of work and it closes the actual security gap, not a theoretical one.
-
-**Event loop blocking — your instinct to deprioritize this is more reasonable, but confirm the actual traffic assumption before shipping.** If this is genuinely low-concurrency (a handful of internal users, not hundreds hitting it simultaneously), synchronous `db.execute()` and `llm.invoke()` calls blocking the async event loop will manifest as mild latency under load, not a crash — annoying, not dangerous. The `asyncio.to_thread()` wrap is a legitimately 5-minute fix as your AI said, so given how cheap it is, I'd just do it now rather than defer it — there's no real reason not to, and "cheap fix now" beats "remember to do this later when someone complains the chat froze during a deadline crunch."
+* **Status Mapping Dictionary:** Created an `ANALYTICS_NODE_STATUS` dictionary to map core node names (e.g., `intent_classifier`, `sql_generator`) to frontend-friendly payloads containing a `status` key and a `message` string (e.g., `"Understanding your question..."`). Nodes that immediately yield final data (like `output_formatter`) were intentionally excluded to prevent UI flicker.
+* **Event Loop Interception:** Updated the async generators (`stream_chat_with_orchestrator` and `stream_chat_with_file`) to intercept `elif event_kind == "on_chain_start":`.
+* **Workflow Isolation:** Guarded the status streaming with `if is_analytics:` to ensure standard RAG/NLP workflows weren't polluted with analytics-specific status updates.
+* **Retry Loop Detection:** Added logic to inspect `event.get("metadata", {}).get("source")`. If the source is `"loop"` during the `sql_generator` phase, the status dynamically switches to *"Applying fixes and regenerating query..."* to provide transparency during validation failures.
 
 ---
 
-## Now — The Personalized Dashboard Feature
+## 3. Frontend Implementation
 
-This is a meaningfully different kind of feature than anything else you've added to DPAH so far, so let me think through it properly before handing you a plan.
+**Primary Files Modified:** `useChatStream.js` and `ChatOverlay.jsx`
 
-### What This Actually Is, Architecturally
+### State Management (`useChatStream.js`)
 
-Looking at what you've described, the legacy system does something categorically different from your analytics workflow: instead of a chat interface that generates a fresh answer per question, this is a **persisted grid of saved widgets** — each widget is a saved prompt that gets re-executed and re-rendered whenever the user opens their dashboard. The user builds up a personal collection of "here are the 5 things I check every morning" and the system remembers and re-runs them.
+* **Placeholder Initialization:** Updated the initial AI message injection to include `statusMessage: 'Starting...'`.
+* **SSE Parsing:** Added a parser block to catch `parsedData.type === 'status'` and live-update the `statusMessage` property of the active assistant message in the React state.
+* **Seamless Handoff:** Modified the existing data chunk handlers (`chunk`, `chart`, `table`, `form_widget`). When actual data arrives, `statusMessage` is explicitly set to `null`, ensuring the loader cleanly vanishes the millisecond real content is ready.
 
-This means it's not really an extension of your analytics chat — it's a **new layer on top of it**. The generation engine (prompt → SQL/RAG → chart or table) is the same core capability you already have in `analytics_workflow`. What's new is the **persistence and layout** concept: saved widget definitions, a grid position, re-execution on dashboard load, and CRUD for managing that saved set.
+### UI Rendering (`ChatOverlay.jsx`)
 
-### The RBAC Question You Raised — Here's the Right Answer
-
-You're right that this needs to follow the RBAC approach, but the shape is different from your existing per-collection RBAC. Existing analytics RBAC governs "can this user ask questions about RMS/HRMS/MRR data, and if so, whose rows can they see." That doesn't change here — a saved widget is just a saved prompt, and when it re-executes, it must go through the **exact same persona-scoped, schema-registry-governed SQL generation and validation pipeline** as a live chat query. A JUNIOR user's saved widget "show my hours this week" re-runs with their emp_id filter every single time it refreshes, exactly like a live query would. **You are not building a second security model — you're building a persistence layer on top of the one you already have**, which is the right way to think about it and keeps this from becoming a parallel system with its own bugs.
-
-The new RBAC surface is narrower: **who can save/delete/reorder widgets on their own dashboard** — which is really just "does this user have any analytics access at all," not a new granular permission. Anyone with at least one `*_ANALYTICS` collection grant can use the personalized dashboard feature; the row-level filtering on each individual widget's data is inherited automatically from whatever collection/persona that widget's underlying query targets.
-
-### What I'd Build — Concretely
-
-**New MariaDB table** (mirroring the legacy `dp_agenticai_user_dashboard` structure, adapted to your schema conventions):
-
-```sql
-CREATE TABLE IF NOT EXISTS dpah_user_dashboard_widgets (
-    widget_id INT AUTO_INCREMENT PRIMARY KEY,
-    emp_id VARCHAR(50) NOT NULL,
-    collection_name VARCHAR(100) NOT NULL,   -- e.g. "RMS_ANALYTICS" — which schema/persona context this widget runs under
-    prompt_text TEXT NOT NULL,               -- the saved natural language query
-    display_title VARCHAR(255),              -- optional user-friendly label, else derive from prompt
-    grid_position INT NOT NULL,              -- ordering/layout slot
-    output_type_hint VARCHAR(20),            -- "chart" or "table" — cached from last successful run, not authoritative
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_emp_id (emp_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-**New API endpoints** (small, CRUD-shaped, no new orchestration logic needed):
-
-```
-GET    /api/v1/me/dashboard/widgets           — list current user's saved widgets, ordered by grid_position
-POST   /api/v1/me/dashboard/widgets           — save a new widget {collection_name, prompt_text, display_title}
-DELETE /api/v1/me/dashboard/widgets/{id}      — remove a widget (must belong to requesting user — check emp_id match)
-PATCH  /api/v1/me/dashboard/widgets/reorder   — bulk update grid_position values
-POST   /api/v1/me/dashboard/widgets/{id}/run  — re-execute one widget's saved prompt through the analytics graph, return fresh result
-```
-
-The `/run` endpoint is the important one architecturally — it should **not** reimplement any query logic. It loads the saved `prompt_text` and `collection_name`, constructs the exact same `AnalyticsState` your chat flow already builds, and invokes `get_analytics_graph()` exactly as `chat_controller.py` does today. This guarantees the RBAC/schema-registry/persona-filter pipeline runs identically whether the query came from live chat or from a saved widget re-running. If you ever fix a bug or improve the SQL generator prompt, both paths benefit automatically — no logic duplication, no drift between "live analytics" and "saved dashboard analytics" behaving differently over time.
-
-**Dashboard load behavior:** when the personalized dashboard page opens, call `GET /widgets` to get the saved list, then either fire all `/run` calls in parallel (fastest, but N simultaneous LLM calls) or fire them sequentially with individual loading states per widget card (slower, gentler on your LLM gateway — given your gateway's throughput concerns from earlier in this build, I'd lean sequential-with-per-card-loading, reusing the status-message pattern from Conversation 1 above, adapted to say things like "Refreshing widget 2 of 5...").
-
-**Adding a widget from chat:** the most natural UX, and the one that best matches your legacy system's spirit, is a small "📌 Save to Dashboard" action attached to any chart/table result already showing in the analytics chat — not a separate "build a widget" form. The user asks a question in Analytics chat, likes the chart they got back, clicks save, and it becomes a persisted widget using that exact prompt and collection context. This reuses UI you already have (the chat message with a chart/table already rendered) rather than building a parallel "widget builder" interface.
-
-### Where This Lives in the Frontend
-
-Given you already have a dedicated Analytics sidebar page (from the earlier work), I'd add this as a **second tab or toggle within that same Analytics page**, not a wholly separate sidebar item — something like:
-
-```
-[ Chat ]  [ My Dashboard ]     ← tabs at top of the Analytics page
-```
-
-**Chat tab** = what you have now — live conversational analytics.
-**My Dashboard tab** = the grid of saved widget cards, each showing its last result, with a refresh button per card and a "Save to Dashboard" affordance surfaced from the Chat tab.
-
-This is better than a toggle-only pattern or a brand-new sidebar entry because it keeps the mental model tight: "Analytics" is one place, and within it you either ask something new (Chat) or revisit things you've saved (My Dashboard). It also means the module selector dropdown you already built (RMS/HRMS/MRR) applies naturally — widgets from different modules can coexist on one saved dashboard, since each widget independently carries its own `collection_name`.
-
-### What I'd Explicitly Defer
-
-The legacy system's filter/KPI persistence tables and the "3-attempt LLM code generation loop with `exec()` in a controlled scope" pattern are both more ambitious than what you need for a first version. Your `analytics_workflow` already produces charts and tables through a safer, more constrained path (schema-registry-bounded SQL, not arbitrary generated Python executed via `exec()` — which, frankly, your current architecture is meaningfully safer than the legacy one you're replicating, since raw `exec()` of LLM-generated code is a much larger attack surface than validated SQL against a whitelisted schema). Don't reintroduce the `exec()` pattern to match legacy feature-for-feature — your existing pipeline is the better design; just point saved widgets at it.
+* **Dynamic Loader:** Injected a `Loader2` (lucide-react) spinner alongside the `msg.statusMessage` text directly inside the assistant's chat bubble.
+* **Cursor Fallback:** Updated conditional rendering so the standard blinking cursor (`▍`) is suppressed while the status spinner is active, only falling back to the cursor if the AI is typing but lacks both a status and actual text content.
 
 ---
 
-## Sequencing
+## 4. Issues Encountered & Solutions
 
-1. Fix the RLS validator gap first (real security issue, cheap fix, don't defer)
-2. Apply the `asyncio.to_thread()` wrap (cheap, do it now)
-3. Refresh the loading-status node-name mapping against post-rename names, then ship that UX improvement
-4. Then take on the personalized dashboard as its own inventory-first task — same discipline as everything else in this build: confirm the table schema with your AI, write the five endpoints, wire the `/run` endpoint to reuse `get_analytics_graph()` exactly, build the two-tab frontend, test with a real saved widget end to end before calling it done
+### Issue 1: UI Stuck on "Starting..." (Silent Status Drop)
 
-Want me to write the full task prompt for the personalized dashboard implementation, structured the same inventory-first way as the RMS refactor and DAO migration?
+* **Symptom:** The backend successfully processed the graph (taking ~26 seconds for SQL generation), but the frontend UI remained frozen on "Starting...".
+* **Root Cause:** LangGraph mangles internal node names (e.g., appending `_node` or `Analytics_` wrappers) in the `astream_events` payload. The strict dictionary lookup (`if node_name in ANALYTICS_NODE_STATUS`) failed silently.
+* **Solution:** Implemented a fuzzy/substring matching algorithm: `next((k for k in ANALYTICS_NODE_STATUS.keys() if k in node_name), None)`. This successfully caught all variations of the node names without hardcoding LangGraph's internal naming quirks.
+
+### Issue 2: Frontend Crash (`SyntaxError: JSON.parse`)
+
+* **Symptom:** Upon fixing the first issue, the React frontend crashed entirely with `SyntaxError: JSON.parse: unexpected character at line 1 column 1`.
+* **Root Cause:** The `chat_controller.py` was explicitly yielding `f"data: {json.dumps(...)}\n\n"`. However, the backend web framework (e.g., FastAPI's `StreamingResponse`) was automatically formatting the chunks for SSE, resulting in a double-prefixed payload: `data: data: {"type": "status"...}`. The frontend stripped the first `data: ` but choked on the second.
+* **Solution:** Removed the manual `data: ` prefix and `\n\n` suffix from the yield statement in the controller, yielding only the raw `json.dumps()` string to let the framework handle the SSE protocol formatting.
+
+=========================
+
+** your other two high priority got implemented cleanly i checked too.
+** coming to above approach i am facing some issues actually they were not harmful but let me tell u about them.one problem is i am noticing some delay for my charts in the analytics i dont think that delay is because of the newly added feature. check the belwo terminal logs
+
+** i am providing u the respective system prompts code also. i am suspecting because of heavy system prompt and rules llm is takin gso much time u also try to debug the issue
+
+
+
+""INFO:     10.5.1.58:50132 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
+D:\vinay\VAH_dashboard\dpah_backend_cb2_v2.2_analytics\app\routes\chat_route.py:51: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
+  async for chunk in ChatController.stream_chat_with_orchestrator(
+[DIAG-STREAM] on_chain_start fired for name: 'LangGraph'
+[DIAG-STREAM] on_chain_start fired for name: 'permission_check'
+[DIAG-ANALYTICS] permission_check_node entered. user_id=3428, collection=RMS_ANALYTICS, available_agents={'RMS_ANALYTICS': ['reviewer']}
+[DIAG-ANALYTICS] permission_check_node -> GRANTED as 'reviewer'
+[DIAG-STREAM] on_chain_start fired for name: 'permission_router'
+[DIAG-STREAM] on_chain_start fired for name: 'intent_classifier'
+[DIAG-ANALYTICS] intent_classifier_node entered.
+[DIAG-ANALYTICS] Calling Intent LLM...
+[DIAG-ANALYTICS] ⏱️ Intent LLM took 5.86 seconds
+[DIAG-ANALYTICS] classifier -> intent=SQL_DATA, scope=PERSONAL
+[DIAG-STREAM] on_chain_start fired for name: 'intent_router'
+[DIAG-STREAM] on_chain_start fired for name: 'sql_generator'
+[DIAG-ANALYTICS] sql_generator_node entered.
+[DIAG-ANALYTICS] Calling SQL Generator LLM...
+[DIAG-ANALYTICS] ⏱️ SQL Gen LLM took 31.05 seconds
+[DIAG-ANALYTICS] sql_generator_node -> Generated SQL: SELECT w.TaskDate AS TaskDate, ROUND(SUM(w.TimeSpentInSec / 3600.0), 2) AS TotalHours FROM pp_worklogs_demo w LEFT JOIN pp_project_task_assigment_demo t ON w.WorkLogIdx = t.WorkLogIdx WHERE w.Resource = 3428 GROUP BY w.TaskDate ORDER BY w.TaskDate ASC
+[DIAG-STREAM] on_chain_start fired for name: 'sql_validator'
+[DIAG-ANALYTICS] sql_validator_node entered.
+[DIAG-ANALYTICS] sql_validator_node -> PASSED
+[DIAG-STREAM] on_chain_start fired for name: 'validation_router'
+[DIAG-STREAM] on_chain_start fired for name: 'sql_executor'
+[DIAG-ANALYTICS] sql_executor_node entered.
+[DIAG-ANALYTICS] sql_executor_node -> Executed successfully, 4 rows returned.
+[DIAG-STREAM] on_chain_start fired for name: 'execution_router'
+[DIAG-STREAM] on_chain_start fired for name: 'output_formatter'
+[DIAG-ANALYTICS] output_formatter_node entered. intent=SQL_DATA
+[DIAG-ANALYTICS] output_formatter_node -> Generating ECharts JSON...
+[DIAG-ANALYTICS] ⏱️ charts LLM took 5.00 seconds
+[DIAG-ANALYTICS] output_formatter_node -> Chart JSON parsed successfully.""
+
+**
+async def analytics_intent_classifier_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] intent_classifier_node entered.", flush=True)
+    
+    user_question = _get_last_user_message(state)
+    persona = state.get("selected_agent_role", "reviewer")
+    collection = state.get("selected_collection", "")
+    emp_id = state.get("user_id", "")
+
+    prompt = f"""You are a routing classifier for an enterprise analytics system.
+Analyze this question from an employee and classify it on TWO dimensions.
+
+Employee persona: {persona}
+Employee ID: {emp_id}
+User question: "{user_question}"
+
+DIMENSION 1 — INTENT (what kind of answer is needed):
+- SQL_DATA: needs strict numbers, counts, aggregations, charts, or raw tables from the database.
+  Examples: "show my hours", "list my tasks", "bar chart of my time"
+- SQL_INSIGHT: needs trend analysis, evaluation, comparison, or a written summary derived from data.
+  Examples: "how productive was I", "compare this month to last month", "why are my hours low", "summarize my work"
+- RAG: needs company policy, procedures, or static knowledge not in the database
+- DENY: is a write/delete/harmful operation, or asks for something completely unrelated
+
+DIMENSION 2 — SCOPE (whose data is being requested):
+- PERSONAL: the question is about the employee themselves only
+  Examples: "my hours", "how many tasks did I complete", "show my leave balance", "compare my own data across time periods"
+- GROUP: the question is about other people, a team, all employees, or the whole organization
+  Examples: "all employees", "the team", "everyone", "each resource", "other people", 
+            "compare across employees", "total company hours", "each and every worker"
+
+Return ONLY a valid JSON object. No explanation, no markdown:
+{{"intent": "SQL_DATA", "scope": "PERSONAL"}}"""
+
+
+
+    return state
+
+
+# ─── Node 4: SQL Generator (With Advanced Rules) ──────────────────────────────
+
+async def analytics_sql_generator_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] sql_generator_node entered.", flush=True)
+    
+    user_question = _get_last_user_message(state)
+    collection = state.get("selected_collection", "")
+    persona = state.get("selected_agent_role", "reviewer")
+    emp_id = state.get("user_id", "")
+
+    schema_block = build_schema_description(collection, persona, emp_id)
+    module_name = COLLECTION_TABLE_MAP.get(collection, {}).get("module_display_name", collection)
+
+    prompt = f"""You are an Expert SQL Data Analyst for {module_name}.
+User: {state.get('user_name', 'Employee')} (emp_id: {emp_id}, role: {persona})
+
+Available database tables (MariaDB):
+{schema_block}
+
+STRICT SQL GENERATION RULES:
+1. Write ONLY a SELECT statement. No INSERT, UPDATE, DELETE, DROP, or ALTER.
+2. ACCESS RULES: You MUST apply the ACCESS RULE shown for each table in your WHERE clause exactly as written.
+3. ALIASING: ALWAYS prefix EVERY column name with its table alias (e.g., w.Resource, t.TaskIdx) to prevent ambiguous column errors.
+4. DATE FILTERS: DO NOT filter by current month/year (like MONTH(NOW())) UNLESS the user explicitly asks for a timeframe ("this month", "today", "2026"). If no timeframe is requested, query all historical data.
+5. JOINS: Tables marked (FACT) contain the primary measured data — always start 
+   your FROM clause with the FACT table. Tables marked (DIMENSION) are reference 
+   data. Use LEFT JOIN from FACT to DIMENSION so that missing reference rows never 
+   cause valid FACT data to disappear. Only use INNER JOIN when the question 
+   explicitly requires excluding unmatched rows.
+6. AGGREGATIONS: If you use SUM() or COUNT(), ensure all non-aggregated columns are in the GROUP BY clause.
+7. TIME MATH: For worklogs, TimeSpentInSec / 3600.0 = hours. Round to 2 decimal places using ROUND().
+8. SEARCH: Use LOWER() and LIKE '%term%' for case-insensitive text searching.
+9. CANNOT ANSWER: If the question absolutely cannot be answered using the tables provided, return exactly: CANNOT_ANSWER
+10. OUTPUT: Return ONLY the raw SQL query string. No explanation, no markdown blocks, no backticks.
+
+
+
+# ─── Node 7: Output Formatter ─────────────────────────────────────────────────
+
+async def analytics_output_formatter_node(state: AnalyticsState) -> AnalyticsState:
+    print(f"[DIAG-ANALYTICS] output_formatter_node entered. intent={state.get('intent_type')}", flush=True)
+    intent = state.get("intent_type", "SQL_DATA")
+
+    # Handle RAG path
+    if intent == "RAG":
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Formatting RAG fallback response.", flush=True)
+        state["output_type"] = "text"
+        state["text_response"] = (
+            "Document-based insights are not available in the current version. "
+            "I can help you analyze your operational data — try asking for counts, "
+            "trends, summaries, or specific metrics from your records."
+        )
+        return state
+
+    # Handle SQL errors
+    if state.get("sql_error"):
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Formatting SQL Error message.", flush=True)
+        state["output_type"] = "text"
+        state["text_response"] = state["sql_error"]
+        return state
+
+    sql_result = state.get("sql_result", [])
+    user_question = _get_last_user_message(state)
+    llm = get_llm_non_streaming()
+
+    # Detect chart intent
+    chart_keywords = {
+        "bar", "pie", "line", "chart", "graph", "plot",
+        "visualize", "visualization", "show me", "display"
+    }
+    question_lower = user_question.lower()
+    wants_chart = any(kw in question_lower for kw in chart_keywords)
+
+    # SQL_INSIGHT path — always text
+    if intent == "SQL_INSIGHT":
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Generating Insight Text...", flush=True)
+        data_sample = json.dumps(sql_result[:200], default=str)
+        insight_prompt = f"""The user asked: "{user_question}"
+
+Here is the data retrieved from the database:
+{data_sample}
+
+Provide a clear, concise analysis based on this data.
+Focus on trends, patterns, and meaningful observations.
+Write in plain English. Maximum 3 paragraphs.
+Do not mention SQL or database internals."""
+
+        # Offload sync LLM call to a thread
+        response = await asyncio.to_thread(
+            llm.invoke,
+            [HumanMessage(content=insight_prompt)],
+            {"callbacks": []}
+        )
+        state["output_type"] = "text"
+        state["text_response"] = response.content or ""
+        return state
+
+    # SQL_DATA path — chart or table
+    if wants_chart:
+        print(f"[DIAG-ANALYTICS] output_formatter_node -> Generating ECharts JSON...", flush=True)
+        data_sample = json.dumps(sql_result[:100], default=str)
+        chart_prompt = f"""The user asked: "{user_question}"
+
+SQL query returned this data:
+{data_sample}
+
+Generate a valid ECharts option object (JSON) that best visualizes this data.
+Choose the most appropriate chart type: bar, line, or pie based on the data structure.
+Include proper titles, axis labels, and legends.
+
+REQUIREMENTS:
+- Return ONLY the JSON object. No explanation, no markdown, no backticks.
+- The JSON must be valid and parseable by JavaScript JSON.parse().
+- Use ECharts v5 syntax.
+- Keep it simple and readable.
+
+ECharts option JSON:"""
+
+  
+
+    return state
+
+======================================================
+
+** coming to 2nd issue the particular starting.., understanding question.., these things in coming in my workflow also when tried to create a mrr or timesheet . i dont think we discussed to implement in workflow. actually i dont
+have any issue unless until they wont break my workflow functionality. so if possible ask AI to check why it s coming in workflow .
+
+** try giving solutions for both the things in this conversation only because i have one more adjustmnet to be done in workflow. so next prompt i will tell u about that
