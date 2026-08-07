@@ -1,263 +1,81 @@
-Here is the complete engineering report detailing the architecture, implementation steps, and bug resolutions for the state-driven LangGraph streaming loader.
-
-# Feature Report: State-Driven LangGraph UI Loader
-
-## 1. Architectural Approach
-
-The objective was to replace static, timer-based loading indicators with a real-time UI that reflects the exact execution state of the backend LangGraph DAG.
-
-Rather than guessing how long a query might take, the implementation taps into LangGraph's `astream_events` (version API) to listen for `on_chain_start` events. By mapping backend node execution names to user-friendly status strings and streaming them as Server-Sent Events (SSE), the frontend React application acts as a direct mirror of the backend's internal state.
+Let me solve both precisely — the timing report has the exact data needed, and the second issue is a scoping leak that needs to be traced, not guessed at.
 
 ---
 
-## 2. Backend Implementation
+## Issue 1: The 31-Second SQL Generator Call
 
-**Primary File Modified:** `chat_controller.py`
+Your instinct is right — this has nothing to do with the loading-status feature. The status feature only *displays* what's happening; it doesn't change execution time. Look at the actual numbers from your own log:
 
-* **Status Mapping Dictionary:** Created an `ANALYTICS_NODE_STATUS` dictionary to map core node names (e.g., `intent_classifier`, `sql_generator`) to frontend-friendly payloads containing a `status` key and a `message` string (e.g., `"Understanding your question..."`). Nodes that immediately yield final data (like `output_formatter`) were intentionally excluded to prevent UI flicker.
-* **Event Loop Interception:** Updated the async generators (`stream_chat_with_orchestrator` and `stream_chat_with_file`) to intercept `elif event_kind == "on_chain_start":`.
-* **Workflow Isolation:** Guarded the status streaming with `if is_analytics:` to ensure standard RAG/NLP workflows weren't polluted with analytics-specific status updates.
-* **Retry Loop Detection:** Added logic to inspect `event.get("metadata", {}).get("source")`. If the source is `"loop"` during the `sql_generator` phase, the status dynamically switches to *"Applying fixes and regenerating query..."* to provide transparency during validation failures.
+```
+Intent LLM took 5.86 seconds
+SQL Gen LLM took 31.05 seconds     ← the outlier
+Chart LLM took 5.00 seconds
+```
+
+Three calls to the same LLM gateway, wildly different durations, and it's not proportional to prompt length in any way that would fully explain a 5x-6x jump. This points to one of three causes, and you can distinguish between them with a five-minute test rather than guessing.
+
+**Most likely cause — this specific prompt structure is expensive for your gateway, not just "long."** Look at what's different about the SQL generator prompt versus the other two: it's the only one of the three that includes a large, structurally repetitive block — `schema_block`, which is the full table/column schema description built by `build_schema_description()`. Depending on how many tables and columns RMS_ANALYTICS currently has registered, that block could be genuinely large, and more importantly, it's the kind of dense, enumerated, rule-heavy content that tends to make LLMs generate more deliberated (slower) completions, especially combined with the 10 numbered "STRICT RULES" sitting right below it. The intent classifier prompt, by contrast, is short and asks for a two-word JSON answer. The chart prompt sends only the top 100 rows of already-filtered data, not the full schema.
+
+**Second possible cause — gateway-side queueing/model routing, not prompt content at all.** If your internal LLM gateway load-balances across multiple backend instances or has per-request-type routing, it's possible the SQL generation call specifically is landing on a slower path for reasons unrelated to your prompt. You mentioned earlier in this project that your gateway has known quirks (stripping tool_calls, embedding API 401s) — it's plausible it has inconsistent latency characteristics too.
+
+**Third, less likely but worth ruling out — output length.** If the LLM is asked to produce a long, deliberated single-block SQL query with no delimiter to stop early, and it's "reasoning" through the 10 rules before emitting the query (some models do visible or invisible step-by-step deliberation even without an explicit chain-of-thought instruction), that adds real wall-clock time independent of gateway load.
+
+### How to actually diagnose this instead of guessing
+
+Ask your AI to add one more timing checkpoint: log the **exact byte/token length of the schema_block** being sent for this specific query, alongside the existing timing print. Then run the same query type against two or three different collections with meaningfully different schema sizes (if you have RMS_ANALYTICS and HRMS_ANALYTICS both live, compare their generation times for a similarly-phrased question). If HRMS (smaller schema, fewer tables per your earlier schema registry work) generates noticeably faster than RMS for a comparable question, that confirms schema size as the driver, and the fix is straightforward: **trim the schema block to only the tables relevant to the question**, rather than always sending every table registered for that collection. You already have the infrastructure for this — a cheap pre-filter step (keyword match on table purpose descriptions, or even just always including the fact table and letting the LLM ask via a second turn if it needs more) would shrink the prompt substantially for most single-table questions.
+
+If timing stays roughly flat regardless of schema size, the bottleneck is on the gateway side, not your prompt — and the fix becomes a conversation with whoever operates that internal gateway about routing/capacity for this endpoint, not something you can solve by editing prompts.
+
+**One thing NOT to do:** don't strip down the 10 numbered rules to "shorten the prompt" as a first attempt. Those rules are there because you added them one at a time in response to real bugs you hit earlier in this build — the FACT/DIMENSION join rule specifically fixed a real data-integrity bug you found. Cutting rules to save latency risks reintroducing bugs you already paid to fix. Diagnose the actual cause first; don't trade correctness for speed on a guess.
 
 ---
 
-## 3. Frontend Implementation
+## Issue 2: Status Messages Leaking Into MRR/RMS Workflow Chat
 
-**Primary Files Modified:** `useChatStream.js` and `ChatOverlay.jsx`
+This is a real bug, and it's worth being precise about why it's happening, because the report's own description of the fix contains the explanation.
 
-### State Management (`useChatStream.js`)
+Look at what the engineering report says was done to fix Issue 1 from that same session:
 
-* **Placeholder Initialization:** Updated the initial AI message injection to include `statusMessage: 'Starting...'`.
-* **SSE Parsing:** Added a parser block to catch `parsedData.type === 'status'` and live-update the `statusMessage` property of the active assistant message in the React state.
-* **Seamless Handoff:** Modified the existing data chunk handlers (`chunk`, `chart`, `table`, `form_widget`). When actual data arrives, `statusMessage` is explicitly set to `null`, ensuring the loader cleanly vanishes the millisecond real content is ready.
+> **Solution:** Implemented a fuzzy/substring matching algorithm: `next((k for k in ANALYTICS_NODE_STATUS.keys() if k in node_name), None)`
 
-### UI Rendering (`ChatOverlay.jsx`)
+And separately, the report claims:
 
-* **Dynamic Loader:** Injected a `Loader2` (lucide-react) spinner alongside the `msg.statusMessage` text directly inside the assistant's chat bubble.
-* **Cursor Fallback:** Updated conditional rendering so the standard blinking cursor (`▍`) is suppressed while the status spinner is active, only falling back to the cursor if the AI is typing but lacks both a status and actual text content.
+> **Workflow Isolation:** Guarded the status streaming with `if is_analytics:` to ensure standard RAG/NLP workflows weren't polluted with analytics-specific status updates.
 
----
+**These two things directly contradict each other, and the contradiction is your bug.** If the `if is_analytics:` guard is correctly gating the entire status-emission block, then the fuzzy substring matcher inside that block should never even execute for RMS/MRR requests — it would never reach the point of checking node names at all, because the whole thing is supposedly skipped upstream. The fact that you're seeing status messages appear in MRR/RMS chat means **one of these two claims is false in the actual code**, not both true simultaneously as described.
 
-## 4. Issues Encountered & Solutions
+The most likely explanation, given the ordering the report describes: the `is_analytics` guard was added correctly in `stream_chat_with_orchestrator`, but the fuzzy substring matcher was introduced *afterward*, as a fix for the "stuck on Starting..." bug — and it's plausible the substring matcher was added in a way that bypasses or sits outside the original guard, or the guard variable isn't correctly scoped/computed for every code path (`stream_chat_with_file` is a second, separate function per the report — if the guard was added to one function but the fuzzy-match fix was only tested against the other, you'd get exactly this asymmetric behavior).
 
-### Issue 1: UI Stuck on "Starting..." (Silent Status Drop)
+There's also a more insidious possibility worth checking specifically: **the fuzzy substring match itself might be too loose and accidentally matching MRR/RMS node names that happen to share substrings with the analytics dictionary keys**, regardless of the `is_analytics` guard. For example, if `ANALYTICS_NODE_STATUS` has a key like `"agent"` mapped to "Agent is synthesizing response..." (this exact key appears in the earlier proposed mapping), and MRR's node names are things like `creator_agent_node` or `pl_pm_agent_node` (which you just renamed to that exact pattern), then `"agent" in "creator_agent_node"` is `True` — the substring match would fire for *any* workflow node containing the word "agent," not just analytics nodes. **This would explain the leak precisely and independently of whether the `is_analytics` guard exists**, because it's a separate, unguarded matching path if the fuzzy logic was added at a point in the code that isn't behind the original conditional.
 
-* **Symptom:** The backend successfully processed the graph (taking ~26 seconds for SQL generation), but the frontend UI remained frozen on "Starting...".
-* **Root Cause:** LangGraph mangles internal node names (e.g., appending `_node` or `Analytics_` wrappers) in the `astream_events` payload. The strict dictionary lookup (`if node_name in ANALYTICS_NODE_STATUS`) failed silently.
-* **Solution:** Implemented a fuzzy/substring matching algorithm: `next((k for k in ANALYTICS_NODE_STATUS.keys() if k in node_name), None)`. This successfully caught all variations of the node names without hardcoding LangGraph's internal naming quirks.
+### What to tell your AI, specifically
 
-### Issue 2: Frontend Crash (`SyntaxError: JSON.parse`)
+Don't accept "check why it's happening" as an open-ended investigation — give it the precise hypothesis to test, since you now have a strong lead:
 
-* **Symptom:** Upon fixing the first issue, the React frontend crashed entirely with `SyntaxError: JSON.parse: unexpected character at line 1 column 1`.
-* **Root Cause:** The `chat_controller.py` was explicitly yielding `f"data: {json.dumps(...)}\n\n"`. However, the backend web framework (e.g., FastAPI's `StreamingResponse`) was automatically formatting the chunks for SSE, resulting in a double-prefixed payload: `data: data: {"type": "status"...}`. The frontend stripped the first `data: ` but choked on the second.
-* **Solution:** Removed the manual `data: ` prefix and `\n\n` suffix from the yield statement in the controller, yielding only the raw `json.dumps()` string to let the framework handle the SSE protocol formatting.
+```
+Show me the EXACT current code for both stream_chat_with_orchestrator and 
+stream_chat_with_file in chat_controller.py, specifically the section handling 
+on_chain_start events and the ANALYTICS_NODE_STATUS lookup.
 
-=========================
+Answer these directly:
+1. Is the fuzzy substring match (`next((k for k in ANALYTICS_NODE_STATUS.keys() 
+   if k in node_name), None)`) located INSIDE the `if is_analytics:` block, 
+   or does it execute unconditionally?
+2. Does stream_chat_with_file have the same is_analytics guard as 
+   stream_chat_with_orchestrator, or was the guard only added to one function?
+3. List every key currently in ANALYTICS_NODE_STATUS. Check whether any key 
+   (e.g. a short word like "agent") is a substring of any MRR or RMS node name 
+   (e.g. creator_agent_node, pl_pm_agent_node) — if so, that's a false-positive 
+   match independent of the is_analytics guard.
+```
 
-** your other two high priority got implemented cleanly i checked too.
-** coming to above approach i am facing some issues actually they were not harmful but let me tell u about them.one problem is i am noticing some delay for my charts in the analytics i dont think that delay is because of the newly added feature. check the belwo terminal logs
+### The actual fix, regardless of which cause it turns out to be
 
-** i am providing u the respective system prompts code also. i am suspecting because of heavy system prompt and rules llm is takin gso much time u also try to debug the issue
+Whichever of these is confirmed, the durable fix is the same: **the substring matching should never be allowed to run against non-analytics node names in the first place** — not "the guard usually works but the matcher is also loose." Two changes needed:
 
+1. **Verify (don't just assume) the `is_analytics` guard wraps the entire status-emission block in both streaming functions**, checked before any node-name comparison happens at all — not just before the dictionary is consulted.
+2. **Regardless of the guard, tighten the matching from substring to exact match**, or at minimum require a distinguishing prefix (e.g., only match keys that start with `analytics_` if that's how the renamed node names are structured, or use `node_name.startswith(k)` with fuller key names rather than bare substrings like `"agent"`). Fuzzy substring matching was a reasonable quick fix for the "LangGraph mangles node names" problem, but a bare word like `"agent"` is too permissive a pattern to safely use as a substring match across a codebase where you deliberately just renamed nodes to end in `_agent_node`. This is a direct consequence of the naming convention work you just did — the two features are interacting in a way neither was designed to anticipate.
 
+This isn't breaking your workflow functionality today (you said so yourself — it's cosmetic, not functional), but I'd still get it fixed before your next adjustment, specifically because you're about to layer another workflow change on top, and cosmetic bugs that share a root cause with upcoming changes are exactly the kind of thing that becomes confusing to debug later if left in place. Cheap to fix now, more annoying to disentangle once it's tangled with whatever you do next.
 
-""INFO:     10.5.1.58:50132 - "POST /api/v1/chat/stream HTTP/1.1" 200 OK
-D:\vinay\VAH_dashboard\dpah_backend_cb2_v2.2_analytics\app\routes\chat_route.py:51: LangChainPendingDeprecationWarning: astream_events version='v1' is deprecated. Use version='v2' or astream instead.
-  async for chunk in ChatController.stream_chat_with_orchestrator(
-[DIAG-STREAM] on_chain_start fired for name: 'LangGraph'
-[DIAG-STREAM] on_chain_start fired for name: 'permission_check'
-[DIAG-ANALYTICS] permission_check_node entered. user_id=3428, collection=RMS_ANALYTICS, available_agents={'RMS_ANALYTICS': ['reviewer']}
-[DIAG-ANALYTICS] permission_check_node -> GRANTED as 'reviewer'
-[DIAG-STREAM] on_chain_start fired for name: 'permission_router'
-[DIAG-STREAM] on_chain_start fired for name: 'intent_classifier'
-[DIAG-ANALYTICS] intent_classifier_node entered.
-[DIAG-ANALYTICS] Calling Intent LLM...
-[DIAG-ANALYTICS] ⏱️ Intent LLM took 5.86 seconds
-[DIAG-ANALYTICS] classifier -> intent=SQL_DATA, scope=PERSONAL
-[DIAG-STREAM] on_chain_start fired for name: 'intent_router'
-[DIAG-STREAM] on_chain_start fired for name: 'sql_generator'
-[DIAG-ANALYTICS] sql_generator_node entered.
-[DIAG-ANALYTICS] Calling SQL Generator LLM...
-[DIAG-ANALYTICS] ⏱️ SQL Gen LLM took 31.05 seconds
-[DIAG-ANALYTICS] sql_generator_node -> Generated SQL: SELECT w.TaskDate AS TaskDate, ROUND(SUM(w.TimeSpentInSec / 3600.0), 2) AS TotalHours FROM pp_worklogs_demo w LEFT JOIN pp_project_task_assigment_demo t ON w.WorkLogIdx = t.WorkLogIdx WHERE w.Resource = 3428 GROUP BY w.TaskDate ORDER BY w.TaskDate ASC
-[DIAG-STREAM] on_chain_start fired for name: 'sql_validator'
-[DIAG-ANALYTICS] sql_validator_node entered.
-[DIAG-ANALYTICS] sql_validator_node -> PASSED
-[DIAG-STREAM] on_chain_start fired for name: 'validation_router'
-[DIAG-STREAM] on_chain_start fired for name: 'sql_executor'
-[DIAG-ANALYTICS] sql_executor_node entered.
-[DIAG-ANALYTICS] sql_executor_node -> Executed successfully, 4 rows returned.
-[DIAG-STREAM] on_chain_start fired for name: 'execution_router'
-[DIAG-STREAM] on_chain_start fired for name: 'output_formatter'
-[DIAG-ANALYTICS] output_formatter_node entered. intent=SQL_DATA
-[DIAG-ANALYTICS] output_formatter_node -> Generating ECharts JSON...
-[DIAG-ANALYTICS] ⏱️ charts LLM took 5.00 seconds
-[DIAG-ANALYTICS] output_formatter_node -> Chart JSON parsed successfully.""
-
-**
-async def analytics_intent_classifier_node(state: AnalyticsState) -> AnalyticsState:
-    print(f"[DIAG-ANALYTICS] intent_classifier_node entered.", flush=True)
-    
-    user_question = _get_last_user_message(state)
-    persona = state.get("selected_agent_role", "reviewer")
-    collection = state.get("selected_collection", "")
-    emp_id = state.get("user_id", "")
-
-    prompt = f"""You are a routing classifier for an enterprise analytics system.
-Analyze this question from an employee and classify it on TWO dimensions.
-
-Employee persona: {persona}
-Employee ID: {emp_id}
-User question: "{user_question}"
-
-DIMENSION 1 — INTENT (what kind of answer is needed):
-- SQL_DATA: needs strict numbers, counts, aggregations, charts, or raw tables from the database.
-  Examples: "show my hours", "list my tasks", "bar chart of my time"
-- SQL_INSIGHT: needs trend analysis, evaluation, comparison, or a written summary derived from data.
-  Examples: "how productive was I", "compare this month to last month", "why are my hours low", "summarize my work"
-- RAG: needs company policy, procedures, or static knowledge not in the database
-- DENY: is a write/delete/harmful operation, or asks for something completely unrelated
-
-DIMENSION 2 — SCOPE (whose data is being requested):
-- PERSONAL: the question is about the employee themselves only
-  Examples: "my hours", "how many tasks did I complete", "show my leave balance", "compare my own data across time periods"
-- GROUP: the question is about other people, a team, all employees, or the whole organization
-  Examples: "all employees", "the team", "everyone", "each resource", "other people", 
-            "compare across employees", "total company hours", "each and every worker"
-
-Return ONLY a valid JSON object. No explanation, no markdown:
-{{"intent": "SQL_DATA", "scope": "PERSONAL"}}"""
-
-
-
-    return state
-
-
-# ─── Node 4: SQL Generator (With Advanced Rules) ──────────────────────────────
-
-async def analytics_sql_generator_node(state: AnalyticsState) -> AnalyticsState:
-    print(f"[DIAG-ANALYTICS] sql_generator_node entered.", flush=True)
-    
-    user_question = _get_last_user_message(state)
-    collection = state.get("selected_collection", "")
-    persona = state.get("selected_agent_role", "reviewer")
-    emp_id = state.get("user_id", "")
-
-    schema_block = build_schema_description(collection, persona, emp_id)
-    module_name = COLLECTION_TABLE_MAP.get(collection, {}).get("module_display_name", collection)
-
-    prompt = f"""You are an Expert SQL Data Analyst for {module_name}.
-User: {state.get('user_name', 'Employee')} (emp_id: {emp_id}, role: {persona})
-
-Available database tables (MariaDB):
-{schema_block}
-
-STRICT SQL GENERATION RULES:
-1. Write ONLY a SELECT statement. No INSERT, UPDATE, DELETE, DROP, or ALTER.
-2. ACCESS RULES: You MUST apply the ACCESS RULE shown for each table in your WHERE clause exactly as written.
-3. ALIASING: ALWAYS prefix EVERY column name with its table alias (e.g., w.Resource, t.TaskIdx) to prevent ambiguous column errors.
-4. DATE FILTERS: DO NOT filter by current month/year (like MONTH(NOW())) UNLESS the user explicitly asks for a timeframe ("this month", "today", "2026"). If no timeframe is requested, query all historical data.
-5. JOINS: Tables marked (FACT) contain the primary measured data — always start 
-   your FROM clause with the FACT table. Tables marked (DIMENSION) are reference 
-   data. Use LEFT JOIN from FACT to DIMENSION so that missing reference rows never 
-   cause valid FACT data to disappear. Only use INNER JOIN when the question 
-   explicitly requires excluding unmatched rows.
-6. AGGREGATIONS: If you use SUM() or COUNT(), ensure all non-aggregated columns are in the GROUP BY clause.
-7. TIME MATH: For worklogs, TimeSpentInSec / 3600.0 = hours. Round to 2 decimal places using ROUND().
-8. SEARCH: Use LOWER() and LIKE '%term%' for case-insensitive text searching.
-9. CANNOT ANSWER: If the question absolutely cannot be answered using the tables provided, return exactly: CANNOT_ANSWER
-10. OUTPUT: Return ONLY the raw SQL query string. No explanation, no markdown blocks, no backticks.
-
-
-
-# ─── Node 7: Output Formatter ─────────────────────────────────────────────────
-
-async def analytics_output_formatter_node(state: AnalyticsState) -> AnalyticsState:
-    print(f"[DIAG-ANALYTICS] output_formatter_node entered. intent={state.get('intent_type')}", flush=True)
-    intent = state.get("intent_type", "SQL_DATA")
-
-    # Handle RAG path
-    if intent == "RAG":
-        print(f"[DIAG-ANALYTICS] output_formatter_node -> Formatting RAG fallback response.", flush=True)
-        state["output_type"] = "text"
-        state["text_response"] = (
-            "Document-based insights are not available in the current version. "
-            "I can help you analyze your operational data — try asking for counts, "
-            "trends, summaries, or specific metrics from your records."
-        )
-        return state
-
-    # Handle SQL errors
-    if state.get("sql_error"):
-        print(f"[DIAG-ANALYTICS] output_formatter_node -> Formatting SQL Error message.", flush=True)
-        state["output_type"] = "text"
-        state["text_response"] = state["sql_error"]
-        return state
-
-    sql_result = state.get("sql_result", [])
-    user_question = _get_last_user_message(state)
-    llm = get_llm_non_streaming()
-
-    # Detect chart intent
-    chart_keywords = {
-        "bar", "pie", "line", "chart", "graph", "plot",
-        "visualize", "visualization", "show me", "display"
-    }
-    question_lower = user_question.lower()
-    wants_chart = any(kw in question_lower for kw in chart_keywords)
-
-    # SQL_INSIGHT path — always text
-    if intent == "SQL_INSIGHT":
-        print(f"[DIAG-ANALYTICS] output_formatter_node -> Generating Insight Text...", flush=True)
-        data_sample = json.dumps(sql_result[:200], default=str)
-        insight_prompt = f"""The user asked: "{user_question}"
-
-Here is the data retrieved from the database:
-{data_sample}
-
-Provide a clear, concise analysis based on this data.
-Focus on trends, patterns, and meaningful observations.
-Write in plain English. Maximum 3 paragraphs.
-Do not mention SQL or database internals."""
-
-        # Offload sync LLM call to a thread
-        response = await asyncio.to_thread(
-            llm.invoke,
-            [HumanMessage(content=insight_prompt)],
-            {"callbacks": []}
-        )
-        state["output_type"] = "text"
-        state["text_response"] = response.content or ""
-        return state
-
-    # SQL_DATA path — chart or table
-    if wants_chart:
-        print(f"[DIAG-ANALYTICS] output_formatter_node -> Generating ECharts JSON...", flush=True)
-        data_sample = json.dumps(sql_result[:100], default=str)
-        chart_prompt = f"""The user asked: "{user_question}"
-
-SQL query returned this data:
-{data_sample}
-
-Generate a valid ECharts option object (JSON) that best visualizes this data.
-Choose the most appropriate chart type: bar, line, or pie based on the data structure.
-Include proper titles, axis labels, and legends.
-
-REQUIREMENTS:
-- Return ONLY the JSON object. No explanation, no markdown, no backticks.
-- The JSON must be valid and parseable by JavaScript JSON.parse().
-- Use ECharts v5 syntax.
-- Keep it simple and readable.
-
-ECharts option JSON:"""
-
-  
-
-    return state
-
-======================================================
-
-** coming to 2nd issue the particular starting.., understanding question.., these things in coming in my workflow also when tried to create a mrr or timesheet . i dont think we discussed to implement in workflow. actually i dont
-have any issue unless until they wont break my workflow functionality. so if possible ask AI to check why it s coming in workflow .
-
-** try giving solutions for both the things in this conversation only because i have one more adjustmnet to be done in workflow. so next prompt i will tell u about that
+Go ahead and tell me about the workflow adjustment you have queued up next.
