@@ -79,3 +79,349 @@ Whichever of these is confirmed, the durable fix is the same: **the substring ma
 This isn't breaking your workflow functionality today (you said so yourself — it's cosmetic, not functional), but I'd still get it fixed before your next adjustment, specifically because you're about to layer another workflow change on top, and cosmetic bugs that share a root cause with upcoming changes are exactly the kind of thing that becomes confusing to debug later if left in place. Cheap to fix now, more annoying to disentangle once it's tangled with whatever you do next.
 
 Go ahead and tell me about the workflow adjustment you have queued up next.
+
+issue 2 has been fixed and issue 1 i kept as 2nd priority because that needs proper debugging from my side and i will comeback to u regarding that.
+
+Both locations updated (line 400 in stream_chat_with_orchestrator and line 811 in stream_chat_with_file).
+
+Here's what changed:
+
+Before (fuzzy substring — k in node_name):
+
+
+matched_key = next(
+    (k for k in ANALYTICS_NODE_STATUS.keys() if k in node_name), None
+)
+After (suffix/exact match — node_name.endswith(k) or node_name == k):
+
+
+matched_key = next(
+    (k for k in ANALYTICS_NODE_STATUS.keys() if node_name.endswith(k) or node_name == k), None
+)
+What this fixes:
+
+k in node_name matched "sql_generator" inside "create_sql_generator_node" — any node with those 13 characters anywhere in its name would fire. False-positive territory.
+node_name.endswith(k) only matches if the analytics node name is a suffix of the event name, which is what LangGraph produces (e.g. "MRR_graph|sql_generator" ends with "sql_generator").
+The or node_name == k covers the exact-match case (e.g. "sql_generator" with no prefix).
+Debug print removed since it was a temporary diagnostic.
+
+* STILL I AM seeing Starting... for some queries in approvers part. ok since they were not effecting the functionlity i am not going to give that much time for them . if you feel any implementation gone wrong means tell me,
+** coming to the problem that i told you
+
+** current in mrr workflow when user submits a mrr via form of excel it will redirected to next node
+# AI & Auto Verifier Pipeline
+    graph_builder.add_edge("submit_mrr", "ai_verifier")
+we are using it for saving a column with reasoning
+
+"""
+AI Verifier Agent (ReAct)
+=========================
+A silent background agent that reviews newly submitted MRRs using
+the Bulletproof ReAct pattern.  It fetches data directly from the
+database, analyses line items, quantities, and total cost, then
+uses its Save_Verification tool to persist VERIFICATION_STATUS +
+AI_VERIFICATION_REMARK directly into the DB via MRRDao.
+
+The agent output is NEVER appended to state["messages"] — the frontend
+SSE stream remains completely unaffected.
+"""
+
+from langchain_core.tools import Tool, tool
+
+from app.core.llm import get_llm_non_streaming
+from app.dao.mrr_dao import MRRDao
+from app.workflows.material_workflow.agent_factory import (
+    create_bulletproof_react_agent,
+)
+
+
+@tool
+def Save_Verification(decision: str, reason: str) -> str:
+    """
+    Use this tool to finalize the AI verification result.
+    Input should be JSON with 'decision' ('VERIFIED' or 'FLAG_REVIEW')
+    and 'reason' (a brief explanation).
+    """
+    pass  # We provide the func wrapper at agent construction time
+
+
+def run_ai_verifier(mrr_id: int, db) -> None:
+    """
+    Run the AI Verifier ReAct agent on the given MRR.
+    Fetches data directly from the database for accuracy.
+    """
+    # ------------------------------------------------------------------
+    # 1. Fetch real data from DB
+    # ------------------------------------------------------------------
+    breakdown = MRRDao.get_mrr_breakdown(db, mrr_id)
+    total_cost = breakdown["total_cost"]
+    line_items = breakdown["line_items"]
+
+    items_summary = "\n".join(
+        f"  {idx}. {item.get('item_name', 'Unknown')} | "
+        f"Qty: {item.get('qty', 0):.2f} | "
+        f"Unit Cost: {item.get('cost', 0):,.2f} | "
+        f"Subtotal (Qty * Unit Cost): {item.get('subtotal', 0):,.2f} | "
+        f"UOM: {item.get('uom', 'EA')}"
+        for idx, item in enumerate(line_items, 1)
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Define the Save_Verification tool (wraps the @tool signature)
+    # ------------------------------------------------------------------
+    def _save_verification(decision: str, reason: str) -> str:
+        decision_upper = decision.strip().upper()
+        final_decision = "FLAG_REVIEW" if "VERIFIED" not in decision_upper else "VERIFIED"
+        MRRDao.update_ai_verification(db, mrr_id, final_decision, reason)
+        return f"Verification saved: decision={final_decision}, reason={reason}"
+
+    tools = [
+        Tool(
+            name="Save_Verification",
+            func=_save_verification,
+            description=(
+                "Use this tool to finalize the AI verification result. "
+                "Input should be a JSON string with keys 'decision' "
+                "('VERIFIED' or 'FLAG_REVIEW') and 'reason' (full explanation)."
+            ),
+        )
+    ]
+
+    # ------------------------------------------------------------------
+    # 3. Define the ReAct prompt
+    # ------------------------------------------------------------------
+    prefix = (
+        "You are the MRR Auditor Agent. "
+        "Evaluate the following Material Requisition (MRR) cost against the "
+        "2000 INR approval-limit threshold.\n\n"
+        "If Total Cost > 2000, your decision MUST be FLAG_REVIEW.\n"
+        "If Total Cost <= 2000, your decision MUST be VERIFIED.\n\n"
+        "After determining the decision, you MUST call your Save_Verification "
+        "tool — do NOT provide a final answer without saving.\n\n"
+        "Format strictly:\n"
+        "Thought: Do I need to use a tool? Yes\n"
+        "Action: the action to take\n"
+        "Action Input: the input to the action\n"
+        "Observation: the result\n"
+        "Thought: I now know the final decision.\n"
+        "Final Answer: [Your summary]\n\n"
+        "Items:\n"
+        "{items_summary}\n\n"
+        "Total Cost: {total_cost}\n"
+        "Approval Limit: 2000"
+    )
+
+    suffix = "Begin!\nQuestion: {input}\nThought: {agent_scratchpad}"
+
+    # ------------------------------------------------------------------
+    # 4. Build and execute the bulletproof agent
+    # ------------------------------------------------------------------
+    agent = create_bulletproof_react_agent(
+        tools=tools, prefix=prefix, suffix=suffix
+    )
+
+    try:
+        response = agent.invoke({
+            "input": "Verify this MRR.",
+            "items_summary": items_summary,
+            "total_cost": f"{total_cost:,.2f}",
+        })
+    except Exception as e:
+        # Fallback: always save something deterministic
+        fallback_reason = f"AI agent encountered an error during analysis ({e})."
+        MRRDao.update_ai_verification(db, mrr_id, "FLAG_REVIEW", fallback_reason)
+** now what is happening is currently after clicking on submit button this message is coming ⏳ Analyzing pending requests...
+** in the backend this is happening 
+Question: Verify this MRR.
+Thought: Do I need to use a tool? Yes
+Action: Save_Verification
+Action Input: {"decision": "VERIFIED", "reason": "The total cost of 208.00 INR is within the 2000 INR approval limit threshold."}[DIAG-MRR] auto_verifier_node entered. new_requisition_id=155
+
+** it is not giving the final answer at all.
+
+** actually what has to happening we will never showing any reasoning to user when he submits that particular node is for just inserting that remarks column only. so it will disturb the UX completely for that only we are using 
+a small reasoning for user to just give a friendly message thats it.
+
+# Update state for auto-verifier
+        confirmation = add_reasoning(
+            f"Your MRR **{header.get('mrr_no', f'MRR/{next_header_id}')}** has been submitted.\n"
+            f"Total cost: \u20b9{header.get('total_cost', 0):,.2f}\n\n"
+            f"Running verification...",
+            context=f"MRR {header.get('mrr_no', str(next_header_id))} submitted by {header.get('requestor_id', '')}; "
+                    f"total cost \u20b9{header.get('total_cost', 0):,.2f}; awaiting auto-verification."
+        )
+
+def add_reasoning(original_message: str, context: str) -> str:
+    """
+    Optionally append a short LLM-generated reasoning sentence to a
+    deterministic success message. ALWAYS returns a string. If the
+    feature is disabled or the LLM call fails, returns the original
+    message unchanged.
+
+    Args:
+        original_message: the deterministic procedural output. This
+            is what the user MUST see; the LLM only adds context.
+        context: a brief description of what the procedural step did,
+            used to prompt the LLM. Plain text, no formatting needed.
+
+    Returns:
+        original_message [+ "\\n\\n" + reasoning sentence] on success.
+        original_message unchanged on disable/failure.
+    """
+    if not getattr(settings, "ENABLE_REASONING_ADDON", False):
+        return original_message
+
+    try:
+        from app.core.llm import get_llm_non_streaming
+        llm = get_llm_non_streaming()
+
+        prompt = (
+            "You are explaining a workflow action briefly to a user.\n"
+            "The system has ALREADY completed the action and produces "
+            "the confirmation below. Your job is to add ONE short, "
+            "friendly sentence (max 25 words) that explains what just "
+            "happened or what to expect next. Do NOT repeat the "
+            "confirmation. Do NOT add bullet points, markdown, or "
+            "headers. Plain prose, one sentence.\n\n"
+            f"Action context: {context}\n\n"
+            f"System confirmation:\n{original_message}\n\n"
+            "Your one-sentence addition:"
+        )
+
+        # Use synchronous invoke with tags so the controller can
+        # filter out these internal events from the streaming output.
+        response = llm.invoke(
+            prompt,
+            config={"tags": ["reasoning_addon"], "run_name": "reasoning_addon"},
+        )
+        reasoning = getattr(response, "content", "") or ""
+        reasoning = reasoning.strip()
+
+        if not reasoning:
+            return original_message
+
+        # Strip any leading/trailing quotes, code fences, list bullets
+        for prefix in ("- ", "* ", "> ", "\"", "'"):
+            if reasoning.startswith(prefix):
+                reasoning = reasoning[len(prefix):].strip()
+        for suffix in ("\"", "'"):
+            if reasoning.endswith(suffix):
+                reasoning = reasoning[:-1].strip()
+
+        return f"{original_message}\n\n{reasoning}"
+
+    except Exception as e:
+        # Silent fallback -- log to stderr for diagnostics but never
+        # propagate the failure to the user.
+        try:
+            print(f"[REASONING-ADDON] Failed; returning original. err={e}", flush=True)
+        except Exception:
+            pass
+        return original_message
+
+** now instead of this friendly message that REact part is blocking the frontend it seems to be which is causing terrible UX after creation.
+========================
+
+there is one more place we are using react which is for approver login i tried one test case for that 
+
+
+ show pl approvals
+
+> Entering new AgentExecutor chain...
+
+
+Thought: I need to retrieve the current list of pending MRR approvals to display to the user.
+Action: List_Pending_Approvals
+Action Input:
+Observation: Pending MRRs:
+- ID: 154 | True Cost: 1,079.00 | MRR: MRR/154/26-27 | Remarks: AI agent encountered an error during analysis (run_ai_verifier.<locals>._save_verification() missing 1 required positional argument: 'reason').
+- ID: 150 | True Cost: 8,429.61 | MRR: DPE/MRR/48/26-27 | Remarks: AI agent encountered an error during analysis (run_ai_verifier.<locals>._save_verification() missing 1 required positional argument: 'reason').
+- ID: 148 | True Cost: 9,654.61 | MRR: DPE/MRR/46/26-27 | Remarks: AI agent encountered an error during analysis (run_ai_verifier.<locals>._save_verification() missing 1 required positional argument: 'reason').
+- ID: 140 | True Cost: 1,630.86 | MRR: MRR/140/26-27 | Remarks: AI agent encountered an error during analysis (run_ai_verifier.<locals>._save_verification() missing 1 required positional argument: 'reason').
+- ID: 138 | True Cost: 46.20 | MRR: MRR/138/26-27 | Remarks: AI agent encountered an error during analysis (run_ai_verifier.<locals>._save_verification() missing 1 required positional argument: 'reason').
+- ID: 137 | True Cost: 996,556.00 | MRR: MRR/137/26-27 | Remarks: AI agent encountered an error during analysis (run_ai_verifier.<locals>._save_verification() missing 1 required positional argument: 'reason').
+- ID: 105 | True Cost: 250.00 | MRR: MRR/105/26-27 | Remarks: None
+- ID: 53 | True Cost: 153.00 | MRR: MRR/53/26-27 | Remarks: None
+- ID: 51 | True Cost: 2.30 | MRR: MRR/51/26-27 | Remarks: None
+- ID: 48 | True Cost: 24.00 | MRR: MRR/48/26-27 | Remarks: None
+- ID: 47 | True Cost: 27.50 | MRR: MRR/47/26-27 | Remarks: None
+- ID: 46 | True Cost: 5.80 | MRR: MRR/46/26-27 | Remarks: None
+- ID: 42 | True Cost: 146.80 | MRR: MRR/42/26-27 | Remarks: None
+Thought:
+
+Final Answer: I have retrieved the list of pending MRR approvals for your role. You will find the details displayed in the UI table for further action.
+
+** here somehow it is giving the reasoning in frotnend and also that form table is coming.
+
+** i am provinding you this code also FYR.
+
+ tools = [
+        Tool(
+            name="List_Pending_Approvals",
+            func=fetch_pending,
+            description="Use this tool to fetch the list of pending MRRs for your role. Input: empty string.",
+        ),
+        Tool(
+            name="Approve_MRR_By_ID",
+            func=approve_one,
+            description="Use this tool to approve a specific MRR. Input should be a JSON string with 'mrr_id' (integer) and optionally 'reason' (string).",
+        ),
+        Tool(
+            name="Reject_MRR_By_ID",
+            func=reject_one,
+            description="Use this tool to reject a specific MRR. Input should be a JSON string with 'mrr_id' (integer) and optionally 'reason' (string).",
+        ),
+        Tool(
+            name="Approve_All",
+            func=approve_all,
+            description="Use this tool to approve all pending MRRs for your role. Input: empty string.",
+        ),
+    ]
+    return tools
+
+
+def run_approver_react_agent(user_input: str, emp_no: str, persona: str) -> str:
+    """
+    Run the ReAct agent and return a cleaned-up Final Answer.
+    """
+    tools = _build_approver_tools(emp_no, persona)
+
+    prefix = (
+        "You are the MRR Approver Agent, acting on behalf of the "
+        f"{persona} role.\n\n"
+        "Your role is to help the approver manage their pending MRR requests.\n\n"
+        "Rules:\n"
+        "1. Always start by using List_Pending_Approvals to see what's available.\n"
+        "2. If the user asks to approve/reject a specific MRR, use the respective tool.\n"
+        "3. If the user asks to approve all, use Approve_All.\n"
+        "4. Always maintain a polite, conversational tone in your Final Answer.\n"
+        "5. Summarize the outcome in 1-2 sentences — do NOT list individual items\n"
+        "   (the UI displays the table).\n\n"
+        "Format strictly:\n"
+        "Thought: I need to determine the next step\n"
+        "Action: ActionName\n"
+        "Action Input: the action input\n"
+        "Observation: the tool result\n"
+        "Final Answer: Your conversational response."
+    )
+
+    agent = create_bulletproof_react_agent(
+        tools=tools,
+        prefix=prefix,
+        suffix="Begin!\nQuestion: {input}\nThought: {agent_scratchpad}",
+    )
+
+    try:
+        response = agent.invoke({"input": user_input})
+        return response.get("output", "No response from the approver agent.")
+    except Exception as e:
+        return f"Error from approver agent: {e}"
+
+
+====================================
+
+** now what i want since i didnt get any approval from management to remove this REact and follow bind_tools and some other structured approach which u suggested earlier. so i cannot remove this.
+** but today we have a small demo so i dont want to change that much for today but somehow i want to that veriifer agent ⏳ Analyzing pending requests.. meassage to be gone . i want that friendly reasoning should come because any ways
+this REact reasoning is not required for users to get display it is just db insertion as i said.
+
+**how to solve this 
